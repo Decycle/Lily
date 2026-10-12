@@ -37,3 +37,11 @@ recommends and noted with a `// UNVERIFIED:` comment so it is easy to find later
 ## Toolchain
 
 Rust stable, `x86_64-pc-windows-gnu`. Cargo lives in `%USERPROFILE%\.cargo\bin` (add to `PATH` in shells that lack it).
+
+**Pinned dependencies.** Crates that depend on `windows-link` 0.2 import Windows DLLs via `raw-dylib`, which on
+`windows-gnu` needs MinGW's `dlltool` *and* assembler (`as`); the rustup GNU toolchain ships only `dlltool`, so the
+build fails. Until a full MinGW-w64 is installed we stay below that line: `wgpu` 27 (28+ uses `windows` 0.62), and in
+`Cargo.lock` `libloading` 0.8.8, `parking_lot` 0.12.4 / `parking_lot_core` 0.9.11; `env_logger` is used without
+default features (its colour support pulls `windows-sys` 0.61). Do not run a bare `cargo update`; update single
+crates with `cargo update -p <crate>` and check that `cargo tree --target x86_64-pc-windows-gnu -i windows-link`
+prints nothing.
