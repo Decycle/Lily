@@ -1,6 +1,6 @@
 //! Cooked package header (`.uasset`): summary, name map and import table.
 //!
-//! Only what DataTables need is decoded; textures/widgets can extend this (export table, ...).
+//! Only what DataTables and textures need is decoded (names, imports, export table).
 
 use crate::Ue4Error;
 use crate::reader::Reader;
@@ -19,11 +19,26 @@ pub struct Import {
     pub object_name: String,
 }
 
+/// One entry of the export table (UE 4.19 layout, 104 bytes).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Export {
+    /// Package index of the class (usually an import, e.g. `Texture2D`).
+    pub class_index: i32,
+    pub object_name: String,
+    pub serial_size: u64,
+    /// Offset in the combined `.uasset` + `.uexp` file.
+    pub serial_offset: u64,
+}
+
+/// Export entry bytes after SerialOffset: 3 bools, package GUID, package flags, 2 bools, 5 dependency ints.
+const EXPORT_TRAILER_SIZE: usize = 12 + 16 + 4 + 8 + 20;
+
 /// The parts of a `.uasset` header needed to decode its exports.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Package {
     pub names: Vec<String>,
     pub imports: Vec<Import>,
+    pub exports: Vec<Export>,
 }
 
 impl Package {
@@ -53,8 +68,8 @@ impl Package {
         }
         r.i32()?; // GatherableTextDataCount
         r.i32()?; // GatherableTextDataOffset
-        r.i32()?; // ExportCount
-        r.i32()?; // ExportOffset
+        let export_count = r.count()?;
+        let export_offset = r.count()?;
         let import_count = r.count()?;
         let import_offset = r.count()?;
 
@@ -68,6 +83,7 @@ impl Package {
         let mut pkg = Self {
             names,
             imports: Vec::new(),
+            exports: Vec::new(),
         };
         let mut ir = Reader::at(uasset, import_offset)?;
         for _ in 0..import_count {
@@ -79,7 +95,30 @@ impl Package {
             };
             pkg.imports.push(import);
         }
+        let mut er = Reader::at(uasset, export_offset)?;
+        for _ in 0..export_count {
+            let class_index = er.i32()?;
+            er.bytes(12)?; // SuperIndex, TemplateIndex, OuterIndex
+            let object_name = pkg.read_fname(&mut er)?;
+            er.u32()?; // ObjectFlags
+            let serial_size = er.u64()?;
+            let serial_offset = er.u64()?;
+            er.bytes(EXPORT_TRAILER_SIZE)?;
+            pkg.exports.push(Export {
+                class_index,
+                object_name,
+                serial_size,
+                serial_offset,
+            });
+        }
         Ok(pkg)
+    }
+
+    /// Exports whose class is the import named `class`, in table order.
+    pub fn exports_of_class<'a>(&'a self, class: &'a str) -> impl Iterator<Item = &'a Export> {
+        self.exports
+            .iter()
+            .filter(move |e| self.import_name(e.class_index) == Some(class))
     }
 
     /// Resolves an `FName` (index + instance number) to text, e.g. `Foo` or `Foo_2` (number 3).
@@ -127,10 +166,33 @@ mod tests {
     }
 
     #[test]
+    fn parses_exports_and_filters_by_class() {
+        let mut fx = Fixture::default();
+        let tex = fx.import("/Script/CoreUObject", "Class", "Texture2D");
+        let mat = fx.import("/Script/CoreUObject", "Class", "Material");
+        fx.export(tex, "A", 10);
+        fx.export(mat, "B", 20);
+        fx.export(tex, "C", 30);
+        let ua = fx.uasset();
+        let pkg = Package::parse(&ua).unwrap();
+        assert_eq!(pkg.exports.len(), 3);
+        assert_eq!(pkg.exports[1].object_name, "B");
+        assert_eq!(pkg.exports[1].serial_size, 20);
+        assert_eq!(pkg.exports[0].serial_offset, ua.len() as u64);
+        assert_eq!(pkg.exports[2].serial_offset, ua.len() as u64 + 30);
+        let names: Vec<_> = pkg
+            .exports_of_class("Texture2D")
+            .map(|e| &e.object_name)
+            .collect();
+        assert_eq!(names, ["A", "C"]);
+    }
+
+    #[test]
     fn name_numbers_become_suffixes() {
         let pkg = Package {
             names: vec!["Foo".into()],
             imports: vec![],
+            exports: vec![],
         };
         assert_eq!(pkg.name(0, 0).unwrap(), "Foo");
         assert_eq!(pkg.name(0, 3).unwrap(), "Foo_2");
