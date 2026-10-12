@@ -4,6 +4,7 @@
 
 pub mod catalog;
 pub mod input;
+pub mod judge;
 pub mod rules;
 
 pub use wacca_chart::Difficulty;
