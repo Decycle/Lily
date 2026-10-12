@@ -9,6 +9,7 @@
 | `wacca-ue4` | UE 4.19 cooked package reader (DataTables, textures, widgets) | — |
 | `wacca-audio` | CRI @UTF/ACB/AFS2, HCA/ADX decode, audio output + clock | — |
 | `wacca-render` | wgpu playfield/notes/effects | chart |
+| `wacca-video` | `.usm` demux, background-movie decode via an external `ffmpeg` process (`WACCA_FFMPEG`, `PATH` or winget) | — |
 | `wacca-convert` | `assets/` → `data/` CLI | ue4, game |
 
 Shared vocabulary lives in `wacca-chart::model` and `wacca-game::{rules, input, catalog}`. Change those only when

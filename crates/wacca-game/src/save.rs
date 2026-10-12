@@ -65,6 +65,8 @@ pub struct Settings {
     pub judge_offset: f32,
     pub mirror: bool,
     pub bonus_effect: bool,
+    /// Background movie on/off (`BackMovieSettingTable`, 06-visuals §1).
+    pub background_video: bool,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -76,6 +78,7 @@ impl Default for Settings {
             judge_offset: 0.0,
             mirror: false,
             bonus_effect: true,
+            background_video: true,
             extra: Map::new(),
         }
     }
@@ -355,6 +358,19 @@ mod tests {
         assert_eq!(load(&path).unwrap(), s);
         assert!(!sibling(&path, ".tmp").exists());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn background_video_setting_persists_and_defaults_on() {
+        let old: Settings = serde_json::from_str(r#"{"noteSpeed": 3.0}"#).unwrap();
+        assert!(old.background_video);
+        let off = Settings {
+            background_video: false,
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&off).unwrap();
+        assert!(json.contains(r#""backgroundVideo":false"#));
+        assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), off);
     }
 
     #[test]
