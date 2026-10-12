@@ -1,5 +1,8 @@
-//! Options screen: note speed, judgement offset, mirror (stub), autoplay and background video, stored in the save's
+//! Options screen: note speed, judgement offset, mirror, autoplay and background video, stored in the save's
 //! [`Settings`] (autoplay is per session and never saved).
+//!
+//! This module is the one place that knows the judge-offset unit: everything else converts with
+//! [`offset_secs`] / [`offset_units`].
 
 use wacca_game::save::Settings;
 use wacca_render::layout::Rect;
@@ -14,9 +17,12 @@ pub const SPEED_STEP: f32 = 0.5;
 /// Judgement adjustment −10.0..=+10.0 in steps of 0.1 (doc 05 §1.5).
 pub const OFFSET_RANGE: std::ops::RangeInclusive<f32> = -10.0..=10.0;
 pub const OFFSET_STEP: f32 = 0.1;
-/// Seconds of chart time per judgement-adjustment unit.
-// UNVERIFIED: the unit is unknown (PLAN §5 #9); 1.0 = 10 ms, positive = notes judged later.
-pub const OFFSET_UNIT_SECS: f64 = 0.010;
+/// Seconds of chart time per judgement-adjustment unit: half a 60 fps frame (8.33 ms), so the
+/// setting spans ±83 ms. A positive setting runs the judgement clock ahead of the music: a tap
+/// in time with the audio is judged late, so taps must come that much earlier.
+// UNVERIFIED: unit and sign (doc 04 §8, PLAN §5 #9); 8.33 ms/unit is the doc's more plausible
+// reading of Saturn's contradictory 83.3 vs 8.33 ms.
+const OFFSET_UNIT_SECS: f64 = 1.0 / 120.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Row {
@@ -38,6 +44,16 @@ pub const ROWS: [Row; 5] = [
 /// Judge offset setting → user offset in seconds (added to chart time).
 pub fn offset_secs(judge_offset: f32) -> f64 {
     f64::from(judge_offset) * OFFSET_UNIT_SECS
+}
+
+/// Offset in seconds → the nearest setting (one decimal, clamped to [`OFFSET_RANGE`]).
+pub fn offset_units(secs: f64) -> f32 {
+    let units = if secs.is_finite() {
+        tenth((secs / OFFSET_UNIT_SECS) as f32)
+    } else {
+        0.0
+    };
+    units.clamp(*OFFSET_RANGE.start(), *OFFSET_RANGE.end())
 }
 
 /// Round to one decimal so repeated steps do not drift.
@@ -82,8 +98,7 @@ pub fn value(row: Row, s: &Settings, autoplay: bool) -> String {
     match row {
         Row::Speed => format!("{:.1}", s.note_speed),
         Row::Offset => format!("{:+.1}", s.judge_offset),
-        // Mirror is stored but not applied yet.
-        Row::Mirror => format!("{} (not yet)", on_off(s.mirror)),
+        Row::Mirror => on_off(s.mirror).into(),
         Row::Autoplay => on_off(autoplay).into(),
         Row::Video => on_off(s.background_video).into(),
     }
@@ -202,7 +217,11 @@ mod tests {
 
     #[test]
     fn offset_unit_and_labels() {
-        assert!((offset_secs(1.5) - 0.015).abs() < 1e-9);
+        assert!((offset_secs(1.5) - 0.0125).abs() < 1e-9);
+        assert_eq!(offset_units(0.025), 3.0);
+        assert_eq!(offset_units(offset_secs(-2.4)), -2.4);
+        assert_eq!(offset_units(1.0), 10.0);
+        assert_eq!(offset_units(f64::NAN), 0.0);
         let s = Settings::default();
         assert_eq!(value(Row::Speed, &s, false), "4.0");
         assert_eq!(value(Row::Offset, &s, false), "+0.0");

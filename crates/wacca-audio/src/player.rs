@@ -1,17 +1,19 @@
-//! `cpal` output: a background thread decodes into a bounded queue of chunks, the device
-//! callback drains it and reports what it consumed to the [`Clock`].
+//! `cpal` output, opened once for the app's lifetime; BGM sources are swapped through it.
 //!
-//! Seeks bump a generation number; chunks of older generations are dropped by the callback, so a
-//! seek takes effect within one device buffer. The device is opened at the decoder's sample rate
-//! (48 kHz for WACCA); there is no resampler.
+//! [`Player::load`] hands a [`Decoder`] to a background thread that decodes into a bounded queue
+//! of chunks; the device callback drains it and reports what it consumed to the [`Clock`]. Loads
+//! and seeks bump a generation number; chunks of older generations are dropped by the callback,
+//! so a source swap or seek takes effect within one device buffer and never reopens the device.
+//! The device runs at [`OUTPUT_RATE`]; there is no resampler, so sources must match it (all WACCA
+//! BGM is 48 kHz).
 //!
 //! Sound effects ([`Player::play_sfx`]) are mixed on top of the BGM in the same callback (see
-//! `mixer`); they keep playing while the BGM is paused.
+//! `mixer`); they keep playing while the BGM is paused or swapped.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SampleFormat, SampleRate, SizedSample, SupportedStreamConfigRange};
@@ -19,6 +21,10 @@ use cpal::{FromSample, Sample, SampleFormat, SampleRate, SizedSample, SupportedS
 use crate::mixer::{self, Mixer};
 use crate::{Clock, Decoder, Error, Sfx};
 
+/// Output sample rate (the rate of every WACCA BGM and of most sound effects).
+pub const OUTPUT_RATE: u32 = 48_000;
+/// Preferred device channel count (WACCA BGM is stereo).
+const OUTPUT_CHANNELS: u16 = 2;
 /// Decoded chunks kept ahead of the device (each is one HCA block, 1024 frames ≈ 21 ms).
 const QUEUE_CHUNKS: usize = 16;
 /// Frames per chunk of lead-in silence (negative seek positions).
@@ -31,11 +37,18 @@ const MIX_BUFFER: usize = 16 * 1024;
 #[derive(Debug)]
 struct Chunk {
     generation: u64,
+    /// Interleaved channels of `samples` (sources may differ).
+    channels: usize,
     samples: Vec<f32>,
 }
 
 #[derive(Debug)]
 enum Command {
+    /// Replace the source and continue at its start.
+    Load {
+        generation: u64,
+        decoder: Box<dyn Decoder>,
+    },
     /// Continue at `frame` (negative = that many frames of silence first).
     Seek { generation: u64, frame: i64 },
 }
@@ -46,6 +59,8 @@ struct Shared {
     generation: AtomicU64,
     playing: AtomicBool,
     volume: AtomicU32,
+    /// Length of the current source in seconds (`f64` bits).
+    duration: AtomicU64,
 }
 
 impl Shared {
@@ -58,15 +73,15 @@ impl Shared {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VoiceId(u64);
 
-/// Streams a [`Decoder`] to the default output device and mixes sound effects on top.
+/// The default output device: one swappable BGM source plus sound effects on top.
 pub struct Player {
     shared: Arc<Shared>,
     commands: Sender<Command>,
     sfx: SyncSender<mixer::Command>,
     next_voice: AtomicU64,
     sample_rate: u32,
-    duration: f64,
-    _stream: cpal::Stream,
+    /// `None` only in device-free tests.
+    _stream: Option<cpal::Stream>,
 }
 
 impl std::fmt::Debug for Player {
@@ -78,15 +93,21 @@ impl std::fmt::Debug for Player {
     }
 }
 
+/// The callback and decoder-thread ends of a [`Player`].
+#[derive(Debug)]
+struct Ends {
+    output: Output,
+    commands: Receiver<Command>,
+    chunks: SyncSender<Chunk>,
+}
+
 fn device_err(e: impl std::fmt::Display) -> Error {
     Error::Device(e.to_string())
 }
 
 impl Player {
-    /// Open the default output device at the decoder's rate. Starts paused at position 0.
-    pub fn new(decoder: Box<dyn Decoder>) -> Result<Self, Error> {
-        let rate = decoder.sample_rate();
-        let channels = decoder.channels();
+    /// Open the default output device at [`OUTPUT_RATE`]. Starts silent, with no source.
+    pub fn new() -> Result<Self, Error> {
         let device = cpal::default_host()
             .default_output_device()
             .ok_or_else(|| Error::Device("no default output device".into()))?;
@@ -94,53 +115,86 @@ impl Player {
             .supported_output_configs()
             .map_err(device_err)?
             .collect();
-        let range = pick_config(&ranges, rate, channels).ok_or_else(|| {
+        let range = pick_config(&ranges, OUTPUT_RATE, OUTPUT_CHANNELS).ok_or_else(|| {
             Error::Device(format!(
-                "no output config at {rate} Hz with a supported sample format (no resampler)"
+                "no output config at {OUTPUT_RATE} Hz with a supported sample format (no resampler)"
             ))
         })?;
-        let config = range.with_sample_rate(SampleRate(rate));
+        let config = range.with_sample_rate(SampleRate(OUTPUT_RATE));
         log::info!("audio output: {config:?}");
 
+        let (mut player, ends) = Player::detached(OUTPUT_RATE, config.channels());
+        let stream_config = config.config();
+        let (output, shared) = (ends.output, &player.shared);
+        let stream = match config.sample_format() {
+            SampleFormat::F32 => build::<f32>(&device, stream_config, output, shared),
+            SampleFormat::I16 => build::<i16>(&device, stream_config, output, shared),
+            SampleFormat::I32 => build::<i32>(&device, stream_config, output, shared),
+            other => Err(Error::Device(format!("unsupported sample format {other}"))),
+        }?;
+        stream.play().map_err(device_err)?;
+        let (commands, chunks) = (ends.commands, ends.chunks);
+        std::thread::Builder::new()
+            .name("wacca-audio-decode".into())
+            .spawn(move || decode_loop(commands, chunks))?;
+        player._stream = Some(stream);
+        Ok(player)
+    }
+
+    /// A player without a device or decoder thread; the caller drives both [`Ends`].
+    fn detached(rate: u32, device_channels: u16) -> (Self, Ends) {
         let shared = Arc::new(Shared {
             clock: Mutex::new(Clock::new(rate)),
             generation: AtomicU64::new(0),
             playing: AtomicBool::new(false),
             volume: AtomicU32::new(1.0f32.to_bits()),
+            duration: AtomicU64::new(0f64.to_bits()),
         });
-        let (chunk_tx, chunk_rx) = mpsc::sync_channel(QUEUE_CHUNKS);
+        let (chunks, chunk_rx) = mpsc::sync_channel(QUEUE_CHUNKS);
         let (commands, command_rx) = mpsc::channel();
-        let duration = decoder.total_frames() as f64 / f64::from(rate);
         let (sfx, sfx_rx) = mpsc::sync_channel(SFX_QUEUE);
-        let output = Output {
-            feed: Feed::new(chunk_rx, channels.into()),
-            mixer: Mixer::new(sfx_rx),
-            mix: Vec::with_capacity(MIX_BUFFER),
-            channels: usize::from(config.channels()),
-        };
-        let stream_config = config.config();
-        let stream = match config.sample_format() {
-            SampleFormat::F32 => build::<f32>(&device, stream_config, output, &shared),
-            SampleFormat::I16 => build::<i16>(&device, stream_config, output, &shared),
-            SampleFormat::I32 => build::<i32>(&device, stream_config, output, &shared),
-            other => Err(Error::Device(format!("unsupported sample format {other}"))),
-        }?;
-        stream.play().map_err(device_err)?;
-        std::thread::Builder::new()
-            .name("wacca-audio-decode".into())
-            .spawn(move || decode_loop(decoder, command_rx, chunk_tx))?;
-
         let player = Player {
             shared,
             commands,
             sfx,
             next_voice: AtomicU64::new(0),
             sample_rate: rate,
-            duration,
-            _stream: stream,
+            _stream: None,
         };
-        player.seek(0.0)?;
-        Ok(player)
+        let ends = Ends {
+            output: Output {
+                feed: Feed::new(chunk_rx),
+                mixer: Mixer::new(sfx_rx),
+                mix: Vec::with_capacity(MIX_BUFFER),
+                channels: usize::from(device_channels),
+            },
+            commands: command_rx,
+            chunks,
+        };
+        (player, ends)
+    }
+
+    /// Replace the BGM source. Afterwards the player is paused at position 0 with volume 1, like
+    /// a fresh one; the old source stops within one device buffer. Sound effects keep playing.
+    pub fn load(&self, decoder: Box<dyn Decoder>) -> Result<(), Error> {
+        let rate = decoder.sample_rate();
+        if rate != self.sample_rate {
+            return Err(Error::SampleRate {
+                expected: self.sample_rate,
+                got: rate,
+            });
+        }
+        self.pause();
+        self.set_volume(1.0);
+        let duration = decoder.total_frames() as f64 / f64::from(rate);
+        self.shared
+            .duration
+            .store(duration.to_bits(), Ordering::Release);
+        let generation = self.reset(0.0);
+        self.send(Command::Load {
+            generation,
+            decoder,
+        })
     }
 
     pub fn play(&self) {
@@ -152,23 +206,27 @@ impl Player {
         self.shared.playing.store(false, Ordering::Release);
     }
 
-    /// Pause and rewind to the start.
-    pub fn stop(&self) -> Result<(), Error> {
-        self.pause();
-        self.seek(0.0)
-    }
-
     pub fn is_playing(&self) -> bool {
         self.shared.playing.load(Ordering::Acquire)
     }
 
     /// Jump to `seconds` of song time; negative values play that much silence first.
     pub fn seek(&self, seconds: f64) -> Result<(), Error> {
+        let generation = self.reset(seconds);
+        let frame = (seconds * f64::from(self.sample_rate)).round() as i64;
+        self.send(Command::Seek { generation, frame })
+    }
+
+    /// Restart the clock at `seconds`; returns the new generation.
+    fn reset(&self, seconds: f64) -> u64 {
         let generation = self.shared.clock().reset(seconds);
         self.shared.generation.store(generation, Ordering::Release);
-        let frame = (seconds * f64::from(self.sample_rate)).round() as i64;
+        generation
+    }
+
+    fn send(&self, cmd: Command) -> Result<(), Error> {
         self.commands
-            .send(Command::Seek { generation, frame })
+            .send(cmd)
             .map_err(|_| Error::Device("decoder thread stopped".into()))
     }
 
@@ -191,12 +249,12 @@ impl Player {
         self.shared.clock().position(Instant::now())
     }
 
-    /// Length of the stream in seconds.
+    /// Length of the loaded source in seconds (0 before the first [`Player::load`]).
     pub fn duration(&self) -> f64 {
-        self.duration
+        f64::from_bits(self.shared.duration.load(Ordering::Acquire))
     }
 
-    /// Output rate; sound effects must match it (see [`Sfx::resampled`]).
+    /// Output rate; sources and sound effects must match it (see [`Sfx::resampled`]).
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
@@ -275,6 +333,25 @@ struct Output {
 }
 
 impl Output {
+    /// One device callback: render with the current shared state and report it to the clock.
+    /// Returns the number of BGM frames consumed.
+    fn callback<T: Sample + FromSample<f32>>(
+        &mut self,
+        out: &mut [T],
+        shared: &Shared,
+        latency: Duration,
+        now: Instant,
+    ) -> u64 {
+        let generation = shared.generation.load(Ordering::Acquire);
+        let playing = shared.playing.load(Ordering::Acquire);
+        let gain = f32::from_bits(shared.volume.load(Ordering::Acquire));
+        let written = self.render(out, generation, playing, gain);
+        shared
+            .clock()
+            .on_callback(generation, written, latency, now);
+        written
+    }
+
     /// Render one device buffer; returns the number of BGM frames consumed.
     fn render<T: Sample + FromSample<f32>>(
         &mut self,
@@ -316,13 +393,7 @@ where
                 let now = Instant::now();
                 let ts = info.timestamp();
                 let latency = ts.playback.duration_since(&ts.callback).unwrap_or_default();
-                let generation = shared.generation.load(Ordering::Acquire);
-                let playing = shared.playing.load(Ordering::Acquire);
-                let gain = f32::from_bits(shared.volume.load(Ordering::Acquire));
-                let written = output.render(out, generation, playing, gain);
-                shared
-                    .clock()
-                    .on_callback(generation, written, latency, now);
+                output.callback(out, &shared, latency, now);
             },
             |e| log::error!("audio stream error: {e}"),
             None,
@@ -336,19 +407,18 @@ struct Feed {
     rx: Receiver<Chunk>,
     chunk: Chunk,
     read: usize,
-    channels: usize,
 }
 
 impl Feed {
-    fn new(rx: Receiver<Chunk>, channels: usize) -> Self {
+    fn new(rx: Receiver<Chunk>) -> Self {
         Feed {
             rx,
             chunk: Chunk {
                 generation: 0,
+                channels: 1,
                 samples: Vec::new(),
             },
             read: 0,
-            channels: channels.max(1),
         }
     }
 
@@ -381,7 +451,7 @@ impl Feed {
         let mut written = 0;
         for frame in out.chunks_mut(out_channels.max(1)) {
             if playing && self.ready(generation) {
-                let end = (self.read + self.channels).min(self.chunk.samples.len());
+                let end = (self.read + self.chunk.channels.max(1)).min(self.chunk.samples.len());
                 map_frame(frame, &self.chunk.samples[self.read..end], gain);
                 self.read = end;
                 written += 1;
@@ -409,9 +479,22 @@ fn map_frame(dst: &mut [f32], src: &[f32], gain: f32) {
     }
 }
 
-/// Decoder thread: waits for a seek, then decodes ahead until the end or the next seek.
-fn decode_loop(mut dec: Box<dyn Decoder>, commands: Receiver<Command>, out: SyncSender<Chunk>) {
-    let ch = usize::from(dec.channels());
+/// Seek `source` to `frame`; whether there is something to decode afterwards.
+fn rewind(source: &mut Option<Box<dyn Decoder>>, frame: u64) -> bool {
+    let Some(dec) = source else { return false };
+    match dec.seek(frame) {
+        Ok(()) => true,
+        Err(e) => {
+            log::error!("seek failed: {e}");
+            false
+        }
+    }
+}
+
+/// Decoder thread: waits for a load or seek, then decodes ahead until the end or the next
+/// command. Exits when the [`Player`] or the callback side is dropped.
+fn decode_loop(commands: Receiver<Command>, out: SyncSender<Chunk>) {
+    let mut source: Option<Box<dyn Decoder>> = None;
     let mut generation = 0;
     let mut silence = 0u64;
     let mut active = false;
@@ -428,27 +511,38 @@ fn decode_loop(mut dec: Box<dyn Decoder>, commands: Receiver<Command>, out: Sync
                 Err(_) => return,
             }
         };
-        if let Some(Command::Seek {
-            generation: g,
-            frame,
-        }) = cmd
-        {
-            generation = g;
-            silence = frame.min(0).unsigned_abs();
-            active = match dec.seek(frame.max(0).unsigned_abs()) {
-                Ok(()) => true,
-                Err(e) => {
-                    log::error!("seek failed: {e}");
-                    false
-                }
-            };
-            continue;
+        match cmd {
+            Some(Command::Load {
+                generation: g,
+                decoder,
+            }) => {
+                generation = g;
+                silence = 0;
+                source = Some(decoder);
+                active = rewind(&mut source, 0);
+                continue;
+            }
+            Some(Command::Seek {
+                generation: g,
+                frame,
+            }) => {
+                generation = g;
+                silence = frame.min(0).unsigned_abs();
+                active = rewind(&mut source, frame.max(0).unsigned_abs());
+                continue;
+            }
+            None => {}
         }
+        let Some(dec) = source.as_mut() else {
+            active = false;
+            continue;
+        };
+        let channels = usize::from(dec.channels().max(1));
         let mut samples = Vec::new();
         if silence > 0 {
             let n = silence.min(SILENCE_CHUNK);
             silence -= n;
-            samples.resize(n as usize * ch, 0.0);
+            samples.resize(n as usize * channels, 0.0);
         } else {
             match dec.decode(&mut samples) {
                 Ok(true) => {}
@@ -466,6 +560,7 @@ fn decode_loop(mut dec: Box<dyn Decoder>, commands: Receiver<Command>, out: Sync
         if out
             .send(Chunk {
                 generation,
+                channels,
                 samples,
             })
             .is_err()
@@ -480,11 +575,13 @@ mod tests {
     use super::*;
     use cpal::SupportedBufferSize;
 
-    /// Decoder producing frame index `i` as the value of every channel, in blocks of 4 frames.
+    /// Decoder producing `base + i` for frame `i` on every channel, in blocks of 4 frames.
     #[derive(Debug)]
     struct Ramp {
+        rate: u32,
         channels: u16,
         total: u64,
+        base: f32,
         pos: u64,
     }
 
@@ -493,7 +590,7 @@ mod tests {
             self.channels
         }
         fn sample_rate(&self) -> u32 {
-            1000
+            self.rate
         }
         fn total_frames(&self) -> u64 {
             self.total
@@ -504,7 +601,10 @@ mod tests {
             }
             let end = (self.pos + 4).min(self.total);
             for i in self.pos..end {
-                out.extend(std::iter::repeat_n(i as f32, self.channels.into()));
+                out.extend(std::iter::repeat_n(
+                    self.base + i as f32,
+                    self.channels.into(),
+                ));
             }
             self.pos = end;
             Ok(true)
@@ -515,18 +615,104 @@ mod tests {
         }
     }
 
-    fn chunk(generation: u64, samples: &[f32]) -> Chunk {
+    fn ramp(channels: u16, total: u64, base: f32) -> Box<dyn Decoder> {
+        Box::new(Ramp {
+            rate: 1000,
+            channels,
+            total,
+            base,
+            pos: 0,
+        })
+    }
+
+    fn chunk(generation: u64, channels: usize, samples: &[f32]) -> Chunk {
         Chunk {
             generation,
+            channels,
             samples: samples.to_vec(),
         }
+    }
+
+    /// Run one-frame device callbacks (stereo device) until `n` BGM frames were heard; returns
+    /// the left channel of each, divided by the volume (keeps ramp values below the clamp).
+    fn pull(output: &mut Output, p: &Player, n: usize) -> Vec<f32> {
+        let mut got = Vec::new();
+        for _ in 0..1_000_000 {
+            if got.len() == n {
+                break;
+            }
+            let mut out = [0.0f32; 2];
+            if output.callback(&mut out, &p.shared, Duration::ZERO, Instant::now()) == 1 {
+                got.push((out[0] / p.volume()).round());
+            } else {
+                std::thread::yield_now();
+            }
+        }
+        got
+    }
+
+    #[test]
+    fn load_swaps_the_source_on_one_device_and_resets_the_clock() {
+        let (p, ends) = Player::detached(1000, 2);
+        let mut output = ends.output;
+        let t = std::thread::spawn(move || decode_loop(ends.commands, ends.chunks));
+
+        assert_eq!(p.duration(), 0.0);
+        p.load(ramp(1, 100, 0.0)).unwrap();
+        assert!(!p.is_playing());
+        assert!((p.duration() - 0.1).abs() < 1e-12);
+        p.set_volume(0.001);
+        p.play();
+        assert_eq!(pull(&mut output, &p, 3), [0.0, 1.0, 2.0]);
+        assert!(p.position() > 0.0);
+
+        // Swap mid-stream: paused at 0 with full volume, no stale frames of the old source.
+        p.set_volume(0.5);
+        p.load(ramp(2, 50, 100.0)).unwrap();
+        assert_eq!(p.position(), 0.0);
+        assert!(!p.is_playing());
+        assert_eq!(p.volume(), 1.0);
+        assert!((p.duration() - 0.05).abs() < 1e-12);
+        let mut out = [7.0f32; 2];
+        assert_eq!(
+            output.callback(&mut out, &p.shared, Duration::ZERO, Instant::now()),
+            0
+        );
+        assert_eq!(out, [0.0, 0.0]);
+        p.set_volume(0.001);
+        p.play();
+        assert_eq!(pull(&mut output, &p, 2), [100.0, 101.0]);
+
+        // Seek within the new source restarts the clock at the target.
+        p.seek(0.01).unwrap();
+        assert_eq!(p.position(), 0.01);
+        assert_eq!(pull(&mut output, &p, 1), [110.0]);
+        assert!(p.position() >= 0.01);
+
+        let wrong_rate = Box::new(Ramp {
+            rate: 2000,
+            channels: 1,
+            total: 1,
+            base: 0.0,
+            pos: 0,
+        });
+        assert!(matches!(
+            p.load(wrong_rate),
+            Err(Error::SampleRate {
+                expected: 1000,
+                got: 2000
+            })
+        ));
+        drop(output);
+        drop(p);
+        t.join().unwrap();
     }
 
     #[test]
     fn feed_maps_stereo_applies_gain_and_pads_underrun() {
         let (tx, rx) = mpsc::sync_channel(4);
-        let mut feed = Feed::new(rx, 2);
-        tx.send(chunk(1, &[1.0, 2.0, 3.0, 4.0])).unwrap();
+        let mut feed = Feed::new(rx);
+        tx.send(chunk(1, 2, &[1.0, 2.0, 3.0, 4.0])).unwrap();
         let mut out = [9.0f32; 9]; // 3 frames of 3 channels
         assert_eq!(feed.fill(&mut out, 3, 1, true, 0.5), 2);
         assert_eq!(out, [0.5, 1.0, 0.0, 1.5, 2.0, 0.0, 0.0, 0.0, 0.0]);
@@ -537,12 +723,12 @@ mod tests {
         let (tx, rx) = mpsc::sync_channel(4);
         let (sfx_tx, sfx_rx) = mpsc::sync_channel(4);
         let mut output = Output {
-            feed: Feed::new(rx, 1),
+            feed: Feed::new(rx),
             mixer: Mixer::new(sfx_rx),
             mix: Vec::new(),
             channels: 2,
         };
-        tx.send(chunk(1, &[0.75, 0.25])).unwrap();
+        tx.send(chunk(1, 1, &[0.75, 0.25])).unwrap();
         let sfx = Sfx {
             rate: 1000,
             channels: 2,
@@ -566,9 +752,9 @@ mod tests {
     #[test]
     fn feed_drops_stale_generations_and_is_silent_when_paused() {
         let (tx, rx) = mpsc::sync_channel(4);
-        let mut feed = Feed::new(rx, 1);
-        tx.send(chunk(1, &[1.0, 1.0])).unwrap();
-        tx.send(chunk(2, &[2.0])).unwrap();
+        let mut feed = Feed::new(rx);
+        tx.send(chunk(1, 1, &[1.0, 1.0])).unwrap();
+        tx.send(chunk(2, 1, &[2.0])).unwrap();
         let mut out = [5.0f32; 2];
         // Paused: silence, nothing consumed, but stale chunks are drained.
         assert_eq!(feed.fill(&mut out, 1, 2, false, 1.0), 0);
@@ -581,22 +767,26 @@ mod tests {
     fn decode_loop_seeks_with_lead_in_silence_and_stops_at_end() {
         let (cmd_tx, cmd_rx) = mpsc::channel();
         let (tx, rx) = mpsc::sync_channel(64);
-        let dec = Box::new(Ramp {
-            channels: 1,
-            total: 10,
-            pos: 0,
-        });
+        cmd_tx
+            .send(Command::Load {
+                generation: 2,
+                decoder: ramp(1, 10, 0.0),
+            })
+            .unwrap();
         cmd_tx
             .send(Command::Seek {
                 generation: 3,
                 frame: -2,
             })
             .unwrap();
-        let t = std::thread::spawn(move || decode_loop(dec, cmd_rx, tx));
+        let t = std::thread::spawn(move || decode_loop(cmd_rx, tx));
         let mut got = Vec::new();
         while got.len() < 12 {
             let c = rx.recv().unwrap();
-            assert_eq!(c.generation, 3);
+            if c.generation == 2 {
+                continue; // decoded before the seek arrived
+            }
+            assert_eq!((c.generation, c.channels), (3, 1));
             got.extend(c.samples);
         }
         let want: Vec<f32> = [0.0, 0.0]
@@ -606,6 +796,21 @@ mod tests {
         assert_eq!(got, want);
         drop(cmd_tx);
         t.join().unwrap();
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn decode_loop_ignores_seeks_before_any_source() {
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(4);
+        cmd_tx
+            .send(Command::Seek {
+                generation: 1,
+                frame: 0,
+            })
+            .unwrap();
+        drop(cmd_tx);
+        decode_loop(cmd_rx, tx);
         assert!(rx.try_recv().is_err());
     }
 

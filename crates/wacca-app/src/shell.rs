@@ -52,6 +52,8 @@ pub struct Setup {
     pub assets: PathBuf,
     pub data: PathBuf,
     pub bgm: BgmBank,
+    /// The one output device, opened for the app's lifetime (preview and play share it).
+    pub player: Arc<Player>,
     pub se: Option<SeBank>,
     pub save_path: Option<PathBuf>,
     pub save: SaveData,
@@ -204,12 +206,13 @@ impl Jackets<'_> {
     }
 }
 
-/// Song-select preview: a separate [`Player`] per song, started after the cursor rests.
-#[derive(Default)]
+/// Song-select preview through the shared [`Player`], started after the cursor rests.
+#[derive(Debug, Default)]
 struct PreviewPlayer {
     song: Option<u32>,
     since: Option<Instant>,
-    player: Option<(Player, preview::Window)>,
+    /// The preview loaded into the player.
+    window: Option<preview::Window>,
     /// Starting failed for this song; do not retry every frame.
     failed: bool,
     /// Song id → BGM cue (from its chart header).
@@ -217,8 +220,10 @@ struct PreviewPlayer {
 }
 
 impl PreviewPlayer {
-    fn stop(&mut self) {
-        self.player = None;
+    fn stop(&mut self, player: &Player) {
+        if self.window.take().is_some() {
+            player.pause();
+        }
         self.song = None;
     }
 
@@ -226,26 +231,27 @@ impl PreviewPlayer {
         let song = s.menu.list.current();
         let id = song.map(|s| s.id);
         if id != self.song {
+            self.stop(&s.player);
             self.song = id;
             self.since = Some(Instant::now());
-            self.player = None;
             self.failed = false;
         }
         let Some(song) = song else { return };
         let rested = self
             .since
             .is_some_and(|t| t.elapsed().as_secs_f64() >= preview::DEBOUNCE_SECS);
-        if self.player.is_none() && !self.failed && rested {
+        if self.window.is_none() && !self.failed && rested {
             let w = preview::Window::new(song.preview_begin, song.preview_seconds);
             match self.start(s, song, w) {
-                Ok(p) => self.player = Some((p, w)),
+                Ok(()) => self.window = Some(w),
                 Err(e) => {
                     log::warn!("preview of {}: {e}", song.folder);
                     self.failed = true;
                 }
             }
         }
-        if let Some((p, w)) = &self.player {
+        if let Some(w) = &self.window {
+            let p = &s.player;
             let pos = p.position();
             if w.over(pos)
                 && let Err(e) = p.seek(w.begin)
@@ -261,7 +267,7 @@ impl PreviewPlayer {
         s: &Setup,
         song: &wacca_game::catalog::Song,
         w: preview::Window,
-    ) -> Result<Player, Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let cue = match self.cues.get(&song.id) {
             Some(c) => c.clone(),
             None => {
@@ -272,11 +278,13 @@ impl PreviewPlayer {
                 cue
             }
         };
-        let player = Player::new(Box::new(s.bgm.open_cue(&cue)?))?;
+        let player = &s.player;
+        player.load(Box::new(s.bgm.open_cue(&cue)?))?;
         player.seek(w.begin)?;
         player.set_volume(0.0);
         player.play();
-        Ok(player)
+        log::debug!("preview {cue} from {:.1} s for {:.1} s", w.begin, w.len);
+        Ok(())
     }
 }
 
@@ -405,17 +413,15 @@ impl App {
     }
 
     fn start_play(&mut self, spec: PlaySpec) {
-        self.preview.stop();
+        self.preview.stop(&self.s.player);
         let m = &self.s.menu;
         let opts = PlayOptions {
             note_speed: f64::from(m.settings.note_speed),
             offset: options::offset_secs(m.settings.judge_offset),
             autoplay: m.autoplay,
+            mirror: m.settings.mirror,
             bonus_effect: m.settings.bonus_effect,
         };
-        if m.settings.mirror {
-            log::warn!("mirror is not implemented yet; playing unmirrored");
-        }
         self.last_spec = Some(spec.clone());
         let (cache, se) = (&mut self.hits, &mut self.s.se);
         let hits = |rate| hit_sounds(cache, se, rate);
@@ -429,7 +435,8 @@ impl App {
                 ffmpeg,
                 size: w.min(h).round() as u32,
             });
-        match PlayState::new(spec, opts, &self.s.bgm, hits, video).and_then(|mut p| {
+        let player = Arc::clone(&self.s.player);
+        match PlayState::new(spec, opts, player, &self.s.bgm, hits, video).and_then(|mut p| {
             p.start()?;
             Ok(p)
         }) {

@@ -25,6 +25,6 @@ pub use clock::Clock;
 pub use error::Error;
 pub use hca::{Decoder, HcaStream};
 pub use mixer::MAX_VOICES;
-pub use player::{Player, VoiceId};
+pub use player::{OUTPUT_RATE, Player, VoiceId};
 pub use se::{DEFAULT_SE_SET, HitSounds, SeBank, SeSet};
 pub use sfx::Sfx;

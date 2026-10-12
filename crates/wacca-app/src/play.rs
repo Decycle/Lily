@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use wacca_audio::{BgmBank, HitSounds, Player, VoiceId};
 use wacca_chart::{Chart, Difficulty};
@@ -56,9 +57,12 @@ pub struct PlaySpec {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlayOptions {
     pub note_speed: f64,
-    /// Seconds added to chart time.
+    /// Seconds added to chart time (from the judge-offset setting, see
+    /// [`crate::options::offset_secs`]).
     pub offset: f64,
     pub autoplay: bool,
+    /// Play the left-right mirrored chart (judging and drawing alike).
+    pub mirror: bool,
     pub bonus_effect: bool,
 }
 
@@ -91,8 +95,10 @@ pub fn load_chart(path: &PathBuf) -> Result<Chart, PlayError> {
 pub struct PlayState {
     pub spec: PlaySpec,
     pub opts: PlayOptions,
+    /// As played (mirrored when [`PlayOptions::mirror`] is set).
     chart: Chart,
-    player: Player,
+    /// The app's one output device, shared with the song-select preview.
+    player: Arc<Player>,
     session: Session,
     autoplay: Option<Autoplay>,
     holds: HoldStarts,
@@ -109,22 +115,30 @@ pub struct PlayState {
 }
 
 impl PlayState {
-    /// `hits(rate)` supplies the hit sounds at the output rate (or `None` to play silently).
+    /// Loads the song into `player` (replacing whatever it played). `hits(rate)` supplies the
+    /// hit sounds at the output rate (or `None` to play silently).
     pub fn new(
         spec: PlaySpec,
         opts: PlayOptions,
+        player: Arc<Player>,
         bgm: &BgmBank,
         hits: impl FnOnce(u32) -> Option<HitSounds>,
         video: Option<VideoSetup>,
     ) -> Result<Self, PlayError> {
         let chart = load_chart(&spec.chart_path)?;
+        let chart = if opts.mirror {
+            wacca_chart::mirrored(&chart)
+        } else {
+            chart
+        };
         let cue = &chart.header.music_file_path;
-        let player = Player::new(Box::new(bgm.open_cue(cue)?))?;
+        player.load(Box::new(bgm.open_cue(cue)?))?;
         let end = end_time(&chart, player.duration(), opts.offset);
         log::info!(
-            "{}: cue {cue}, {} notes, play ends at chart {end:.2} s",
+            "{}: cue {cue}, {} notes, mirror {}, play ends at chart {end:.2} s",
             spec.chart_path.display(),
-            chart.notes.len()
+            chart.notes.len(),
+            opts.mirror
         );
         let hits = hits(player.sample_rate());
         let video = video.zip(spec.movie.as_deref()).and_then(|(v, path)| {
