@@ -310,11 +310,10 @@ mod imp {
         } else {
             let path_var = std::env::var_os("PATH");
             let lad = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
-            Some(video::find_ffmpeg(
-                args.ffmpeg.as_deref(),
-                path_var.as_deref(),
-                lad.as_deref(),
-            )?)
+            Some(
+                video::find_ffmpeg(args.ffmpeg.as_deref(), path_var.as_deref(), lad.as_deref())
+                    .map_err(VideoError::from)?,
+            )
         };
 
         game::set_dpi_aware();

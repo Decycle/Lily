@@ -14,6 +14,11 @@ pub const GUIDE_LANE: Rgba = [0.08, 0.08, 0.12, 1.0];
 // UNVERIFIED: brightness from `GuideLaneBrightnessParamAlphaNormal` 600; tint
 // matched by eye to the attract-demo capture (dark navy, brightest at the rim).
 pub const GUIDE_LANE_TINT: Rgba = [0.25, 0.27, 0.40, 0.7];
+/// Guide lanes over a background movie: `RhythmGameAppearanceTable` GuideLaneBrightnessParamAlphaMovie 290 vs
+/// AlphaNormal 600 (06-visuals §1).
+// UNVERIFIED: applied as the lane alpha (290 / 600) over the movie.
+pub const GUIDE_LANE_MOVIE_ALPHA: f32 = 290.0 / 600.0;
+pub const GUIDE_LANE_MOVIE: Rgba = [0.08, 0.08, 0.12, GUIDE_LANE_MOVIE_ALPHA];
 pub const LANE_LINE: Rgba = [0.22, 0.22, 0.30, 1.0];
 /// Judgement ring: magenta band on the line, purple at the bottom and pink at the top
 /// (see `scene::judge_ring_color`), drawn only on lanes that are on.

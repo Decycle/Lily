@@ -7,6 +7,7 @@ use std::path::Path;
 use crate::layout::{ATLAS_SIZE, Vertex, playfield_viewport};
 use crate::sprites::{self, SpriteSheet};
 use crate::style::VIEW_EXTENT;
+use crate::video::VideoLayer;
 
 const SAMPLE_COUNT: u32 = 4;
 const MIN_BUFFER_BYTES: u64 = 64 * 1024;
@@ -23,6 +24,8 @@ pub struct Renderer {
     vertices: wgpu::Buffer,
     /// Multisampled colour target and its size, recreated when the output size changes.
     msaa: Option<(wgpu::TextureView, [u32; 2])>,
+    /// Background movie, drawn under the playfield.
+    video: VideoLayer,
 }
 
 impl Renderer {
@@ -143,6 +146,7 @@ impl Renderer {
             sheet: SpriteSheet::default(),
             vertices: vertex_buffer(device, MIN_BUFFER_BYTES),
             msaa: None,
+            video: VideoLayer::new(device, format, SAMPLE_COUNT),
         };
         // The white block alone: flat colours work without any sprites.
         me.upload(sprites::pack(Vec::new()).1);
@@ -191,6 +195,16 @@ impl Renderer {
         }
     }
 
+    /// New background-movie frame (`yuv420p` planes Y, U, V of a `size` frame); shown until replaced.
+    pub fn set_video_frame(&mut self, size: [u32; 2], planes: [&[u8]; 3]) {
+        self.video.upload(&self.device, &self.queue, size, planes);
+    }
+
+    /// Show or hide the background movie (behind the playfield, filling its square viewport).
+    pub fn show_video(&mut self, visible: bool) {
+        self.video.visible = visible;
+    }
+
     /// Clears `target` (size `target_size` px) to black and draws `scene` in the centred 9:16 area.
     pub fn render(
         &mut self,
@@ -235,11 +249,12 @@ impl Renderer {
             })],
             ..Default::default()
         });
+        let vp = playfield_viewport(target_size[0] as f32, target_size[1] as f32);
+        pass.set_viewport(vp.x, vp.y, vp.w, vp.h, 0.0, 1.0);
+        self.video.draw(&mut pass);
         if scene.is_empty() {
             return;
         }
-        let vp = playfield_viewport(target_size[0] as f32, target_size[1] as f32);
-        pass.set_viewport(vp.x, vp.y, vp.w, vp.h, 0.0, 1.0);
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.atlas_group, &[]);
         pass.set_vertex_buffer(0, self.vertices.slice(..bytes.len() as u64));

@@ -47,7 +47,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         ui,
         chart,
         clock: Clock::start(LEAD_IN),
-        opts: SceneOptions { note_speed: 2.0 },
+        opts: SceneOptions {
+            note_speed: 2.0,
+            ..Default::default()
+        },
     };
     EventLoop::new()?.run_app(&mut app)?;
     Ok(())
@@ -289,7 +292,10 @@ fn snapshot(
         combo: 123,
         ..LiveState::default()
     };
-    let opts = SceneOptions { note_speed: 2.0 };
+    let opts = SceneOptions {
+        note_speed: 2.0,
+        movie: false,
+    };
     let scene = build_scene(chart, at, &opts, &live, renderer.sprites());
     let mut encoder = device.create_command_encoder(&Default::default());
     let view = target.create_view(&Default::default());

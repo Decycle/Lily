@@ -33,7 +33,8 @@ pub struct Args {
     pub autoplay: bool,
     /// Note speed for this session (overrides the saved setting).
     pub speed: Option<f64>,
-    /// User timing offset in seconds, added to chart time (overrides the saved setting).
+    /// User timing offset in seconds, added to chart time (overrides the saved setting, rounded to
+    /// its step: see `options::offset_units`).
     pub offset: Option<f64>,
     /// Directory with `songs.json`, `jackets/`, `fonts/` (from `wacca-convert`).
     pub data: PathBuf,

@@ -9,6 +9,7 @@ pub mod scene;
 pub mod sprites;
 pub mod style;
 pub mod text;
+mod video;
 
 pub use layout::{Paint, Vertex};
 pub use renderer::Renderer;

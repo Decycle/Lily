@@ -31,7 +31,8 @@ fn run(assets: PathBuf, bgm: &str) -> Result<(), Error> {
     }
 
     let bank = BgmBank::open(assets.join("Sound").join("Bgm"))?;
-    let player = Player::new(Box::new(bank.open_cue(bgm)?))?;
+    let player = Player::new()?;
+    player.load(Box::new(bank.open_cue(bgm)?))?;
     let hits = HitSounds::load(&se, &DEFAULT_SE_SET, player.sample_rate())?;
     player.set_volume(0.5);
     player.play();

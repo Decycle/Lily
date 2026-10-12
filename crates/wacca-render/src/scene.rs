@@ -19,6 +19,8 @@ use crate::style::{self, SENSOR_DEPTHS};
 pub struct SceneOptions {
     /// Player note-speed option (1.0..=6.0).
     pub note_speed: f64,
+    /// A background movie plays: guide lanes are drawn translucent so it shows through.
+    pub movie: bool,
 }
 
 /// A judgement at the line, drawn as a short additive flash over the note's lanes.
@@ -49,7 +51,10 @@ pub struct LiveState<'a> {
 
 impl Default for SceneOptions {
     fn default() -> Self {
-        Self { note_speed: 1.0 }
+        Self {
+            note_speed: 1.0,
+            movie: false,
+        }
     }
 }
 
@@ -112,14 +117,21 @@ pub fn build_scene(
     let lanes = LANES as usize;
 
     let mask = mask_state(&chart.masks, now);
+    let (flat, tint) = if opts.movie {
+        let mut tint = style::GUIDE_LANE_TINT;
+        tint[3] *= style::GUIDE_LANE_MOVIE_ALPHA;
+        (style::GUIDE_LANE_MOVIE, tint)
+    } else {
+        (style::GUIDE_LANE, style::GUIDE_LANE_TINT)
+    };
     let guide = sheet.get(Sprite::GuideLane);
     for lane in (0..lanes).filter(|&l| mask[l]) {
         match guide {
             Some(uv) => {
-                let paint = Paint::image(style::GUIDE_LANE_TINT, uv);
+                let paint = Paint::image(tint, uv);
                 paint_sector(&mut out, 1.0, 0.0, lane as f32, 1.0, &paint);
             }
-            None => push_sector(&mut out, 0.0, 1.0, lane as f32, 1.0, style::GUIDE_LANE),
+            None => push_sector(&mut out, 0.0, 1.0, lane as f32, 1.0, flat),
         }
     }
     for lane in (0..lanes).filter(|&l| mask[l] || mask[(l + lanes - 1) % lanes]) {
@@ -536,6 +548,26 @@ mod tests {
         assert_eq!(count(&v, judge_ring_color(15)), 6);
         assert_eq!(count(&v, style::RIM), 60 * 6);
         assert_eq!(v.len() % 3, 0);
+        let movie = SceneOptions {
+            movie: true,
+            ..Default::default()
+        };
+        let none = SpriteSheet::default();
+        let v = build_scene(&chart(vec![]), 0.0, &movie, &LiveState::default(), &none);
+        assert_eq!(count(&v, style::GUIDE_LANE), 0);
+        assert_eq!(count(&v, style::GUIDE_LANE_MOVIE), 60 * 6);
+        // Textured lanes are dimmed the same way.
+        let v = build_scene(
+            &chart(vec![]),
+            0.0,
+            &movie,
+            &LiveState::default(),
+            &full_sheet(),
+        );
+        let mut dim = style::GUIDE_LANE_TINT;
+        dim[3] *= style::GUIDE_LANE_MOVIE_ALPHA;
+        assert_eq!(count(&v, dim), 60 * 6);
+        assert_eq!(count(&v, style::GUIDE_LANE_TINT), 0);
     }
 
     #[test]
@@ -619,7 +651,10 @@ mod tests {
         let v = build_scene(
             &c,
             0.5,
-            &SceneOptions { note_speed: 6.0 },
+            &SceneOptions {
+                note_speed: 6.0,
+                ..Default::default()
+            },
             &LiveState::default(),
             &SpriteSheet::default(),
         );

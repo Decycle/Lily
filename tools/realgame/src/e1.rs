@@ -11,6 +11,9 @@ use serde::Serialize;
 
 /// Frames this much before a press write still count for it (clock alignment slack; shows up as negative latency).
 pub const EARLY_MS: f64 = 30.0;
+/// Frames up to this long after the release write still count for a press (the screen lags ~0.1 s, more under
+/// load). Windows of consecutive presses may overlap; cells are attributed by when they turn on.
+pub const LAG_MS: f64 = 400.0;
 
 /// One captured frame: its time and lit screen cells.
 #[derive(Clone, Debug, PartialEq)]
@@ -80,7 +83,7 @@ pub struct TapResult {
     pub t_script_ms: f64,
     /// `(lane, ring)` pairs.
     pub expected: Vec<(u8, usize)>,
-    /// Every cell lit while the tap was visible.
+    /// Every cell that turned on while the tap was visible.
     pub observed: Vec<(u8, usize)>,
     pub detected: bool,
     pub mapping_ok: bool,
@@ -112,33 +115,30 @@ fn lane_rings(cells: &[usize]) -> Vec<(u8, usize)> {
 
 /// `frames` must be in time order.
 pub fn analyze(presses: &[Press], frames: &[Seen]) -> Analysis {
+    let window = |p: &Press| p.on_ms - EARLY_MS..p.off_ms.unwrap_or(p.on_ms) + LAG_MS;
     let mut taps = Vec::new();
-    let mut explained = vec![false; frames.len()];
-    for (i, p) in presses.iter().enumerate() {
-        let end = presses
-            .get(i + 1)
-            .map_or(f64::INFINITY, |n| n.on_ms - EARLY_MS);
-        let window: Vec<usize> = (0..frames.len())
-            .filter(|&k| (p.on_ms - EARLY_MS..end).contains(&frames[k].t_ms))
+    for p in presses {
+        let w = window(p);
+        let in_window: Vec<usize> = (0..frames.len())
+            .filter(|&k| w.contains(&frames[k].t_ms))
             .collect();
         let shows = |k: usize| frames[k].lit.iter().any(|c| p.expected.contains(c));
-        let first = window.iter().copied().find(|&k| shows(k));
-        let gone = first.and_then(|f| window.iter().copied().find(|&k| k > f && !shows(k)));
+        let first = in_window.iter().copied().find(|&k| shows(k));
+        let gone = first.and_then(|f| in_window.iter().copied().find(|&k| k > f && !shows(k)));
+        // Cells that turn on during the visible span (lingering cells of an earlier tap were already on).
         let mut observed: Vec<usize> = Vec::new();
         if let Some(f) = first {
-            for k in window
+            for k in in_window
                 .iter()
                 .copied()
                 .filter(|&k| k >= f && gone.is_none_or(|g| k < g))
             {
-                observed.extend(&frames[k].lit);
+                let before: &[usize] = k.checked_sub(1).map_or(&[], |b| &frames[b].lit);
+                observed.extend(frames[k].lit.iter().filter(|c| !before.contains(c)));
             }
         }
         observed.sort_unstable();
         observed.dedup();
-        for &k in &window {
-            explained[k] = frames[k].lit.iter().all(|c| p.expected.contains(c));
-        }
         let t = |k: Option<usize>| k.map(|k| frames[k].t_ms);
         taps.push(TapResult {
             t_script_ms: p.t_script_ms,
@@ -153,8 +153,16 @@ pub fn analyze(presses: &[Press], frames: &[Seen]) -> Analysis {
             ack_ms: p.ack_ms,
         });
     }
-    let stray_frames = (0..frames.len())
-        .filter(|&k| !frames[k].lit.is_empty() && !explained[k])
+    let explained = |f: &Seen| {
+        f.lit.iter().all(|c| {
+            presses
+                .iter()
+                .any(|p| window(p).contains(&f.t_ms) && p.expected.contains(c))
+        })
+    };
+    let stray_frames = frames
+        .iter()
+        .filter(|f| !f.lit.is_empty() && !explained(f))
         .count();
     let collect = |f: fn(&TapResult) -> Option<f64>| {
         summarize(&taps.iter().filter_map(f).collect::<Vec<_>>())
@@ -271,5 +279,31 @@ mod tests {
         assert_eq!(a.stray_frames, 2);
         assert_eq!(a.on_latency.map(|s| s.n), Some(2));
         assert_eq!(a.ack.map(|s| (s.n, s.mean)), Some((3, 1.0)));
+    }
+
+    #[test]
+    fn overlapping_windows_attribute_cells_by_onset() {
+        // Two taps 150 ms apart; the screen lags 120 ms, so tap A is still lit when tap B's window opens.
+        let p = presses(
+            &[
+                rec(Kind::Edge, 0.0, &[cell_index(3, 0)]),
+                rec(Kind::Edge, 100.0, &[]),
+                rec(Kind::Edge, 150.0, &[cell_index(4, 0)]),
+                rec(Kind::Edge, 250.0, &[]),
+            ],
+            0.0,
+        );
+        let (a, b) = (screen_cell(3, 0), screen_cell(4, 0));
+        let frames = [
+            seen(120.0, &[a]),
+            seen(200.0, &[a]),
+            seen(220.0, &[]),
+            seen(270.0, &[b]),
+            seen(370.0, &[]),
+        ];
+        let r = analyze(&p, &frames);
+        assert_eq!((r.detected, r.mapping_ok, r.stray_frames), (2, 2, 0));
+        assert_eq!(r.taps[1].on_latency_ms, Some(120.0));
+        assert_eq!(r.taps[0].off_latency_ms, Some(120.0));
     }
 }
