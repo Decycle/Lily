@@ -11,25 +11,32 @@ pub type Rgba = [f32; 4];
 
 pub const GUIDE_LANE: Rgba = [0.08, 0.08, 0.12, 1.0];
 /// Tint of the guide-lane gradient texture (bright at the rim, fading to the centre).
-// UNVERIFIED: brightness from `GuideLaneBrightnessParamAlphaNormal` 600 (of 1000?) dimmed
-// further because our lanes have no movie behind them.
-pub const GUIDE_LANE_TINT: Rgba = [0.30, 0.34, 0.50, 0.3];
+// UNVERIFIED: brightness from `GuideLaneBrightnessParamAlphaNormal` 600; tint
+// matched by eye to the attract-demo capture (dark navy, brightest at the rim).
+pub const GUIDE_LANE_TINT: Rgba = [0.25, 0.27, 0.40, 0.7];
 pub const LANE_LINE: Rgba = [0.22, 0.22, 0.30, 1.0];
-pub const JUDGE_RING: Rgba = [0.92, 0.92, 0.98, 1.0];
-/// Soft additive glow just inside the judgement ring (textured look only).
-pub const JUDGE_GLOW: Rgba = [0.75, 0.85, 1.0, 0.4];
-/// Dark band outside the judgement ring (the sensor rim).
-pub const RIM: Rgba = [0.10, 0.10, 0.14, 1.0];
-/// Tick marks on the rim every [`RIM_TICK_LANES`] lanes.
-pub const RIM_TICK: Rgba = [0.35, 0.38, 0.50, 1.0];
-pub const RIM_TICK_LANES: u8 = 5;
-pub const RIM_WIDTH: f32 = 0.05;
-/// Radial extent of the judgement glow inside the ring.
-pub const JUDGE_GLOW_WIDTH: f32 = 0.08;
+/// Judgement ring: magenta band on the line, purple at the bottom and pink at the top
+/// (see `scene::judge_ring_color`), drawn only on lanes that are on.
+pub const JUDGE_RING_BOTTOM: Rgba = [0.80, 0.15, 1.0, 1.0];
+pub const JUDGE_RING_TOP: Rgba = [1.0, 0.22, 0.65, 1.0];
+/// Additive glow on both sides of the ring (textured look only): opacity and width inside.
+pub const JUDGE_GLOW_ALPHA: f32 = 0.45;
+pub const JUDGE_GLOW_WIDTH: f32 = 0.04;
+/// Bright core line exactly on the judgement line.
+pub const JUDGE_CORE: Rgba = [1.0, 0.80, 1.0, 0.85];
+pub const JUDGE_CORE_HALF_WIDTH: f32 = 0.003;
+/// Grey band outside the judgement ring.
+pub const RIM: Rgba = [0.20, 0.20, 0.25, 0.85];
+pub const RIM_WIDTH: f32 = 0.07;
+/// Measure lines: thin white circles moving with the notes.
+pub const BAR_LINE: Rgba = [1.0, 1.0, 1.0, 0.55];
+pub const BAR_LINE_HALF_WIDTH: f32 = 0.0025;
+/// Most measure lines drawn per frame.
+pub const BAR_LINE_MAX: u32 = 64;
 /// Pressed sensors, drawn over their ring.
 pub const TOUCH_HIGHLIGHT: Rgba = [0.40, 0.90, 1.0, 0.45];
 /// Faint circles at the sensor ring boundaries.
-pub const SENSOR_GUIDE: Rgba = [0.40, 0.45, 0.60, 0.35];
+pub const SENSOR_GUIDE: Rgba = [0.40, 0.45, 0.60, 0.2];
 
 pub const TOUCH: Rgba = [1.0, 0.220, 0.935, 1.0];
 pub const CHAIN: Rgba = [1.0, 0.891, 0.270, 1.0];
@@ -86,7 +93,7 @@ pub const NOTE_THICKNESS: f32 = 0.07;
 pub const ACCENT_THICKNESS: f32 = 0.025;
 /// Lanes trimmed from each end of a note narrower than the full ring (MM trims ~1 segment, 04 §2.3).
 pub const NOTE_TRIM_LANES: f32 = 0.15;
-pub const JUDGE_RING_WIDTH: f32 = 0.02;
+pub const JUDGE_RING_WIDTH: f32 = 0.035;
 /// Radial half-width of a sensor guide circle.
 pub const SENSOR_GUIDE_HALF_WIDTH: f32 = 0.002;
 

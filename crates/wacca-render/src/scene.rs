@@ -5,7 +5,7 @@
 
 use std::f32::consts::PI;
 
-use wacca_chart::{Bonus, Chart, LANES, Note, NoteBody, SlideDir, SnapDir};
+use wacca_chart::{BeatPos, Bonus, Chart, LANES, Note, NoteBody, SlideDir, SnapDir};
 
 use crate::layout::{
     Paint, Vertex, depth_to_radius, last_drawable_time, mask_state, paint_sector, polar,
@@ -158,6 +158,7 @@ pub fn build_scene(
             push_hold_body(&mut out, nodes, depth_of, &hold_paint);
         }
     }
+    push_bar_lines(&mut out, chart, now, depth_of);
     let t = now as f32;
     // Far notes first so nearer ones are drawn on top.
     for (_, note) in chart.notes.iter().enumerate().rev().filter(drawable) {
@@ -182,36 +183,87 @@ pub fn build_scene(
         }
     }
 
-    push_judge_ring(&mut out, sheet);
+    push_judge_ring(&mut out, sheet, &mask);
     push_flashes(&mut out, sheet, live.flashes);
     push_sensor_guides(&mut out, live.touched);
     push_hud_sprites(&mut out, sheet, live);
     out
 }
 
-/// Dark rim with ticks outside the line, the bright judgement ring and a glow inside it.
-fn push_judge_ring(out: &mut Vec<Vertex>, sheet: &SpriteSheet) {
-    let ring_out = 1.0 + style::JUDGE_RING_WIDTH;
+/// Judgement ring colour at `lane`'s start edge: purple at the bottom, pink at the top
+/// (attract-demo capture, `runs/reference`).
+// UNVERIFIED: the game likely samples vT_JudgeColor01 by angle; this is an eyeballed gradient.
+pub fn judge_ring_color(lane: u8) -> style::Rgba {
+    let t = (crate::layout::lane_angle(f32::from(lane)).sin() + 1.0) / 2.0;
+    let (a, b) = (style::JUDGE_RING_BOTTOM, style::JUDGE_RING_TOP);
+    [0, 1, 2, 3].map(|i| a[i] + (b[i] - a[i]) * t)
+}
+
+/// On every lane that is on: grey rim outside the line, the glowing ring on the line, and soft
+/// additive glow on both sides of it.
+fn push_judge_ring(out: &mut Vec<Vertex>, sheet: &SpriteSheet, mask: &[bool]) {
+    let (ring_in, ring_out) = (
+        1.0 - style::JUDGE_RING_WIDTH / 2.0,
+        1.0 + style::JUDGE_RING_WIDTH / 2.0,
+    );
     let rim_out = 1.0 + style::RIM_WIDTH;
-    push_sector(out, ring_out, rim_out, 0.0, LANES as f32, style::RIM);
-    for lane in (0..LANES).step_by(style::RIM_TICK_LANES.into()) {
-        push_radial_line(
-            out,
-            f32::from(lane),
-            ring_out,
-            rim_out,
-            style::LANE_LINE_HALF_WIDTH * 1.5,
-            style::RIM_TICK,
-        );
-    }
-    if let Some([u0, v0, u1, v1]) = sheet.get(Sprite::GuideLane) {
-        // A single column of the gradient, stretched around the ring.
+    let glow = sheet.get(Sprite::GuideLane).map(|[u0, v0, u1, v1]| {
+        // A single column of the gradient (bright at v0), stretched along the ring.
         let u = (u0 + u1) / 2.0;
-        let paint = Paint::image(style::JUDGE_GLOW, [u, v0, u, v1]).additive();
-        let r_in = 1.0 - style::JUDGE_GLOW_WIDTH;
-        paint_sector(out, 1.0, r_in, 0.0, LANES as f32, &paint);
+        [u, v0, u, v1]
+    });
+    for lane in (0..LANES).filter(|&l| mask[usize::from(l)]) {
+        let l = f32::from(lane);
+        let color = judge_ring_color(lane);
+        push_sector(out, ring_out, rim_out, l, 1.0, style::RIM);
+        if let Some(uv) = glow {
+            let paint = Paint::image([color[0], color[1], color[2], style::JUDGE_GLOW_ALPHA], uv)
+                .additive();
+            paint_sector(
+                out,
+                ring_in,
+                ring_in - style::JUDGE_GLOW_WIDTH,
+                l,
+                1.0,
+                &paint,
+            );
+            paint_sector(
+                out,
+                ring_out,
+                ring_out + style::JUDGE_GLOW_WIDTH / 2.0,
+                l,
+                1.0,
+                &paint,
+            );
+        }
+        push_sector(out, ring_in, ring_out, l, 1.0, color);
+        let w = style::JUDGE_CORE_HALF_WIDTH;
+        push_sector(out, 1.0 - w, 1.0 + w, l, 1.0, style::JUDGE_CORE);
     }
-    push_sector(out, 1.0, ring_out, 0.0, LANES as f32, style::JUDGE_RING);
+}
+
+/// Thin white circles at measure starts, travelling like notes (vMsh_BarLine00_60_s).
+fn push_bar_lines(out: &mut Vec<Vertex>, chart: &Chart, now: f64, depth_of: impl Fn(f64) -> f64) {
+    let ticks = BeatPos {
+        measure: 1,
+        tick: 0,
+    }
+    .abs_tick() as f64;
+    let first = (chart.sec_to_tick(chart.view_time(now)) / ticks)
+        .floor()
+        .max(0.0) as u32;
+    for measure in first..first + style::BAR_LINE_MAX {
+        let t = chart.tick_to_sec(BeatPos { measure, tick: 0 }.abs_tick());
+        if t > chart.end_time {
+            break;
+        }
+        let d = depth_of(t);
+        if (0.0..=1.0).contains(&d) {
+            let r = depth_to_radius(d as f32);
+            let w = style::BAR_LINE_HALF_WIDTH;
+            push_sector(out, r - w, r + w, 0.0, LANES as f32, style::BAR_LINE);
+        }
+    }
 }
 
 fn push_flashes(out: &mut Vec<Vertex>, sheet: &SpriteSheet, flashes: &[Flash]) {
@@ -480,8 +532,49 @@ mod tests {
         );
         assert_eq!(count(&v, style::GUIDE_LANE), 60 * 6);
         assert_eq!(count(&v, style::LANE_LINE), 60 * 6);
-        assert_eq!(count(&v, style::JUDGE_RING), 60 * 6);
+        // Lane 15 (top) has a ring colour of its own; the rim goes all the way round.
+        assert_eq!(count(&v, judge_ring_color(15)), 6);
+        assert_eq!(count(&v, style::RIM), 60 * 6);
         assert_eq!(v.len() % 3, 0);
+    }
+
+    #[test]
+    fn ring_colour_runs_purple_bottom_to_pink_top() {
+        assert_eq!(judge_ring_color(45), style::JUDGE_RING_BOTTOM);
+        let top = judge_ring_color(15);
+        assert!(
+            top.iter()
+                .zip(style::JUDGE_RING_TOP)
+                .all(|(a, b)| (a - b).abs() < 1e-6)
+        );
+    }
+
+    #[test]
+    fn bar_lines_at_visible_measures() {
+        // Default tempo: 120 BPM 4/4, 2 s per measure; at note speed 1 the window is 3.3 s.
+        let v = build_scene(
+            &chart(vec![]),
+            1.0,
+            &SceneOptions::default(),
+            &LiveState::default(),
+            &SpriteSheet::default(),
+        );
+        // Measures at 2 s and 4 s are ahead; 0 s has passed.
+        assert_eq!(count(&v, style::BAR_LINE), 2 * 60 * 6);
+        let mut c = chart(vec![]);
+        c.end_time = 3.0;
+        let v = build_scene(
+            &c,
+            1.0,
+            &SceneOptions::default(),
+            &LiveState::default(),
+            &SpriteSheet::default(),
+        );
+        assert_eq!(
+            count(&v, style::BAR_LINE),
+            60 * 6,
+            "none after the chart ends"
+        );
     }
 
     #[test]
@@ -502,6 +595,7 @@ mod tests {
             &SpriteSheet::default(),
         );
         assert_eq!(count(&v, style::GUIDE_LANE), 10 * 6);
+        assert_eq!(count(&v, style::RIM), 10 * 6);
         assert_eq!(count(&v, style::LANE_LINE), 11 * 6);
     }
 

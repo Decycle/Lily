@@ -176,7 +176,8 @@ pub fn source(s: Sprite) -> Source {
             },
             Bake::Image,
         ),
-        Sprite::Combo => src("UI/Textures/FONT/uT_FTcombo00", Bake::Image),
+        // The white variant matches the attract-demo capture at low combos.
+        Sprite::Combo => src("UI/Textures/FONT/uT_FTcombo01", Bake::Image),
     }
 }
 
