@@ -77,15 +77,13 @@ fn song_from_row(
     if charts.is_empty() {
         return Ok(None);
     }
-    let genre: i64 = row.int("ScoreGenre")?;
     Ok(Some(Song {
         id: row.int("UniqueID")?,
         title: row.str("MusicMessage")?.to_owned(),
         artist: row.str("ArtistMessage")?.to_owned(),
         reading: row.str("Rubi")?.to_owned(),
         bpm: row.str("Bpm")?.to_owned(),
-        // ScoreGenre −1 marks test songs, which u8 cannot hold; they get 255.
-        genre: u8::try_from(genre).unwrap_or(u8::MAX),
+        genre: row.int("ScoreGenre")?,
         version: row.int("VersionNo")?,
         jacket: row.str("JacketAssetName")?.to_owned(),
         preview_begin: widen(row.float("PreviewBeginTime")?),
@@ -241,6 +239,6 @@ mod tests {
         )]);
         let songs = songs_from_table(&table(vec![test_song, broken]), |_| true);
         assert_eq!(songs.len(), 1);
-        assert_eq!(songs[0].genre, u8::MAX);
+        assert_eq!(songs[0].genre, -1);
     }
 }

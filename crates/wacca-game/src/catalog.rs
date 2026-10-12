@@ -15,7 +15,8 @@ pub struct Song {
     pub reading: String,
     /// Display BPM text, e.g. `150` or `120-180`.
     pub bpm: String,
-    pub genre: u8,
+    /// `ScoreGenre`; -1 marks test songs.
+    pub genre: i8,
     pub version: u8,
     /// Jacket texture asset, e.g. `S03/uT_J_S03_30`.
     pub jacket: String,
