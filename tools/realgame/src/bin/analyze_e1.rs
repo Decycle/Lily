@@ -166,7 +166,8 @@ fn run(args: &[String]) -> Result<(), Error> {
 
     let path_var = std::env::var_os("PATH");
     let lad = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
-    let ff = video::find_ffmpeg(ffmpeg.as_deref(), path_var.as_deref(), lad.as_deref())?;
+    let ff = video::find_ffmpeg(ffmpeg.as_deref(), path_var.as_deref(), lad.as_deref())
+        .map_err(video::VideoError::from)?;
     let (w, h) = (
         num(&meta, "/window/width")? as usize,
         num(&meta, "/window/height")? as usize,

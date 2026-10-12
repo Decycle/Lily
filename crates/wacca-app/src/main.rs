@@ -171,14 +171,16 @@ fn run(args: &Args) -> Result<(), Error> {
     let se = SeBank::open(args.assets.join("Sound").join("Se"))
         .map_err(|e| log::warn!("SE bank: {e}; no hit sounds"))
         .ok();
-    let ffmpeg = wacca_video::find_ffmpeg_from_env();
-    match &ffmpeg {
-        Some(p) => log::info!("ffmpeg: {}", p.display()),
-        None => log::warn!(
-            "ffmpeg not found (set {} or install it, e.g. `winget install Gyan.FFmpeg`); no background movies",
-            wacca_video::ffmpeg::FFMPEG_ENV
-        ),
-    }
+    let ffmpeg = match wacca_video::find_ffmpeg_from_env() {
+        Ok(p) => {
+            log::info!("ffmpeg: {}", p.display());
+            Some(p)
+        }
+        Err(e) => {
+            log::warn!("{e}; no background movies");
+            None
+        }
+    };
     let fonts = Fonts::load(&pick_fonts(
         font_candidates(&args.data, &args.assets),
         Path::exists,

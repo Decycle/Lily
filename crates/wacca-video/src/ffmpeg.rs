@@ -15,18 +15,30 @@ const FFMPEG_EXE: &str = if cfg!(windows) {
 /// Environment variable naming the ffmpeg executable explicitly.
 pub const FFMPEG_ENV: &str = "WACCA_FFMPEG";
 
-/// `explicit` if it is a file, else `ffmpeg` on `path_var`, else winget's `Links\ffmpeg.exe`, else the newest
+/// Why no ffmpeg executable was found.
+#[derive(Debug, thiserror::Error)]
+pub enum FindError {
+    #[error(
+        "ffmpeg not found (tried the explicit path / {FFMPEG_ENV}, PATH, %LOCALAPPDATA%\\Microsoft\\WinGet); install it with `winget install Gyan.FFmpeg` or name it explicitly (--ffmpeg <path> / {FFMPEG_ENV})"
+    )]
+    NotFound,
+    #[error("ffmpeg path {} does not exist", .0.display())]
+    BadPath(PathBuf),
+}
+
+/// `explicit` (must exist), else `ffmpeg` on `path_var`, else winget's `Links\ffmpeg.exe`, else the newest
 /// `Packages\Gyan.FFmpeg*\*\bin\ffmpeg.exe` under `local_app_data`.
 pub fn find_ffmpeg(
     explicit: Option<&Path>,
     path_var: Option<&OsStr>,
     local_app_data: Option<&Path>,
-) -> Option<PathBuf> {
+) -> Result<PathBuf, FindError> {
     if let Some(p) = explicit {
-        if p.is_file() {
-            return Some(p.to_path_buf());
-        }
-        log::warn!("{FFMPEG_ENV}={} is not a file; searching", p.display());
+        return if p.is_file() {
+            Ok(p.to_path_buf())
+        } else {
+            Err(FindError::BadPath(p.to_path_buf()))
+        };
     }
     let on_path = path_var
         .into_iter()
@@ -37,11 +49,15 @@ pub fn find_ffmpeg(
     let packages = winget
         .iter()
         .flat_map(|w| winget_packages(&w.join("Packages")));
-    on_path.chain(link).chain(packages).find(|p| p.is_file())
+    on_path
+        .chain(link)
+        .chain(packages)
+        .find(|p| p.is_file())
+        .ok_or(FindError::NotFound)
 }
 
 /// [`find_ffmpeg`] with [`FFMPEG_ENV`], `PATH` and `LOCALAPPDATA` from the environment.
-pub fn find_ffmpeg_from_env() -> Option<PathBuf> {
+pub fn find_ffmpeg_from_env() -> Result<PathBuf, FindError> {
     let explicit = std::env::var_os(FFMPEG_ENV).map(PathBuf::from);
     let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
     find_ffmpeg(
@@ -123,23 +139,54 @@ mod tests {
         assert!(a.contains("-i pipe:0 -ss 12.500000 -vf scale=540:540:flags=bilinear -an"));
     }
 
+    fn touch(p: &Path) {
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, b"").unwrap();
+    }
+
     #[test]
-    fn finds_explicit_then_path_then_winget() {
-        let dir = std::env::temp_dir().join(format!("wacca-video-ffmpeg-{}", std::process::id()));
-        let bin = dir.join("Microsoft/WinGet/Packages/Gyan.FFmpeg_x/ffmpeg-9/bin");
-        std::fs::create_dir_all(&bin).unwrap();
-        let exe = bin.join(FFMPEG_EXE);
-        std::fs::write(&exe, b"").unwrap();
-        assert_eq!(find_ffmpeg(Some(&exe), None, None), Some(exe.clone()));
+    fn discovery_order() {
+        let root = std::env::temp_dir().join(format!("wacca-video-ffmpeg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let lad = root.join("lad");
+        let pkgs = lad.join("Microsoft").join("WinGet").join("Packages");
+        let old = pkgs
+            .join("Gyan.FFmpeg_x/ffmpeg-8.0-full_build/bin")
+            .join(FFMPEG_EXE);
+        let new = pkgs
+            .join("Gyan.FFmpeg_x/ffmpeg-9.0.2-full_build/bin")
+            .join(FFMPEG_EXE);
+        touch(&old);
+        touch(&new);
+        touch(&pkgs.join("Other.Tool/x/bin").join(FFMPEG_EXE));
+        // Newest winget build wins.
+        assert_eq!(find_ffmpeg(None, None, Some(&lad)).unwrap(), new);
+
+        // PATH beats winget.
+        let path_dir = root.join("pathdir");
+        touch(&path_dir.join(FFMPEG_EXE));
+        let path_var = std::env::join_paths([root.join("empty"), path_dir.clone()]).unwrap();
         assert_eq!(
-            find_ffmpeg(None, Some(bin.as_os_str()), None),
-            Some(exe.clone())
+            find_ffmpeg(None, Some(&path_var), Some(&lad)).unwrap(),
+            path_dir.join(FFMPEG_EXE)
         );
-        assert_eq!(
-            find_ffmpeg(Some(&dir.join("nope")), None, Some(&dir)),
-            Some(exe)
+
+        // An explicit path must exist and is never silently replaced.
+        let explicit = root.join("custom.exe");
+        assert!(matches!(
+            find_ffmpeg(Some(&explicit), Some(&path_var), Some(&lad)),
+            Err(FindError::BadPath(_))
+        ));
+        touch(&explicit);
+        assert_eq!(find_ffmpeg(Some(&explicit), None, None).unwrap(), explicit);
+
+        let none = find_ffmpeg(None, None, Some(&root.join("nothing")));
+        assert!(matches!(none, Err(FindError::NotFound)));
+        assert!(
+            none.unwrap_err()
+                .to_string()
+                .contains("winget install Gyan.FFmpeg")
         );
-        assert_eq!(find_ffmpeg(None, None, Some(&dir.join("empty"))), None);
-        std::fs::remove_dir_all(&dir).unwrap();
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

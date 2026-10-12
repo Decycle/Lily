@@ -2146,6 +2146,7 @@ dependencies = [
  "thiserror 2.0.21",
  "wacca-chart",
  "wacca-game",
+ "wacca-video",
 ]
 
 [[package]]
