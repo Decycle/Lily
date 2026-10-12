@@ -2154,6 +2154,7 @@ dependencies = [
  "ab_glyph",
  "bytemuck",
  "env_logger",
+ "image",
  "log",
  "pollster",
  "thiserror 2.0.21",

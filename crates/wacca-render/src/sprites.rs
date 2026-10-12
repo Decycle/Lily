@@ -1,0 +1,491 @@
+//! Playfield sprites from the original textures (`data/ui/<asset path>.png`, written by
+//! `wacca-convert --export-ui Vfx/Textures --export-ui UI/Textures/FONT`). Spec: 06 §3.
+//!
+//! Most Vfx textures are channel-packed masks for UE materials we do not run; each sprite names
+//! its source, the rows it uses and how the channels are baked into the atlas convention of
+//! [`Paint`](crate::layout::Paint): plain premultiplied images, or masks with `r` = white
+//! highlight, `g` = shade of the vertex colour, `a` = coverage. Baking and packing are pure;
+//! [`load_sources`] is the only IO. Missing files are logged and the scene falls back to flat
+//! colours for that sprite.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use crate::layout::{ATLAS_SIZE, UvRect, WHITE_BLOCK};
+use crate::text::Shelves;
+
+/// Judgement word art (`uT_FTdecision01..04`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum JudgeSprite {
+    Marvelous,
+    Great,
+    Good,
+    Miss,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Sprite {
+    /// Bevelled note face (mask), arc along u, outer edge at v = 0.
+    NoteFace,
+    /// Chain-note diagonal stripes (alpha).
+    ChainStripes,
+    /// Bonus-note sparkle star (alpha).
+    Sparkle,
+    /// Slide chevron (mask), pointing towards +v.
+    SlideArrow,
+    /// Snap double chevron (mask), pointing towards −u.
+    SnapArrow,
+    /// Guide-lane gradient (alpha), bright at v = 0.
+    GuideLane,
+    /// Hold body cross-section (alpha), symmetric along u.
+    HoldBody,
+    /// Soft round glow (alpha).
+    Glow,
+    Judge(JudgeSprite),
+    /// "COMBO" word art.
+    Combo,
+}
+
+impl Sprite {
+    pub const ALL: [Sprite; 13] = [
+        Sprite::NoteFace,
+        Sprite::ChainStripes,
+        Sprite::Sparkle,
+        Sprite::SlideArrow,
+        Sprite::SnapArrow,
+        Sprite::GuideLane,
+        Sprite::HoldBody,
+        Sprite::Glow,
+        Sprite::Judge(JudgeSprite::Marvelous),
+        Sprite::Judge(JudgeSprite::Great),
+        Sprite::Judge(JudgeSprite::Good),
+        Sprite::Judge(JudgeSprite::Miss),
+        Sprite::Combo,
+    ];
+}
+
+/// Colour channel index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ch {
+    R = 0,
+    G = 1,
+    B = 2,
+    A = 3,
+}
+
+/// How a source texture becomes an atlas sprite.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Bake {
+    /// Colour image with straight alpha.
+    Image,
+    /// White, alpha from one channel.
+    Alpha(Ch),
+    /// Mask: highlight = `hi` × `hi_gain`, shade = `shade_lo + (1 − shade_lo) × shade`,
+    /// coverage from `alpha` (opaque if `None`).
+    Mask {
+        hi: Ch,
+        hi_gain: f32,
+        shade: Ch,
+        shade_lo: f32,
+        alpha: Option<Ch>,
+    },
+}
+
+/// Where a sprite comes from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Source {
+    /// PNG path relative to the `ui` export directory, without extension.
+    pub file: &'static str,
+    /// Rows used, as fractions of the height.
+    pub rows: (f32, f32),
+    pub bake: Bake,
+    /// Halve the resolution this many times (big masks shown small; there are no mipmaps).
+    pub shrink: u32,
+    /// Make the image symmetric along u (left half mirrored onto the right).
+    pub mirror_u: bool,
+}
+
+const ALL_ROWS: (f32, f32) = (0.0, 1.0);
+
+pub fn source(s: Sprite) -> Source {
+    let src = |file, bake| Source {
+        file,
+        rows: ALL_ROWS,
+        bake,
+        shrink: 0,
+        mirror_u: false,
+    };
+    match s {
+        // UNVERIFIED: which atlas rows the note meshes map is a guess from the channel layout
+        // (rows 0.40..0.58 hold a bevelled rectangle: R = rim highlight, G = face shading).
+        Sprite::NoteFace => Source {
+            rows: (0.40, 0.58),
+            shrink: 2,
+            ..src(
+                "Vfx/Textures/vT_NoteBase00_00_m",
+                Bake::Mask {
+                    hi: Ch::R,
+                    hi_gain: 0.6,
+                    shade: Ch::G,
+                    shade_lo: 0.55,
+                    alpha: None,
+                },
+            )
+        },
+        // UNVERIFIED: the alpha channel's diagonal stripes are taken as the chain pattern
+        // (material switch `ChainNote`).
+        Sprite::ChainStripes => Source {
+            rows: (0.60, 1.0),
+            shrink: 2,
+            ..src("Vfx/Textures/vT_NoteBase00_00_m", Bake::Alpha(Ch::A))
+        },
+        Sprite::Sparkle => src("Vfx/Textures/vT_BNotePat01_00_m", Bake::Alpha(Ch::B)),
+        Sprite::SlideArrow => src(
+            "Vfx/Textures/vT_SlideNote00_00_m",
+            Bake::Mask {
+                hi: Ch::G,
+                hi_gain: 0.8,
+                shade: Ch::R,
+                shade_lo: 0.5,
+                alpha: Some(Ch::B),
+            },
+        ),
+        Sprite::SnapArrow => src(
+            "Vfx/Textures/vT_SnapNote00_00_m",
+            Bake::Mask {
+                hi: Ch::R,
+                hi_gain: 0.5,
+                shade: Ch::G,
+                shade_lo: 0.6,
+                alpha: Some(Ch::B),
+            },
+        ),
+        Sprite::GuideLane => src("Vfx/Textures/vT_GuideLane01_00_m", Bake::Alpha(Ch::R)),
+        // UNVERIFIED: the R columns (bright → dark) read as edge → centre of the hold body.
+        Sprite::HoldBody => Source {
+            mirror_u: true,
+            ..src("Vfx/Textures/vT_HoldNote01_00_m", Bake::Alpha(Ch::R))
+        },
+        Sprite::Glow => src("Vfx/Textures/vT_Glow00_00_m", Bake::Alpha(Ch::R)),
+        Sprite::Judge(j) => src(
+            match j {
+                JudgeSprite::Marvelous => "UI/Textures/FONT/uT_FTdecision01",
+                JudgeSprite::Great => "UI/Textures/FONT/uT_FTdecision02",
+                JudgeSprite::Good => "UI/Textures/FONT/uT_FTdecision03",
+                JudgeSprite::Miss => "UI/Textures/FONT/uT_FTdecision04",
+            },
+            Bake::Image,
+        ),
+        Sprite::Combo => src("UI/Textures/FONT/uT_FTcombo00", Bake::Image),
+    }
+}
+
+/// RGBA8 image.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Image {
+    pub size: [u32; 2],
+    pub rgba: Vec<u8>,
+}
+
+impl Image {
+    fn px(&self, x: u32, y: u32) -> [u8; 4] {
+        let i = ((y * self.size[0] + x) * 4) as usize;
+        let mut p = [0; 4];
+        p.copy_from_slice(&self.rgba[i..i + 4]);
+        p
+    }
+
+    fn from_fn(size: [u32; 2], f: impl Fn(u32, u32) -> [u8; 4]) -> Self {
+        let mut rgba = Vec::with_capacity((size[0] * size[1] * 4) as usize);
+        for y in 0..size[1] {
+            for x in 0..size[0] {
+                rgba.extend_from_slice(&f(x, y));
+            }
+        }
+        Self { size, rgba }
+    }
+
+    fn rows(&self, (a, b): (f32, f32)) -> Self {
+        let h = self.size[1] as f32;
+        let y0 = (a * h).round() as u32;
+        let y1 = ((b * h).round() as u32).clamp(y0 + 1, self.size[1]);
+        Self::from_fn([self.size[0], y1 - y0], |x, y| self.px(x, y + y0))
+    }
+
+    /// 2×2 box filter.
+    fn half(&self) -> Self {
+        let [w, h] = [(self.size[0] / 2).max(1), (self.size[1] / 2).max(1)];
+        Self::from_fn([w, h], |x, y| {
+            let mut sum = [0u32; 4];
+            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                let p = self.px(
+                    (2 * x + dx).min(self.size[0] - 1),
+                    (2 * y + dy).min(self.size[1] - 1),
+                );
+                for c in 0..4 {
+                    sum[c] += u32::from(p[c]);
+                }
+            }
+            sum.map(|s| (s / 4) as u8)
+        })
+    }
+
+    fn mirror_u(&self) -> Self {
+        let w = self.size[0];
+        Self::from_fn(self.size, |x, y| {
+            let sx = if x < w / 2 { 2 * x } else { 2 * (w - 1 - x) };
+            self.px(sx.min(w - 1), y)
+        })
+    }
+}
+
+/// Bake `img` per `src` into a premultiplied atlas sprite.
+pub fn bake(img: &Image, src: &Source) -> Image {
+    let mut img = img.rows(src.rows);
+    for _ in 0..src.shrink {
+        img = img.half();
+    }
+    if src.mirror_u {
+        img = img.mirror_u();
+    }
+    let unit = |v: u8| f32::from(v) / 255.0;
+    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    Image::from_fn(img.size, |x, y| {
+        let p = img.px(x, y);
+        let (rgb, a) = match src.bake {
+            Bake::Image => ([unit(p[0]), unit(p[1]), unit(p[2])], unit(p[3])),
+            Bake::Alpha(c) => ([1.0; 3], unit(p[c as usize])),
+            Bake::Mask {
+                hi,
+                hi_gain,
+                shade,
+                shade_lo,
+                alpha,
+            } => {
+                let s = shade_lo + (1.0 - shade_lo) * unit(p[shade as usize]);
+                let a = alpha.map_or(1.0, |c| unit(p[c as usize]));
+                ([unit(p[hi as usize]) * hi_gain, s, 0.0], a)
+            }
+        };
+        [
+            byte(rgb[0] * a),
+            byte(rgb[1] * a),
+            byte(rgb[2] * a),
+            byte(a),
+        ]
+    })
+}
+
+/// Where each loaded sprite sits in the atlas. Empty (`default`) = everything flat.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SpriteSheet {
+    uvs: HashMap<Sprite, UvRect>,
+    /// Pixel size of each sprite (for aspect ratios).
+    sizes: HashMap<Sprite, [u32; 2]>,
+}
+
+impl SpriteSheet {
+    pub fn get(&self, s: Sprite) -> Option<UvRect> {
+        self.uvs.get(&s).copied()
+    }
+
+    /// Height / width of a loaded sprite.
+    pub fn aspect(&self, s: Sprite) -> Option<f32> {
+        self.sizes.get(&s).map(|[w, h]| *h as f32 / *w as f32)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.uvs.is_empty()
+    }
+
+    /// Register a sprite (tests and [`pack`]).
+    pub fn insert(&mut self, s: Sprite, uv: UvRect, size: [u32; 2]) {
+        self.uvs.insert(s, uv);
+        self.sizes.insert(s, size);
+    }
+}
+
+/// An image placed at `at` (texels) in the atlas.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Placed {
+    pub at: [u32; 2],
+    pub image: Image,
+}
+
+/// Pack baked sprites into the atlas, after the opaque white block at the origin. Sprites that
+/// do not fit are logged and left out.
+pub fn pack(sprites: Vec<(Sprite, Image)>) -> (SpriteSheet, Vec<Placed>) {
+    let mut shelves = Shelves::new([ATLAS_SIZE, ATLAS_SIZE]);
+    let mut placed = Vec::new();
+    if let Some(at) = shelves.alloc(WHITE_BLOCK, WHITE_BLOCK) {
+        let rgba = vec![255; (WHITE_BLOCK * WHITE_BLOCK * 4) as usize];
+        let size = [WHITE_BLOCK; 2];
+        placed.push(Placed {
+            at,
+            image: Image { size, rgba },
+        });
+    }
+    let mut sheet = SpriteSheet::default();
+    let mut sprites = sprites;
+    sprites.sort_by_key(|(_, img)| std::cmp::Reverse(img.size[1]));
+    let s = ATLAS_SIZE as f32;
+    for (sprite, image) in sprites {
+        let [w, h] = image.size;
+        let Some(at) = shelves.alloc(w, h) else {
+            log::warn!("sprite atlas full; {sprite:?} ({w}x{h}) left out");
+            continue;
+        };
+        // Half-texel inset so bilinear sampling stays inside the sprite.
+        let uv = [
+            (at[0] as f32 + 0.5) / s,
+            (at[1] as f32 + 0.5) / s,
+            (at[0] + w) as f32 / s - 0.5 / s,
+            (at[1] + h) as f32 / s - 0.5 / s,
+        ];
+        sheet.insert(sprite, uv, [w, h]);
+        placed.push(Placed { at, image });
+    }
+    (sheet, placed)
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SpriteError {
+    #[error("{}: {source}", path.display())]
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("{}: {source}", path.display())]
+    Decode {
+        path: PathBuf,
+        source: image::ImageError,
+    },
+}
+
+fn read_png(path: &Path) -> Result<Image, SpriteError> {
+    let bytes = std::fs::read(path).map_err(|source| SpriteError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let img = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
+        .map_err(|source| SpriteError::Decode {
+            path: path.to_path_buf(),
+            source,
+        })?
+        .to_rgba8();
+    Ok(Image {
+        size: [img.width(), img.height()],
+        rgba: img.into_raw(),
+    })
+}
+
+/// Read and bake every sprite found under `ui_dir`; missing or unreadable ones are logged.
+pub fn load_sources(ui_dir: &Path) -> Vec<(Sprite, Image)> {
+    let mut cache: HashMap<&str, Option<Image>> = HashMap::new();
+    let mut out = Vec::new();
+    for sprite in Sprite::ALL {
+        let src = source(sprite);
+        let img = cache.entry(src.file).or_insert_with(|| {
+            let path = ui_dir.join(format!("{}.png", src.file));
+            read_png(&path).map_err(|e| log::warn!("{e}")).ok()
+        });
+        if let Some(img) = img {
+            out.push((sprite, bake(img, &src)));
+        }
+    }
+    log::info!(
+        "{} of {} playfield sprites loaded from {}",
+        out.len(),
+        Sprite::ALL.len(),
+        ui_dir.display()
+    );
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn img(size: [u32; 2], f: impl Fn(u32, u32) -> [u8; 4]) -> Image {
+        Image::from_fn(size, f)
+    }
+
+    #[test]
+    fn rows_and_shrink() {
+        let i = img([4, 10], |x, y| [x as u8, y as u8, 0, 255]);
+        let src = Source {
+            file: "",
+            rows: (0.2, 0.6),
+            bake: Bake::Image,
+            shrink: 1,
+            mirror_u: false,
+        };
+        let b = bake(&i, &src);
+        assert_eq!(b.size, [2, 2]);
+        // Rows 2..6 halved: first texel averages x 0..1, y 2..3.
+        assert_eq!(b.px(0, 0), [0, 2, 0, 255]);
+        assert_eq!(b.px(1, 1), [2, 4, 0, 255]);
+    }
+
+    #[test]
+    fn alpha_and_mask_bakes_are_premultiplied() {
+        let i = img([1, 1], |_, _| [255, 0, 128, 255]);
+        let alpha = |c| Source {
+            file: "",
+            rows: ALL_ROWS,
+            bake: Bake::Alpha(c),
+            shrink: 0,
+            mirror_u: false,
+        };
+        assert_eq!(bake(&i, &alpha(Ch::B)).rgba, vec![128, 128, 128, 128]);
+        let mask = Source {
+            bake: Bake::Mask {
+                hi: Ch::R,
+                hi_gain: 0.5,
+                shade: Ch::G,
+                shade_lo: 0.6,
+                alpha: Some(Ch::B),
+            },
+            ..alpha(Ch::R)
+        };
+        // a = 128/255: hi 0.5·a, shade 0.6·a.
+        assert_eq!(bake(&i, &mask).rgba, vec![64, 77, 0, 128]);
+    }
+
+    #[test]
+    fn mirror_makes_u_symmetric() {
+        let i = img([4, 1], |x, _| [x as u8 * 10, 0, 0, 255]);
+        let m = i.mirror_u();
+        let r: Vec<u8> = (0..4).map(|x| m.px(x, 0)[0]).collect();
+        assert_eq!(r, [0, 20, 20, 0]);
+    }
+
+    #[test]
+    fn pack_places_white_block_first_and_insets_uvs() {
+        let sprite = img([8, 4], |_, _| [255; 4]);
+        let (sheet, placed) = pack(vec![(Sprite::Glow, sprite)]);
+        assert_eq!(placed[0].at, [0, 0]);
+        assert_eq!(placed[0].image.size, [WHITE_BLOCK; 2]);
+        let uv = sheet.get(Sprite::Glow).unwrap();
+        let at = placed[1].at;
+        let s = ATLAS_SIZE as f32;
+        assert!((uv[0] - (at[0] as f32 + 0.5) / s).abs() < 1e-7);
+        assert!((uv[3] - (at[1] as f32 + 3.5) / s).abs() < 1e-7);
+        assert_eq!(sheet.aspect(Sprite::Glow), Some(0.5));
+        assert!(sheet.get(Sprite::Combo).is_none());
+    }
+
+    #[test]
+    fn missing_files_load_nothing() {
+        let dir = std::env::temp_dir().join("wacca-render-no-such-ui-dir");
+        assert!(load_sources(&dir).is_empty());
+    }
+
+    #[test]
+    fn every_sprite_has_a_source() {
+        for s in Sprite::ALL {
+            let src = source(s);
+            assert!(src.rows.0 < src.rows.1 && !src.file.is_empty(), "{s:?}");
+        }
+    }
+}

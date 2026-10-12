@@ -1,6 +1,11 @@
-//! wgpu side: one pipeline drawing the [`build_scene`](crate::build_scene) triangle list with 4x MSAA.
+//! wgpu side: one pipeline drawing the [`build_scene`](crate::build_scene) triangle list with 4x MSAA,
+//! sampling one premultiplied sprite atlas (premultiplied-alpha blending; additive vertices write
+//! alpha 0).
 
-use crate::layout::{Vertex, playfield_viewport};
+use std::path::Path;
+
+use crate::layout::{ATLAS_SIZE, Vertex, playfield_viewport};
+use crate::sprites::{self, SpriteSheet};
 use crate::style::VIEW_EXTENT;
 
 const SAMPLE_COUNT: u32 = 4;
@@ -12,6 +17,9 @@ pub struct Renderer {
     queue: wgpu::Queue,
     format: wgpu::TextureFormat,
     pipeline: wgpu::RenderPipeline,
+    atlas: wgpu::Texture,
+    atlas_group: wgpu::BindGroup,
+    sheet: SpriteSheet,
     vertices: wgpu::Buffer,
     /// Multisampled colour target and its size, recreated when the output size changes.
     msaa: Option<(wgpu::TextureView, [u32; 2])>,
@@ -20,9 +28,30 @@ pub struct Renderer {
 impl Renderer {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
         let module = device.create_shader_module(wgpu::include_wgsl!("playfield.wgsl"));
+        let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("playfield atlas"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("playfield"),
-            bind_group_layouts: &[],
+            bind_group_layouts: &[&bind_layout],
             push_constant_ranges: &[],
         });
         let linearize = if format.is_srgb() { 1.0 } else { 0.0 };
@@ -34,7 +63,9 @@ impl Renderer {
             constants: &constants,
             ..Default::default()
         };
-        let attributes = wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4];
+        let attributes = wgpu::vertex_attr_array![
+            0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Float32x2
+        ];
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("playfield"),
             layout: Some(&layout),
@@ -60,20 +91,103 @@ impl Renderer {
                 compilation_options: options,
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
             multiview: None,
             cache: None,
         });
-        Self {
+        let atlas = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("playfield atlas"),
+            size: wgpu::Extent3d {
+                width: ATLAS_SIZE,
+                height: ATLAS_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("playfield atlas"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let view = atlas.create_view(&wgpu::TextureViewDescriptor::default());
+        let atlas_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("playfield atlas"),
+            layout: &bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
+        let me = Self {
             device: device.clone(),
             queue: queue.clone(),
             format,
             pipeline,
+            atlas,
+            atlas_group,
+            sheet: SpriteSheet::default(),
             vertices: vertex_buffer(device, MIN_BUFFER_BYTES),
             msaa: None,
+        };
+        // The white block alone: flat colours work without any sprites.
+        me.upload(sprites::pack(Vec::new()).1);
+        me
+    }
+
+    /// Load the playfield sprites from `ui_dir` (the `data/ui` export). Missing textures are
+    /// logged and drawn in flat colours.
+    pub fn load_sprites(&mut self, ui_dir: &Path) {
+        let (sheet, placed) = sprites::pack(sprites::load_sources(ui_dir));
+        self.upload(placed);
+        self.sheet = sheet;
+    }
+
+    /// Sprites available to [`build_scene`](crate::build_scene).
+    pub fn sprites(&self) -> &SpriteSheet {
+        &self.sheet
+    }
+
+    fn upload(&self, placed: Vec<sprites::Placed>) {
+        for p in placed {
+            let [w, h] = p.image.size;
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.atlas,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: p.at[0],
+                        y: p.at[1],
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &p.image.rgba,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * w),
+                    rows_per_image: Some(h),
+                },
+                wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+            );
         }
     }
 
@@ -127,6 +241,7 @@ impl Renderer {
         let vp = playfield_viewport(target_size[0] as f32, target_size[1] as f32);
         pass.set_viewport(vp.x, vp.y, vp.w, vp.h, 0.0, 1.0);
         pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.atlas_group, &[]);
         pass.set_vertex_buffer(0, self.vertices.slice(..bytes.len() as u64));
         pass.draw(0..scene.len() as u32, 0..1);
     }
