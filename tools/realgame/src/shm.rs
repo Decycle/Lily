@@ -9,6 +9,7 @@
 //! keeps it for `lease_ms` (all cells released afterwards) and echoes the sequence into `io.input_sequence`.
 
 use crate::wcon::INPUT_PAYLOAD_LEN;
+use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicU32, Ordering, fence};
 use thiserror::Error;
 
@@ -107,6 +108,22 @@ impl ShmView {
         even
     }
 
+    /// The current input record (as last published).
+    pub fn input_record(&self) -> [u8; INPUT_PAYLOAD_LEN] {
+        self.read_bytes(INPUT)
+    }
+
+    /// Test stand-in for waccon_io.dll taking the current record: echoes the input sequence into
+    /// `io.input_sequence`.
+    #[cfg(test)]
+    pub(crate) fn simulate_dll_ack(&self) {
+        let seq = u64::from(self.seq(INPUT_SEQ).load(Ordering::Acquire));
+        for (i, b) in seq.to_le_bytes().into_iter().enumerate() {
+            // SAFETY: the io endpoint lies inside the view.
+            unsafe { self.base.add(IO + 24 + i).write_volatile(b) };
+        }
+    }
+
     /// Last input sequence waccon_io.dll consumed (its `io.input_sequence`); equal to the value returned by
     /// [`Self::publish_input`] once the game-side DLL has taken the record.
     pub fn io_consumed_sequence(&self) -> u64 {
@@ -128,6 +145,42 @@ impl ShmView {
         let data = self.read_bytes::<LED_LEN>(OUTPUT);
         fence(Ordering::SeqCst);
         (seq.load(Ordering::Acquire) == before).then_some((before, data))
+    }
+}
+
+/// Heap-backed stand-in for the mapping (dry runs, tests): valid ABI 1.1 header, no DLL attached (never acks).
+#[derive(Debug)]
+pub struct MemBuffer {
+    mem: Box<[UnsafeCell<u64>]>,
+}
+
+impl Default for MemBuffer {
+    fn default() -> Self {
+        let mem = (0..SIZE.div_ceil(8)).map(|_| UnsafeCell::new(0)).collect();
+        let buf = Self { mem };
+        let mut header = [0u8; 16];
+        header[0..4].copy_from_slice(&MAGIC.to_le_bytes());
+        header[4..6].copy_from_slice(&MAJOR.to_le_bytes());
+        header[6..8].copy_from_slice(&MINOR.to_le_bytes());
+        header[8..12].copy_from_slice(&(SIZE as u32).to_le_bytes());
+        let base = buf.base();
+        for (i, b) in header.into_iter().enumerate() {
+            // SAFETY: the header lies inside the allocation, which nothing else references yet.
+            unsafe { base.add(i).write(b) };
+        }
+        buf
+    }
+}
+
+impl MemBuffer {
+    fn base(&self) -> *mut u8 {
+        // UnsafeCell makes writes through a shared reference sound; the slice is 8-aligned and >= SIZE bytes.
+        UnsafeCell::raw_get(self.mem.as_ptr()).cast()
+    }
+
+    /// A view valid while `self` lives.
+    pub fn view(&self) -> ShmView {
+        ShmView { base: self.base() }
     }
 }
 
@@ -286,6 +339,20 @@ mod tests {
         assert!(view.read_leds().is_some());
         view.seq(OUTPUT_SEQ).store(3, Ordering::Release);
         assert!(view.read_leds().is_none());
+    }
+
+    #[test]
+    fn mem_buffer_has_valid_header_and_no_dll() {
+        let buf = MemBuffer::default();
+        let view = buf.view();
+        assert_eq!(view.check_header(), Ok(()));
+        assert_eq!(view.io_heartbeat_ms(), 0);
+        let rec = input_payload(0, 0, &[1; CELLS], 1, 0, 100);
+        let seq = view.publish_input(&rec);
+        assert_eq!(view.input_record(), rec);
+        assert_eq!(view.io_consumed_sequence(), 0);
+        view.simulate_dll_ack();
+        assert_eq!(view.io_consumed_sequence(), u64::from(seq));
     }
 
     #[test]
