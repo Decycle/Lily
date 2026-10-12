@@ -7,6 +7,8 @@ pub(crate) struct Fixture {
     names: Vec<String>,
     /// (class package, class name, object name) as name indices.
     imports: Vec<[i32; 3]>,
+    /// (class package index, object name index, serial size); serialized back to back after the header.
+    exports: Vec<(i32, i32, usize)>,
 }
 
 fn i32le(b: &mut Vec<u8>, v: i32) {
@@ -53,6 +55,12 @@ impl Fixture {
         ];
         self.imports.push(entry);
         -len_i32(self.imports.len())
+    }
+
+    /// Adds an export of `size` bytes; exports are laid out back to back in the `.uexp`.
+    pub(crate) fn export(&mut self, class_index: i32, object: &str, size: usize) {
+        let name = self.index(object);
+        self.exports.push((class_index, name, size));
     }
 
     fn header(&mut self, b: &mut Vec<u8>, name: &str, kind: &str, size: usize, index: i32) {
@@ -146,9 +154,9 @@ impl Fixture {
         b.extend(n);
     }
 
-    /// Package summary (legacy −7, filter-editor-only), name map, import table.
+    /// Package summary (legacy −7, filter-editor-only), name map, import table, export table.
     pub(crate) fn uasset(&self) -> Vec<u8> {
-        let summary = |name_off: i32, import_off: i32| {
+        let summary = |name_off: i32, import_off: i32, export_off: i32| {
             let mut b = Vec::new();
             b.extend(PACKAGE_MAGIC.to_le_bytes());
             for v in [-7, 0, 0, 0, 0, 0] {
@@ -156,7 +164,15 @@ impl Fixture {
             }
             b.extend(Self::fstring("None"));
             b.extend(0x8000_0000u32.to_le_bytes());
-            let rest = [len_i32(self.names.len()), name_off, 0, 0, 1, 0];
+            let exports = len_i32(self.exports.len());
+            let rest = [
+                len_i32(self.names.len()),
+                name_off,
+                0,
+                0,
+                exports,
+                export_off,
+            ];
             rest.iter().for_each(|&v| i32le(&mut b, v));
             i32le(&mut b, len_i32(self.imports.len()));
             i32le(&mut b, import_off);
@@ -167,14 +183,25 @@ impl Fixture {
             names.extend(Self::fstring(n));
             names.extend([0; 4]);
         }
-        let name_off = summary(0, 0).len();
+        let name_off = summary(0, 0, 0).len();
         let import_off = name_off + names.len();
-        let mut b = summary(len_i32(name_off), len_i32(import_off));
+        let export_off = import_off + 28 * self.imports.len();
+        let mut b = summary(len_i32(name_off), len_i32(import_off), len_i32(export_off));
         b.extend(names);
         for [pkg, class, object] in &self.imports {
             for v in [*pkg, 0, *class, 0, 0, *object, 0] {
                 i32le(&mut b, v);
             }
+        }
+        let mut serial_offset = export_off + 104 * self.exports.len();
+        for &(class, name, size) in &self.exports {
+            for v in [class, 0, 0, 0, name, 0, 0] {
+                i32le(&mut b, v); // class, super, template, outer, name, number, flags
+            }
+            b.extend((size as u64).to_le_bytes());
+            b.extend((serial_offset as u64).to_le_bytes());
+            b.extend([0; 60]);
+            serial_offset += size;
         }
         b
     }

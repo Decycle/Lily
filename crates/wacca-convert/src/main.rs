@@ -1,16 +1,23 @@
 //! One-time converter: `assets/` -> `data/`.
 //!
-//! Usage: `wacca-convert --assets <dir> --out <dir>`. Writes `<out>/songs.json`.
+//! Usage: `wacca-convert --assets <dir> --out <dir> [--textures] [--fonts] [--export-ui <subdir>]...`.
+//! Always writes `<out>/songs.json`; `--textures` writes `<out>/jackets/<JacketAssetName>.png` for every
+//! catalog song, `--fonts` copies `UI/Font/*.ufont` to `<out>/fonts/`, and each `--export-ui <subdir>`
+//! (relative to the assets dir, e.g. `UI/Textures/FONT` or `Vfx`) writes every Texture2D below it to
+//! `<out>/ui/<path relative to assets>.png`.
 #![cfg_attr(test, allow(clippy::unwrap_used))] // tests may unwrap (CONTRIBUTING)
 
 mod catalog;
+mod fonts;
+mod textures;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Instant;
 
 use wacca_game::Difficulty;
 
-const USAGE: &str = "usage: wacca-convert --assets <dir> --out <dir>";
+const USAGE: &str = "usage: wacca-convert --assets <dir> --out <dir> [--textures] [--fonts]                      [--export-ui <subdir under assets>]...";
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
@@ -28,29 +35,65 @@ enum Error {
     },
     #[error("serialising songs.json: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("{}: {source}", path.display())]
+    Texture {
+        path: PathBuf,
+        source: wacca_ue4::Ue4Error,
+    },
+    #[error("encoding PNG: {0}")]
+    Png(#[from] png::EncodingError),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Default, PartialEq)]
 struct Args {
     assets: PathBuf,
     out: PathBuf,
+    textures: bool,
+    fonts: bool,
+    export_ui: Vec<PathBuf>,
 }
 
 fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, Error> {
     let (mut assets, mut out) = (None, None);
+    let mut parsed = Args::default();
     let mut args = args.into_iter();
     while let Some(flag) = args.next() {
-        let slot = match flag.as_str() {
-            "--assets" => &mut assets,
-            "--out" => &mut out,
+        let mut value = || args.next().map(PathBuf::from).ok_or(Error::Usage);
+        match flag.as_str() {
+            "--assets" => assets = Some(value()?),
+            "--out" => out = Some(value()?),
+            "--textures" => parsed.textures = true,
+            "--fonts" => parsed.fonts = true,
+            "--export-ui" => {
+                let dir = value()?;
+                if !textures::is_plain_relative(&dir) {
+                    return Err(Error::Usage);
+                }
+                parsed.export_ui.push(dir);
+            }
             _ => return Err(Error::Usage),
-        };
-        *slot = Some(PathBuf::from(args.next().ok_or(Error::Usage)?));
+        }
     }
     match (assets, out) {
-        (Some(assets), Some(out)) => Ok(Args { assets, out }),
+        (Some(assets), Some(out)) => Ok(Args {
+            assets,
+            out,
+            ..parsed
+        }),
         _ => Err(Error::Usage),
     }
+}
+
+/// Writes `data` to `path`, creating parent directories.
+fn write(path: &Path, data: &[u8]) -> Result<(), Error> {
+    let io = |source| Error::Io {
+        path: path.to_owned(),
+        source,
+    };
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(io)?;
+    }
+    std::fs::write(path, data).map_err(io)
 }
 
 fn read(path: PathBuf) -> Result<Vec<u8>, Error> {
@@ -71,18 +114,35 @@ fn run(args: &Args) -> Result<(), Error> {
         .iter()
         .filter(|s| s.chart(Difficulty::Inferno).is_some())
         .count();
-    let io = |path: &Path| {
-        let path = path.to_owned();
-        move |source| Error::Io { path, source }
-    };
-    std::fs::create_dir_all(&args.out).map_err(io(&args.out))?;
     let path = args.out.join("songs.json");
-    std::fs::write(&path, serde_json::to_vec_pretty(&songs)?).map_err(io(&path))?;
+    write(&path, &serde_json::to_vec_pretty(&songs)?)?;
     log::info!(
         "wrote {} ({} songs, {inferno} with Inferno)",
         path.display(),
         songs.len()
     );
+    if args.textures {
+        let start = Instant::now();
+        let jackets: std::collections::BTreeSet<&str> =
+            songs.iter().map(|s| s.jacket.as_str()).collect();
+        let jobs: Vec<_> = jackets
+            .into_iter()
+            .filter(|j| textures::is_plain_relative(Path::new(j)))
+            .map(|j| textures::jacket_job(&args.assets, &args.out, j))
+            .collect();
+        let summary = textures::export_all(&jobs);
+        log::info!("jackets: {summary} in {:.1?}", start.elapsed());
+    }
+    if args.fonts {
+        let (counts, failed) = fonts::copy_fonts(&args.assets, &args.out)?;
+        log::info!("fonts: {counts:?}, {failed} failed");
+    }
+    for subdir in &args.export_ui {
+        let start = Instant::now();
+        let jobs = textures::dir_jobs(&args.assets, subdir, &args.out)?;
+        let summary = textures::export_all(&jobs);
+        log::info!("{}: {summary} in {:.1?}", subdir.display(), start.elapsed());
+    }
     Ok(())
 }
 
@@ -127,9 +187,27 @@ mod tests {
         let expected = Args {
             assets: "a".into(),
             out: "o".into(),
+            ..Args::default()
         };
         assert_eq!(args("--assets a --out o").unwrap(), expected);
         assert_eq!(args("--out o --assets a").unwrap(), expected);
+    }
+
+    #[test]
+    fn parses_texture_font_and_export_flags() {
+        let a =
+            args("--textures --assets a --export-ui UI/Textures --fonts --out o --export-ui Vfx")
+                .unwrap();
+        assert!(a.textures && a.fonts);
+        assert_eq!(a.export_ui, [PathBuf::from("UI/Textures"), "Vfx".into()]);
+        assert!(matches!(
+            args("--assets a --out o --export-ui ../x"),
+            Err(Error::Usage)
+        ));
+        assert!(matches!(
+            args("--assets a --out o --export-ui"),
+            Err(Error::Usage)
+        ));
     }
 
     #[test]
