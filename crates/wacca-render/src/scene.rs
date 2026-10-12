@@ -3,8 +3,8 @@
 use wacca_chart::{Chart, LANES, Note, NoteBody};
 
 use crate::layout::{
-    Vertex, depth_to_radius, mask_state, push_hold_body, push_radial_line, push_sector, raw_depth,
-    reverse_now, scroll_distance,
+    Vertex, depth_to_radius, last_drawable_time, mask_state, push_hold_body, push_radial_line,
+    push_sector, raw_depth,
 };
 use crate::style;
 
@@ -40,9 +40,9 @@ pub fn build_scene(chart: &Chart, now: f64, opts: &SceneOptions) -> Vec<Vertex> 
         );
     }
 
-    let (view_now, last_time) = reverse_now(&chart.reverses, now);
-    let now_dist = scroll_distance(&chart.scroll, view_now);
-    let depth_of = |t: f64| raw_depth(&chart.scroll, t, now_dist, opts.note_speed);
+    let last_time = last_drawable_time(chart, now);
+    let now_dist = chart.dist_at(chart.view_time(now));
+    let depth_of = |t: f64| raw_depth(chart, t, now_dist, opts.note_speed);
     let drawable = |n: &&Note| last_time.is_none_or(|last| n.time <= last);
     let visible = |t: f64| {
         Some(depth_of(t))

@@ -8,7 +8,7 @@
 
 use std::f32::consts::TAU;
 
-use wacca_chart::{HoldNode, LANES, MaskDir, MaskEvent, ReverseSection, ScrollSegment};
+use wacca_chart::{Chart, HoldNode, LANES, MaskDir, MaskEvent};
 
 /// Seconds a note is visible at note speed 1.0.
 // UNVERIFIED: community values are 3.2667 s and 3.3333 s (04 §2.2).
@@ -44,43 +44,30 @@ pub fn depth_to_radius(depth: f32) -> f32 {
     3.325 * x / (13.825 - 10.5 * x)
 }
 
-/// Scroll distance `D(t)` (01 §5.3). Before the first segment the speed is 1.0.
-pub fn scroll_distance(scroll: &[ScrollSegment], t: f64) -> f64 {
-    match scroll.partition_point(|s| s.start_sec <= t) {
-        0 => t,
-        i => {
-            let s = &scroll[i - 1];
-            s.start_dist + (t - s.start_sec) * s.speed
-        }
-    }
+/// Unclamped depth of chart time `t` when the scroll position is `now_dist` (= `chart.dist_at(view now)`).
+pub fn raw_depth(chart: &Chart, t: f64, now_dist: f64, note_speed: f64) -> f64 {
+    (chart.dist_at(t) - now_dist) * note_speed / APPROACH_SECS
 }
 
-/// Unclamped depth of chart time `t` when the scroll position is `now_dist` (= `D(now)`).
-pub fn raw_depth(scroll: &[ScrollSegment], t: f64, now_dist: f64, note_speed: f64) -> f64 {
-    (scroll_distance(scroll, t) - now_dist) * note_speed / APPROACH_SECS
-}
-
-/// Depth of a note at `note_time` seen at `now`, or `None` outside the visible window `0..=1`.
-pub fn note_depth(
-    note_time: f64,
-    now: f64,
-    scroll: &[ScrollSegment],
-    note_speed: f64,
-) -> Option<f32> {
-    let d = raw_depth(scroll, note_time, scroll_distance(scroll, now), note_speed);
+/// Depth of a note at `note_time` seen at chart time `now` (reverse-remapped via
+/// [`Chart::view_time`]), or `None` outside the visible window `0..=1`.
+pub fn note_depth(chart: &Chart, note_time: f64, now: f64, note_speed: f64) -> Option<f32> {
+    let d = raw_depth(
+        chart,
+        note_time,
+        chart.dist_at(chart.view_time(now)),
+        note_speed,
+    );
     (0.0..=1.0).contains(&d).then_some(d as f32)
 }
 
-/// Reverse gimmick (01 §5.3, MP behaviour, UNVERIFIED): returns the visual "now" and, inside a
-/// reverse section, the last note time that may be drawn.
-pub fn reverse_now(reverses: &[ReverseSection], now: f64) -> (f64, Option<f64>) {
-    match reverses.iter().find(|r| r.start < now && now < r.end) {
-        Some(r) => {
-            let t = r.end + (r.end - now) * (r.note_end - r.end) / (r.end - r.start);
-            (t, Some(r.note_end))
-        }
-        None => (now, None),
-    }
+/// Inside a reverse section only notes up to its `note_end` are drawn (01 §5.3, UNVERIFIED).
+pub fn last_drawable_time(chart: &Chart, now: f64) -> Option<f64> {
+    chart
+        .reverses
+        .iter()
+        .find(|r| r.view_time(now).is_some())
+        .map(|r| r.note_end)
 }
 
 /// Angle in radians (counter-clockwise from +x) of a (possibly fractional / unwrapped) lane edge.
@@ -253,10 +240,25 @@ pub fn playfield_viewport(w: f32, h: f32) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wacca_chart::{Arc, BeatPos};
+    use wacca_chart::{Arc, BeatPos, ReverseSection, ScrollSegment};
 
     fn close(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-4
+    }
+
+    /// Chart with the given scroll segments and nothing else.
+    fn chart(scroll: Vec<ScrollSegment>) -> Chart {
+        Chart {
+            header: Default::default(),
+            notes: vec![],
+            masks: vec![],
+            tempo: vec![],
+            scroll,
+            reverses: vec![],
+            tutorial_tags: vec![],
+            end: BeatPos::default(),
+            end_time: 10.0,
+        }
     }
 
     fn seg(start_sec: f64, start_dist: f64, speed: f64) -> ScrollSegment {
@@ -295,17 +297,17 @@ mod tests {
 
     #[test]
     fn depth_window_constant_speed() {
-        let v = APPROACH_SECS;
-        assert_eq!(note_depth(10.0, 10.0, &[], 1.0), Some(0.0));
+        let (v, c) = (APPROACH_SECS, chart(vec![]));
+        assert_eq!(note_depth(&c, 10.0, 10.0, 1.0), Some(0.0));
         assert!(close(
-            note_depth(10.0 + v / 2.0, 10.0, &[], 1.0).unwrap(),
+            note_depth(&c, 10.0 + v / 2.0, 10.0, 1.0).unwrap(),
             0.5
         ));
-        assert_eq!(note_depth(10.0 + v + 0.01, 10.0, &[], 1.0), None);
-        assert_eq!(note_depth(9.99, 10.0, &[], 1.0), None);
+        assert_eq!(note_depth(&c, 10.0 + v + 0.01, 10.0, 1.0), None);
+        assert_eq!(note_depth(&c, 9.99, 10.0, 1.0), None);
         // Speed 2 halves the window.
         assert!(close(
-            note_depth(10.0 + v / 4.0, 10.0, &[], 2.0).unwrap(),
+            note_depth(&c, 10.0 + v / 4.0, 10.0, 2.0).unwrap(),
             0.5
         ));
     }
@@ -313,33 +315,38 @@ mod tests {
     #[test]
     fn depth_during_stop_is_frozen() {
         // hs = 1 until 5 s, stop until 7 s, then 1 again.
-        let scroll = [seg(0.0, 0.0, 1.0), seg(5.0, 5.0, 0.0), seg(7.0, 5.0, 1.0)];
-        let a = note_depth(8.0, 5.5, &scroll, 1.0).unwrap();
-        let b = note_depth(8.0, 6.5, &scroll, 1.0).unwrap();
+        let c = chart(vec![
+            seg(0.0, 0.0, 1.0),
+            seg(5.0, 5.0, 0.0),
+            seg(7.0, 5.0, 1.0),
+        ]);
+        let a = note_depth(&c, 8.0, 5.5, 1.0).unwrap();
+        let b = note_depth(&c, 8.0, 6.5, 1.0).unwrap();
         assert_eq!(a, b);
         assert!(close(a, (1.0 / APPROACH_SECS) as f32));
     }
 
     #[test]
     fn negative_hi_speed_recedes() {
-        // hs = -1 from 5 s: D decreases, so a note at 10 s moves *away* while time passes.
-        let scroll = [seg(0.0, 0.0, 1.0), seg(5.0, 5.0, -1.0)];
-        let d6 = note_depth(5.5, 6.0, &scroll, 1.0).unwrap();
-        let d7 = note_depth(5.5, 7.0, &scroll, 1.0).unwrap();
+        // hs = -1 from 5 s: D decreases, so a note moves *away* while time passes.
+        let c = chart(vec![seg(0.0, 0.0, 1.0), seg(5.0, 5.0, -1.0)]);
+        let d6 = note_depth(&c, 5.5, 6.0, 1.0).unwrap();
+        let d7 = note_depth(&c, 5.5, 7.0, 1.0).unwrap();
         assert!(d7 > d6);
     }
 
     #[test]
-    fn reverse_maps_time_backwards() {
-        let r = [ReverseSection {
+    fn reverse_remaps_depth_and_limits_notes() {
+        let mut c = chart(vec![]);
+        c.reverses = vec![ReverseSection {
             start: 10.0,
             end: 12.0,
             note_end: 14.0,
         }];
-        assert_eq!(reverse_now(&r, 9.0), (9.0, None));
-        assert_eq!(reverse_now(&r, 11.0), (13.0, Some(14.0)));
-        let (t, _) = reverse_now(&r, 11.9);
-        assert!((t - 12.1).abs() < 1e-9);
+        // At 11 s the view time is 13 s: a note at 13 s sits on the line.
+        assert_eq!(note_depth(&c, 13.0, 11.0, 1.0), Some(0.0));
+        assert_eq!(last_drawable_time(&c, 11.0), Some(14.0));
+        assert_eq!(last_drawable_time(&c, 9.0), None);
     }
 
     #[test]

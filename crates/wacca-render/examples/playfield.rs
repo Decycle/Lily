@@ -1,6 +1,7 @@
-//! Minimal playfield demo: a synthetic chart scrolling in real time (no audio).
+//! Minimal playfield demo: a chart scrolling in real time (no audio).
 //!
-//! Keys: Up/Down note speed, Space pause, R restart. `RUST_LOG=info` for diagnostics.
+//! `cargo run -p wacca-render --example playfield -- [path/to/chart.mer]`; without a path a
+//! synthetic chart is shown. Keys: Up/Down note speed, Space pause, R restart. `RUST_LOG=info` for diagnostics.
 
 use std::error::Error;
 use std::sync::Arc as Shared;
@@ -22,9 +23,14 @@ const LEAD_IN: f64 = -1.0;
 
 fn main() -> Result<(), Box<dyn Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    let chart = match std::env::args_os().nth(1) {
+        Some(path) => wacca_chart::parse(&std::fs::read(path)?)?,
+        None => demo_chart(),
+    };
+    log::info!("{} notes, {:.1} s", chart.notes.len(), chart.end_time);
     let mut app = App {
         gfx: None,
-        chart: demo_chart(),
+        chart,
         clock: Clock::start(LEAD_IN),
         opts: SceneOptions { note_speed: 2.0 },
     };
