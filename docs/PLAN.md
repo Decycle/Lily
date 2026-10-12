@@ -118,3 +118,7 @@ Planned crates: `winit`, `wgpu`, `cpal`, `cridecoder` (MIT), `serde`/`serde_json
 | V4 | Note approach time, perspective curve, lane-0 angle (`UNVERIFIED`) | E2 measurements |
 | V5 | Real hit particle effects (Cascade) | M6 scope |
 | V6 | Chevron scroll speeds, judgement/combo placement, ring colours (`UNVERIFIED`) | M6 review |
+
+The list above is a starting point, not the scope: the visual-parity pass must audit the **whole** play screen
+(and later menus) side by side against real-game frames and fix **every** visible difference — sizes, positions,
+colours, animation timing, fonts, effects, layering — whether or not it was reported.
