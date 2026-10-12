@@ -1965,6 +1965,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "wacca-app"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "log",
+ "pollster",
+ "serde_json",
+ "thiserror 2.0.21",
+ "wacca-audio",
+ "wacca-chart",
+ "wacca-game",
+ "wacca-render",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
 name = "wacca-audio"
 version = "0.1.0"
 dependencies = [
