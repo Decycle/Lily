@@ -61,7 +61,7 @@ impl Default for SaveData {
 pub struct Settings {
     /// Hi-speed, 1.0–6.0.
     pub note_speed: f32,
-    /// In-game judgement adjustment, −10.0..+10.0 (unit UNVERIFIED).
+    /// In-game judgement adjustment, −10.0..+10.0 (the app's options module owns the unit).
     pub judge_offset: f32,
     pub mirror: bool,
     pub bonus_effect: bool,

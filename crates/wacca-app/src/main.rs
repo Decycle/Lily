@@ -27,8 +27,9 @@ mod ui;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
 
-use wacca_audio::{BgmBank, SeBank};
+use wacca_audio::{BgmBank, Player, SeBank};
 use wacca_game::catalog::Song;
 use wacca_game::save::{self, SaveData, Settings};
 use wacca_render::text::{Fonts, TextError};
@@ -106,8 +107,7 @@ fn settings(saved: &Settings, args: &Args) -> Settings {
         s.note_speed = speed as f32;
     }
     if let Some(offset) = args.offset {
-        let units = (offset / options::OFFSET_UNIT_SECS) as f32;
-        s.judge_offset = units.clamp(*options::OFFSET_RANGE.start(), *options::OFFSET_RANGE.end());
+        s.judge_offset = options::offset_units(offset);
     }
     s
 }
@@ -179,6 +179,7 @@ fn run(args: &Args) -> Result<(), Error> {
             assets: args.assets.clone(),
             data: args.data.clone(),
             bgm,
+            player: Arc::new(Player::new()?),
             se,
             save_path,
             save,
@@ -205,7 +206,7 @@ mod tests {
         .unwrap();
         let s = settings(&Settings::default(), &a);
         assert_eq!(s.note_speed, 2.5);
-        assert!((s.judge_offset - 2.5).abs() < 1e-5);
+        assert_eq!(s.judge_offset, 3.0);
         let none = args::parse(["--assets".into(), "A".into()]).unwrap();
         assert_eq!(settings(&Settings::default(), &none), Settings::default());
     }

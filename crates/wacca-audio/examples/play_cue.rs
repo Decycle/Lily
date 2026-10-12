@@ -18,7 +18,8 @@ fn run(assets: PathBuf, cue: &str, start: f64) -> Result<(), Error> {
         loc.entry.start,
         loc.entry.end
     );
-    let player = Player::new(Box::new(bank.open_cue(cue)?))?;
+    let player = Player::new()?;
+    player.load(Box::new(bank.open_cue(cue)?))?;
     println!("duration {:.3} s", player.duration());
     player.seek(start)?;
     player.play();
