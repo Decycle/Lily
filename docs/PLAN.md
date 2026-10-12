@@ -107,3 +107,14 @@ Disassembly would need Ghidra (free, NSA) on the patched `Mercury-Win64-Shipping
 - Optional: Ghidra (M8)
 
 Planned crates: `winit`, `wgpu`, `cpal`, `cridecoder` (MIT), `serde`/`serde_json`, `image`, `glyphon` or `fontdue` (text), `anyhow`/`thiserror`.
+
+## 7. Visual follow-ups from playtests (verify against E2 real-song frames)
+
+| # | Issue | Source |
+|---|---|---|
+| V1 | Centre judgement text / combo too big | user playtest |
+| V2 | Judgement + combo art hard to read over bright background movies | M6 review |
+| V3 | Combo digits should use the game's SHINBI font | M6 review |
+| V4 | Note approach time, perspective curve, lane-0 angle (`UNVERIFIED`) | E2 measurements |
+| V5 | Real hit particle effects (Cascade) | M6 scope |
+| V6 | Chevron scroll speeds, judgement/combo placement, ring colours (`UNVERIFIED`) | M6 review |
