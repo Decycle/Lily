@@ -21,6 +21,17 @@ fn mer_files(dir: &Path, out: &mut Vec<PathBuf>) {
 #[test]
 #[ignore = "needs WACCA_ASSETS"]
 fn autoplay_scores_max_on_every_chart() {
+    assert_autoplay_perfect(|c| c);
+}
+
+#[test]
+#[ignore = "needs WACCA_ASSETS"]
+fn autoplay_scores_max_on_every_mirrored_chart() {
+    assert_autoplay_perfect(|c| wacca_chart::mirrored(&c));
+}
+
+/// Parse every chart, apply `transform`, autoplay it and require 1,000,000.
+fn assert_autoplay_perfect(transform: impl Fn(wacca_chart::Chart) -> wacca_chart::Chart) {
     let assets = PathBuf::from(std::env::var("WACCA_ASSETS").expect("WACCA_ASSETS"));
     let mut files = Vec::new();
     mer_files(&assets.join("MusicData"), &mut files);
@@ -28,7 +39,7 @@ fn autoplay_scores_max_on_every_chart() {
 
     let mut imperfect = Vec::new();
     for path in &files {
-        let chart = wacca_chart::parse(&std::fs::read(path).unwrap()).unwrap();
+        let chart = transform(wacca_chart::parse(&std::fs::read(path).unwrap()).unwrap());
         if chart.notes.is_empty() {
             // Placeholder charts of removed songs (e.g. S01-053_00) have no notes.
             continue;

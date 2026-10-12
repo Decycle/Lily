@@ -40,7 +40,9 @@ pub enum Error {
     UnsupportedWaveform { index: u16, reason: &'static str },
     #[error("ADX decode: {0}")]
     Adx(String),
-    #[error("sound effect is {got} Hz but the output runs at {expected} Hz (resample it first)")]
+    #[error(
+        "audio is {got} Hz but the output runs at {expected} Hz (no resampler for BGM; resample sound effects first)"
+    )]
     SampleRate { expected: u32, got: u32 },
     #[error("sound-effect queue is full")]
     SfxQueueFull,
