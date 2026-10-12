@@ -12,6 +12,8 @@ use crate::style::{self, SENSOR_DEPTHS};
 pub struct SceneOptions {
     /// Player note-speed option (1.0..=6.0).
     pub note_speed: f64,
+    /// A background movie plays: guide lanes are drawn translucent so it shows through.
+    pub movie: bool,
 }
 
 /// Live play state drawn on top of the chart.
@@ -26,7 +28,10 @@ pub struct LiveState<'a> {
 
 impl Default for SceneOptions {
     fn default() -> Self {
-        Self { note_speed: 1.0 }
+        Self {
+            note_speed: 1.0,
+            movie: false,
+        }
     }
 }
 
@@ -36,8 +41,13 @@ pub fn build_scene(chart: &Chart, now: f64, opts: &SceneOptions, live: &LiveStat
     let lanes = LANES as usize;
 
     let mask = mask_state(&chart.masks, now);
+    let guide = if opts.movie {
+        style::GUIDE_LANE_MOVIE
+    } else {
+        style::GUIDE_LANE
+    };
     for lane in (0..lanes).filter(|&l| mask[l]) {
-        push_sector(&mut out, 0.0, 1.0, lane as f32, 1.0, style::GUIDE_LANE);
+        push_sector(&mut out, 0.0, 1.0, lane as f32, 1.0, guide);
     }
     for lane in (0..lanes).filter(|&l| mask[l] || mask[(l + lanes - 1) % lanes]) {
         push_radial_line(
@@ -220,6 +230,13 @@ mod tests {
         assert_eq!(count(&v, style::LANE_LINE), 60 * 6);
         assert_eq!(count(&v, style::JUDGE_RING), 60 * 6);
         assert_eq!(v.len() % 3, 0);
+        let movie = SceneOptions {
+            movie: true,
+            ..Default::default()
+        };
+        let v = build_scene(&chart(vec![]), 0.0, &movie, &LiveState::default());
+        assert_eq!(count(&v, style::GUIDE_LANE), 0);
+        assert_eq!(count(&v, style::GUIDE_LANE_MOVIE), 60 * 6);
     }
 
     #[test]
@@ -251,7 +268,10 @@ mod tests {
         let v = build_scene(
             &c,
             0.5,
-            &SceneOptions { note_speed: 6.0 },
+            &SceneOptions {
+                note_speed: 6.0,
+                ..Default::default()
+            },
             &LiveState::default(),
         );
         assert_eq!(count(&v, style::TOUCH), 4 * 6);

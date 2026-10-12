@@ -15,6 +15,7 @@ use wacca_game::input::InputFrame;
 use wacca_game::rules::{JudgeClass, JudgeEvent};
 use wacca_render::layout::Rect;
 use wacca_render::{LiveState, SceneOptions, Vertex, build_scene};
+use wacca_video::{Frame, VideoPlayer};
 
 use crate::hitsound::{self, Cue, HoldStarts};
 use crate::hud::Hud;
@@ -47,6 +48,8 @@ pub struct PlaySpec {
     pub level: Option<f32>,
     pub chart_path: PathBuf,
     pub norma: f32,
+    /// Background movie (`.usm`), if the chart has one.
+    pub movie: Option<PathBuf>,
 }
 
 /// Player-chosen options for one play.
@@ -57,6 +60,20 @@ pub struct PlayOptions {
     pub offset: f64,
     pub autoplay: bool,
     pub bonus_effect: bool,
+}
+
+/// What [`PlayState::new`] needs to show the background movie.
+#[derive(Clone, Copy, Debug)]
+pub struct VideoSetup<'a> {
+    pub ffmpeg: &'a std::path::Path,
+    /// Decode size (the playfield's side in pixels).
+    pub size: u32,
+}
+
+/// `<assets>/Movie/<name>.usm` for a catalog movie name (`None`, `""` and `"-"` = no movie).
+pub fn movie_path(assets: &std::path::Path, name: Option<&str>) -> Option<PathBuf> {
+    name.filter(|n| !n.is_empty() && *n != "-")
+        .map(|n| assets.join("Movie").join(format!("{n}.usm")))
 }
 
 pub fn load_chart(path: &PathBuf) -> Result<Chart, PlayError> {
@@ -86,6 +103,9 @@ pub struct PlayState {
     /// Chart time at which the play is over.
     end: f64,
     pub paused: bool,
+    video: Option<VideoPlayer>,
+    /// Index of the movie frame last handed out by [`PlayState::video_frame`].
+    video_shown: Option<u64>,
 }
 
 impl PlayState {
@@ -95,6 +115,7 @@ impl PlayState {
         opts: PlayOptions,
         bgm: &BgmBank,
         hits: impl FnOnce(u32) -> Option<HitSounds>,
+        video: Option<VideoSetup>,
     ) -> Result<Self, PlayError> {
         let chart = load_chart(&spec.chart_path)?;
         let cue = &chart.header.music_file_path;
@@ -106,6 +127,11 @@ impl PlayState {
             chart.notes.len()
         );
         let hits = hits(player.sample_rate());
+        let video = video.zip(spec.movie.as_deref()).and_then(|(v, path)| {
+            VideoPlayer::open(path, v.ffmpeg, Some(v.size))
+                .map_err(|e| log::warn!("background movie: {e}; playing without it"))
+                .ok()
+        });
         Ok(Self {
             session: Session::new(&chart, opts.bonus_effect),
             autoplay: opts.autoplay.then(|| Autoplay::new(&chart)),
@@ -119,6 +145,8 @@ impl PlayState {
             contacts: Contacts::default(),
             end,
             paused: false,
+            video,
+            video_shown: None,
         })
     }
 
@@ -133,6 +161,21 @@ impl PlayState {
 
     pub fn now(&self) -> f64 {
         chart_now(&self.chart, self.player.position(), self.opts.offset)
+    }
+
+    /// Movie time: chart time minus `#MOVIEOFFSET`.
+    // UNVERIFIED: same relation as `#OFFSET` (01-chart-format §5.2); the user judgement offset is not applied.
+    fn movie_time(&self) -> f64 {
+        self.chart.chart_time(self.player.position()) - self.chart.header.movie_offset
+    }
+
+    /// The background-movie frame to show now (`None` = no movie on screen) and whether it is new since the
+    /// last call (only new frames need uploading).
+    pub fn video_frame(&mut self) -> Option<(&Frame, bool)> {
+        let t = self.movie_time();
+        let frame = self.video.as_mut().and_then(|v| v.frame_at(t));
+        let previous = std::mem::replace(&mut self.video_shown, frame.map(|f| f.index));
+        frame.map(|f| (f, previous != Some(f.index)))
     }
 
     pub fn toggle_pause(&mut self) {
@@ -246,6 +289,8 @@ impl PlayState {
     }
 
     fn stop_all(&mut self) {
+        self.video = None;
+        self.video_shown = None;
         let voices: Vec<_> = self.hold_voices.drain().flat_map(|(_, v)| v).collect();
         self.stop_voices(voices);
         self.player.pause();
@@ -262,6 +307,7 @@ impl PlayState {
             self.now(),
             &SceneOptions {
                 note_speed: self.opts.note_speed,
+                movie: self.video_shown.is_some(),
             },
             &LiveState {
                 judged: self.session.judged(),
@@ -280,5 +326,23 @@ impl PlayState {
             paused: self.paused,
             autoplay: self.autoplay.is_some(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn movie_paths() {
+        let a = Path::new("assets");
+        assert_eq!(
+            movie_path(a, Some("mv_S02_204")),
+            Some(a.join("Movie").join("mv_S02_204.usm"))
+        );
+        assert_eq!(movie_path(a, Some("-")), None);
+        assert_eq!(movie_path(a, Some("")), None);
+        assert_eq!(movie_path(a, None), None);
     }
 }

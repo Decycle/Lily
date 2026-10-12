@@ -2087,6 +2087,7 @@ dependencies = [
  "wacca-chart",
  "wacca-game",
  "wacca-render",
+ "wacca-video",
  "wgpu",
  "winit",
 ]
@@ -2168,6 +2169,14 @@ version = "0.1.0"
 dependencies = [
  "log",
  "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "wacca-video"
+version = "0.1.0"
+dependencies = [
+ "log",
  "thiserror 2.0.21",
 ]
 

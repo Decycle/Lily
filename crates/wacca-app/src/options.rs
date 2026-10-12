@@ -1,4 +1,4 @@
-//! Options screen: note speed, judgement offset, mirror (stub) and autoplay, stored in the save's
+//! Options screen: note speed, judgement offset, mirror (stub), autoplay and background video, stored in the save's
 //! [`Settings`] (autoplay is per session and never saved).
 
 use wacca_game::save::Settings;
@@ -24,9 +24,16 @@ pub enum Row {
     Offset,
     Mirror,
     Autoplay,
+    Video,
 }
 
-pub const ROWS: [Row; 4] = [Row::Speed, Row::Offset, Row::Mirror, Row::Autoplay];
+pub const ROWS: [Row; 5] = [
+    Row::Speed,
+    Row::Offset,
+    Row::Mirror,
+    Row::Autoplay,
+    Row::Video,
+];
 
 /// Judge offset setting → user offset in seconds (added to chart time).
 pub fn offset_secs(judge_offset: f32) -> f64 {
@@ -62,6 +69,7 @@ impl OptionsMenu {
             }
             Row::Mirror => s.mirror = !s.mirror,
             Row::Autoplay => *autoplay = !*autoplay,
+            Row::Video => s.background_video = !s.background_video,
         }
     }
 }
@@ -77,6 +85,7 @@ pub fn value(row: Row, s: &Settings, autoplay: bool) -> String {
         // Mirror is stored but not applied yet.
         Row::Mirror => format!("{} (not yet)", on_off(s.mirror)),
         Row::Autoplay => on_off(autoplay).into(),
+        Row::Video => on_off(s.background_video).into(),
     }
 }
 
@@ -86,6 +95,7 @@ fn label(row: Row) -> &'static str {
         Row::Offset => "JUDGE OFFSET",
         Row::Mirror => "MIRROR",
         Row::Autoplay => "AUTOPLAY",
+        Row::Video => "BACKGROUND VIDEO",
     }
 }
 
@@ -181,9 +191,13 @@ mod tests {
         m.adjust(&mut s, &mut auto, -1);
         assert!(auto);
         m.move_by(1);
+        m.adjust(&mut s, &mut auto, 1);
+        assert!(!s.background_video);
+        assert_eq!(value(Row::Video, &s, auto), "OFF");
+        m.move_by(1);
         assert_eq!(m.row, 0);
         m.move_by(-1);
-        assert_eq!(ROWS[m.row], Row::Autoplay);
+        assert_eq!(ROWS[m.row], Row::Video);
     }
 
     #[test]

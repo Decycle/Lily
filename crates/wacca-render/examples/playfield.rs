@@ -32,7 +32,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         gfx: None,
         chart,
         clock: Clock::start(LEAD_IN),
-        opts: SceneOptions { note_speed: 2.0 },
+        opts: SceneOptions {
+            note_speed: 2.0,
+            ..Default::default()
+        },
     };
     EventLoop::new()?.run_app(&mut app)?;
     Ok(())

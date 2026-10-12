@@ -24,7 +24,7 @@ use winit::window::{Fullscreen, Window, WindowId};
 
 use crate::gesture::{Gesture, Pointer, Scroller};
 use crate::menu::Menu;
-use crate::play::{PlayOptions, PlaySpec, PlayState, load_chart};
+use crate::play::{PlayOptions, PlaySpec, PlayState, VideoSetup, load_chart, movie_path};
 use crate::results::Summary;
 use crate::screen::{self, Event, Next, Screen};
 use crate::ui::{Action, Item, View, WHITE};
@@ -59,6 +59,8 @@ pub struct Setup {
     /// Play this right away (`--chart`).
     pub start: Option<PlaySpec>,
     pub windowed: bool,
+    /// External decoder for background movies (`None` = no movies).
+    pub ffmpeg: Option<PathBuf>,
 }
 
 pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
@@ -398,6 +400,7 @@ impl App {
             level: Some(c.level),
             chart_path: self.s.assets.join(&c.chart_path),
             norma: c.norma,
+            movie: movie_path(&self.s.assets, c.movie.as_deref()),
         })
     }
 
@@ -416,7 +419,17 @@ impl App {
         self.last_spec = Some(spec.clone());
         let (cache, se) = (&mut self.hits, &mut self.s.se);
         let hits = |rate| hit_sounds(cache, se, rate);
-        match PlayState::new(spec, opts, &self.s.bgm, hits).and_then(|mut p| {
+        let [w, h] = self.gfx.as_ref().map_or([1080.0; 2], Gfx::size);
+        let video = self
+            .s
+            .ffmpeg
+            .as_deref()
+            .filter(|_| m.settings.background_video)
+            .map(|ffmpeg| VideoSetup {
+                ffmpeg,
+                size: w.min(h).round() as u32,
+            });
+        match PlayState::new(spec, opts, &self.s.bgm, hits, video).and_then(|mut p| {
             p.start()?;
             Ok(p)
         }) {
@@ -592,12 +605,26 @@ impl App {
                 let over = self.play.as_mut().and_then(PlayState::frame);
                 if let Some(r) = over {
                     self.end_play(event_loop, r, true);
-                } else if let Some(p) = &self.play {
+                } else if let Some(p) = &mut self.play {
+                    let video = p.video_frame();
+                    if let Some(gfx) = &mut self.gfx {
+                        gfx.renderer.show_video(video.is_some());
+                        if let Some((f, true)) = video
+                            && let Some(planes) = f.planes()
+                        {
+                            gfx.renderer.set_video_frame([f.width, f.height], planes);
+                        }
+                    }
                     scene = p.scene();
                 }
             }
             Screen::Results => {}
             _ => self.preview.update(&self.s),
+        }
+        if self.screen != Screen::Play
+            && let Some(gfx) = &mut self.gfx
+        {
+            gfx.renderer.show_video(false);
         }
         let view = self.view();
         let mut jackets = Jackets {

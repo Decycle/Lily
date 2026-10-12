@@ -9,6 +9,10 @@ use wacca_chart::{Bonus, NoteBody, SlideDir, SnapDir};
 pub type Rgba = [f32; 4];
 
 pub const GUIDE_LANE: Rgba = [0.08, 0.08, 0.12, 1.0];
+/// Guide lanes over a background movie: `RhythmGameAppearanceTable` GuideLaneBrightnessParamAlphaMovie 290 vs
+/// AlphaNormal 600 (06-visuals §1).
+// UNVERIFIED: applied as the lane alpha (290 / 600) over the movie.
+pub const GUIDE_LANE_MOVIE: Rgba = [0.08, 0.08, 0.12, 290.0 / 600.0];
 pub const LANE_LINE: Rgba = [0.22, 0.22, 0.30, 1.0];
 pub const JUDGE_RING: Rgba = [0.92, 0.92, 0.98, 1.0];
 /// Pressed sensors, drawn over their ring.

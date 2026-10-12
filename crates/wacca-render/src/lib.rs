@@ -8,6 +8,7 @@ mod renderer;
 pub mod scene;
 pub mod style;
 pub mod text;
+mod video;
 
 pub use layout::Vertex;
 pub use renderer::Renderer;

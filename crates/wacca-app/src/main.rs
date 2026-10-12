@@ -130,6 +130,7 @@ fn start_spec(args: &Args, chart: &Path, songs: &[Song]) -> Result<PlaySpec, Arg
             record::default_norma(r.difficulty.unwrap_or(wacca_chart::Difficulty::Expert))
         }),
         chart_path: r.path,
+        movie: play::movie_path(&args.assets, entry.and_then(|e| e.movie.as_deref())),
     })
 }
 
@@ -170,6 +171,14 @@ fn run(args: &Args) -> Result<(), Error> {
     let se = SeBank::open(args.assets.join("Sound").join("Se"))
         .map_err(|e| log::warn!("SE bank: {e}; no hit sounds"))
         .ok();
+    let ffmpeg = wacca_video::find_ffmpeg_from_env();
+    match &ffmpeg {
+        Some(p) => log::info!("ffmpeg: {}", p.display()),
+        None => log::warn!(
+            "ffmpeg not found (set {} or install it, e.g. `winget install Gyan.FFmpeg`); no background movies",
+            wacca_video::ffmpeg::FFMPEG_ENV
+        ),
+    }
     let fonts = Fonts::load(&pick_fonts(
         font_candidates(&args.data, &args.assets),
         Path::exists,
@@ -185,6 +194,7 @@ fn run(args: &Args) -> Result<(), Error> {
             menu,
             start,
             windowed: args.windowed,
+            ffmpeg,
         },
         fonts,
     )?;
