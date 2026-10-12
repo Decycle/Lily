@@ -6,7 +6,11 @@ version.workspace = true
 publish.workspace = true
 
 [dependencies]
+wacca-game.workspace = true
+wacca-ue4.workspace = true
 log.workspace = true
+thiserror.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

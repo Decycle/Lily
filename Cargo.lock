@@ -140,6 +140,10 @@ name = "wacca-convert"
 version = "0.1.0"
 dependencies = [
  "log",
+ "serde_json",
+ "thiserror",
+ "wacca-game",
+ "wacca-ue4",
 ]
 
 [[package]]
@@ -166,6 +170,7 @@ name = "wacca-ue4"
 version = "0.1.0"
 dependencies = [
  "log",
+ "serde_json",
  "thiserror",
 ]
 
