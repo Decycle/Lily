@@ -26,6 +26,20 @@ pub enum JudgeClass {
     SnapOut,
 }
 
+/// Output of the judge engine for one judged note; input to scoring/gauge/results.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct JudgeEvent {
+    /// Index into `Chart::notes`.
+    pub note: usize,
+    pub class: JudgeClass,
+    pub bonus: wacca_chart::Bonus,
+    pub judgement: Judgement,
+    /// Hit time - note time (seconds); `None` for misses. Negative = early (fast).
+    pub offset: Option<f64>,
+    /// Chart time at which the judgement was made.
+    pub time: f64,
+}
+
 /// Early/late extent of one judgement tier, in frames (`early` = before the note).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Window {
