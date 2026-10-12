@@ -1,0 +1,16 @@
+[package]
+name = "wacca-realgame"
+description = "Harness pieces for driving/recording the real WACCA game: Waccon cell mapping, WCON framing, shared-memory layout, scripted tap timelines."
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+wacca-chart.workspace = true
+wacca-game.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

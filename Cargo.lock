@@ -2006,6 +2006,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wacca-realgame"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+ "wacca-chart",
+ "wacca-game",
+]
+
+[[package]]
 name = "wacca-render"
 version = "0.1.0"
 dependencies = [
