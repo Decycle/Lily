@@ -1,0 +1,7 @@
+/assets/
+/target/
+/data/
+__pycache__/
+# extracted game data (SEGA assets) - keep out of git
+/docs/research/samples/
+/docs/research/tables/

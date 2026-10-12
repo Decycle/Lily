@@ -1,0 +1,13 @@
+[package]
+name = "wacca-audio"
+description = "CRI ACB/AWB/HCA/ADX decoding and audio output with a playback clock. Spec: docs/research/03-audio-and-jackets.md"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+log.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

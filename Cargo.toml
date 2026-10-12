@@ -1,0 +1,25 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+publish = false
+
+[workspace.dependencies]
+wacca-chart = { path = "crates/wacca-chart" }
+wacca-game = { path = "crates/wacca-game" }
+wacca-ue4 = { path = "crates/wacca-ue4" }
+wacca-audio = { path = "crates/wacca-audio" }
+wacca-render = { path = "crates/wacca-render" }
+log = "0.4"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"

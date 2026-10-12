@@ -1,0 +1,13 @@
+[package]
+name = "wacca-render"
+description = "wgpu renderer: playfield, notes, effects. Spec: docs/research/04-gameplay-mechanics.md, 06-visuals.md"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+log.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
