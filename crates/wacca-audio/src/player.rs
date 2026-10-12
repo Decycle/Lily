@@ -4,6 +4,9 @@
 //! Seeks bump a generation number; chunks of older generations are dropped by the callback, so a
 //! seek takes effect within one device buffer. The device is opened at the decoder's sample rate
 //! (48 kHz for WACCA); there is no resampler.
+//!
+//! Sound effects ([`Player::play_sfx`]) are mixed on top of the BGM in the same callback (see
+//! `mixer`); they keep playing while the BGM is paused.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError};
@@ -13,12 +16,17 @@ use std::time::Instant;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SampleFormat, SampleRate, SizedSample, SupportedStreamConfigRange};
 
-use crate::{Clock, Decoder, Error};
+use crate::mixer::{self, Mixer};
+use crate::{Clock, Decoder, Error, Sfx};
 
 /// Decoded chunks kept ahead of the device (each is one HCA block, 1024 frames ≈ 21 ms).
 const QUEUE_CHUNKS: usize = 16;
 /// Frames per chunk of lead-in silence (negative seek positions).
 const SILENCE_CHUNK: u64 = 1024;
+/// Pending sound-effect commands between two device callbacks.
+const SFX_QUEUE: usize = 64;
+/// Mix buffer preallocated for the callback (samples); larger device buffers grow it once.
+const MIX_BUFFER: usize = 16 * 1024;
 
 #[derive(Debug)]
 struct Chunk {
@@ -46,10 +54,16 @@ impl Shared {
     }
 }
 
-/// Streams a [`Decoder`] to the default output device.
+/// A playing sound effect, for [`Player::stop_sfx`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VoiceId(u64);
+
+/// Streams a [`Decoder`] to the default output device and mixes sound effects on top.
 pub struct Player {
     shared: Arc<Shared>,
     commands: Sender<Command>,
+    sfx: SyncSender<mixer::Command>,
+    next_voice: AtomicU64,
     sample_rate: u32,
     duration: f64,
     _stream: cpal::Stream,
@@ -97,13 +111,18 @@ impl Player {
         let (chunk_tx, chunk_rx) = mpsc::sync_channel(QUEUE_CHUNKS);
         let (commands, command_rx) = mpsc::channel();
         let duration = decoder.total_frames() as f64 / f64::from(rate);
-        let feed = Feed::new(chunk_rx, channels.into());
+        let (sfx, sfx_rx) = mpsc::sync_channel(SFX_QUEUE);
+        let output = Output {
+            feed: Feed::new(chunk_rx, channels.into()),
+            mixer: Mixer::new(sfx_rx),
+            mix: Vec::with_capacity(MIX_BUFFER),
+            channels: usize::from(config.channels()),
+        };
         let stream_config = config.config();
-        let out_channels = usize::from(stream_config.channels);
         let stream = match config.sample_format() {
-            SampleFormat::F32 => build::<f32>(&device, stream_config, feed, &shared, out_channels),
-            SampleFormat::I16 => build::<i16>(&device, stream_config, feed, &shared, out_channels),
-            SampleFormat::I32 => build::<i32>(&device, stream_config, feed, &shared, out_channels),
+            SampleFormat::F32 => build::<f32>(&device, stream_config, output, &shared),
+            SampleFormat::I16 => build::<i16>(&device, stream_config, output, &shared),
+            SampleFormat::I32 => build::<i32>(&device, stream_config, output, &shared),
             other => Err(Error::Device(format!("unsupported sample format {other}"))),
         }?;
         stream.play().map_err(device_err)?;
@@ -114,6 +133,8 @@ impl Player {
         let player = Player {
             shared,
             commands,
+            sfx,
+            next_voice: AtomicU64::new(0),
             sample_rate: rate,
             duration,
             _stream: stream,
@@ -151,7 +172,7 @@ impl Player {
             .map_err(|_| Error::Device("decoder thread stopped".into()))
     }
 
-    /// Linear gain applied to the output (clamped to 0..=1).
+    /// Linear gain applied to the BGM (clamped to 0..=1); sound effects use their own gain.
     pub fn set_volume(&self, gain: f32) {
         let gain = if gain.is_nan() {
             0.0
@@ -173,6 +194,40 @@ impl Player {
     /// Length of the stream in seconds.
     pub fn duration(&self) -> f64 {
         self.duration
+    }
+
+    /// Output rate; sound effects must match it (see [`Sfx::resampled`]).
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    /// Start `sfx` at linear `gain`; heard within one device buffer. At most
+    /// [`crate::MAX_VOICES`] play at once (the oldest is cut). A sound with a loop region
+    /// sustains until [`Player::stop_sfx`].
+    pub fn play_sfx(&self, sfx: &Sfx, gain: f32) -> Result<VoiceId, Error> {
+        if sfx.rate != self.sample_rate {
+            return Err(Error::SampleRate {
+                expected: self.sample_rate,
+                got: sfx.rate,
+            });
+        }
+        let id = self.next_voice.fetch_add(1, Ordering::Relaxed);
+        let gain = if gain.is_finite() { gain.max(0.0) } else { 0.0 };
+        self.sfx
+            .try_send(mixer::Command::Play {
+                id,
+                sfx: sfx.clone(),
+                gain,
+            })
+            .map_err(|_| Error::SfxQueueFull)?;
+        Ok(VoiceId(id))
+    }
+
+    /// Fade out a sound effect (ends a hold sustain). Unknown or finished voices are ignored.
+    pub fn stop_sfx(&self, voice: VoiceId) -> Result<(), Error> {
+        self.sfx
+            .try_send(mixer::Command::Stop { id: voice.0 })
+            .map_err(|_| Error::SfxQueueFull)
     }
 }
 
@@ -209,12 +264,46 @@ fn pick_config(
         .map(|(_, r)| r)
 }
 
+/// Everything the device callback owns.
+#[derive(Debug)]
+struct Output {
+    feed: Feed,
+    mixer: Mixer,
+    /// Interleaved `f32` mix of BGM and sound effects, converted to the device format at the end.
+    mix: Vec<f32>,
+    channels: usize,
+}
+
+impl Output {
+    /// Render one device buffer; returns the number of BGM frames consumed.
+    fn render<T: Sample + FromSample<f32>>(
+        &mut self,
+        out: &mut [T],
+        generation: u64,
+        playing: bool,
+        gain: f32,
+    ) -> u64 {
+        if self.mix.capacity() < out.len() {
+            log::warn!("device buffer of {} samples; growing mix buffer", out.len());
+        }
+        self.mix.clear();
+        self.mix.resize(out.len(), 0.0);
+        let written = self
+            .feed
+            .fill(&mut self.mix, self.channels, generation, playing, gain);
+        self.mixer.mix(&mut self.mix, self.channels.max(1));
+        for (d, s) in out.iter_mut().zip(&self.mix) {
+            *d = T::from_sample(s.clamp(-1.0, 1.0));
+        }
+        written
+    }
+}
+
 fn build<T>(
     device: &cpal::Device,
     config: cpal::StreamConfig,
-    mut feed: Feed,
+    mut output: Output,
     shared: &Arc<Shared>,
-    out_channels: usize,
 ) -> Result<cpal::Stream, Error>
 where
     T: SizedSample + FromSample<f32>,
@@ -230,7 +319,7 @@ where
                 let generation = shared.generation.load(Ordering::Acquire);
                 let playing = shared.playing.load(Ordering::Acquire);
                 let gain = f32::from_bits(shared.volume.load(Ordering::Acquire));
-                let written = feed.fill(out, out_channels, generation, playing, gain);
+                let written = output.render(out, generation, playing, gain);
                 shared
                     .clock()
                     .on_callback(generation, written, latency, now);
@@ -281,9 +370,9 @@ impl Feed {
 
     /// Fill `out` (interleaved, `out_channels` wide); returns the number of source frames used.
     /// Missing data (paused, underrun, end) is written as silence.
-    fn fill<T: Sample + FromSample<f32>>(
+    fn fill(
         &mut self,
-        out: &mut [T],
+        out: &mut [f32],
         out_channels: usize,
         generation: u64,
         playing: bool,
@@ -297,7 +386,7 @@ impl Feed {
                 self.read = end;
                 written += 1;
             } else {
-                frame.fill(T::EQUILIBRIUM);
+                frame.fill(0.0);
             }
         }
         if !playing {
@@ -310,13 +399,13 @@ impl Feed {
 
 /// Write one source frame to a device frame: mono goes to every channel, otherwise channel `c`
 /// takes source channel `c` and extra device channels are silent.
-fn map_frame<T: Sample + FromSample<f32>>(dst: &mut [T], src: &[f32], gain: f32) {
+fn map_frame(dst: &mut [f32], src: &[f32], gain: f32) {
     for (c, d) in dst.iter_mut().enumerate() {
         let v = match src {
             [mono] => *mono,
             _ => src.get(c).copied().unwrap_or(0.0),
         };
-        *d = T::from_sample(v * gain);
+        *d = v * gain;
     }
 }
 
@@ -444,13 +533,34 @@ mod tests {
     }
 
     #[test]
-    fn feed_duplicates_mono_and_converts_format() {
+    fn render_mixes_sfx_over_mono_bgm_and_clamps_into_the_device_format() {
         let (tx, rx) = mpsc::sync_channel(4);
-        let mut feed = Feed::new(rx, 1);
-        tx.send(chunk(1, &[1.0])).unwrap();
-        let mut out = [0i16; 2];
-        assert_eq!(feed.fill(&mut out, 2, 1, true, 1.0), 1);
-        assert_eq!(out, [i16::MAX, i16::MAX]);
+        let (sfx_tx, sfx_rx) = mpsc::sync_channel(4);
+        let mut output = Output {
+            feed: Feed::new(rx, 1),
+            mixer: Mixer::new(sfx_rx),
+            mix: Vec::new(),
+            channels: 2,
+        };
+        tx.send(chunk(1, &[0.75, 0.25])).unwrap();
+        let sfx = Sfx {
+            rate: 1000,
+            channels: 2,
+            samples: [0.5, -0.5].into(),
+            loop_range: None,
+        };
+        sfx_tx
+            .send(mixer::Command::Play {
+                id: 0,
+                sfx,
+                gain: 1.0,
+            })
+            .unwrap();
+        let mut out = [0i16; 6];
+        // BGM gain 1: frame 0 = 0.75 + (0.5, -0.5) → clamped 1.0, 0.25.
+        assert_eq!(output.render(&mut out, 1, true, 1.0), 2);
+        assert_eq!(out[..2], [i16::MAX, 8192]);
+        assert_eq!(out[2..], [8192, 8192, 0, 0]);
     }
 
     #[test]

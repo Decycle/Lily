@@ -34,8 +34,16 @@ pub enum Error {
     CueNotFound(String),
     #[error("cue {0:?} has no playable waveform")]
     CueSilent(String),
-    #[error("cue {cue:?}: waveform is not in a stream AWB (memory AWB / ADX are not supported)")]
+    #[error("cue {cue:?}: waveform is not an HCA in a stream AWB (sound effects: use SeBank)")]
     UnsupportedSource { cue: String },
+    #[error("waveform {index}: {reason} not supported")]
+    UnsupportedWaveform { index: u16, reason: &'static str },
+    #[error("ADX decode: {0}")]
+    Adx(String),
+    #[error("sound effect is {got} Hz but the output runs at {expected} Hz (resample it first)")]
+    SampleRate { expected: u32, got: u32 },
+    #[error("sound-effect queue is full")]
+    SfxQueueFull,
     #[error("stream AWB port {0} not listed in the ACB")]
     UnknownAwbPort(u16),
     #[error("AWB {awb}: id {id} not found")]

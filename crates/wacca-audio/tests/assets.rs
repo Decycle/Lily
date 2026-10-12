@@ -8,7 +8,82 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 
 use wacca_audio::cri::afs2;
-use wacca_audio::{BgmBank, Decoder, Error};
+use wacca_audio::{BgmBank, DEFAULT_SE_SET, Decoder, Error, HitSounds, SeBank};
+
+fn se_bank() -> SeBank {
+    SeBank::open(assets().join("Sound").join("Se")).unwrap()
+}
+
+#[test]
+#[ignore]
+fn every_se_cue_decodes() {
+    let bank = se_bank();
+    let names: Vec<_> = bank.acb().cue_names().map(str::to_string).collect();
+    assert_eq!(names.len(), 381);
+    let (mut hca, mut adx, mut looped, mut silent) = (0, 0, 0, Vec::new());
+    for name in &names {
+        let tracks = bank.acb().tracks(name).unwrap();
+        if tracks.is_empty() {
+            silent.push(name.clone());
+            continue;
+        }
+        for (t, sfx) in tracks.iter().zip(bank.decode_cue(name).unwrap()) {
+            let w = &t.waveform;
+            match w.encode_type {
+                0 => {
+                    // Wrong coefficients or nibble order would blow up into clipped noise.
+                    let peak = sfx.samples.iter().fold(0f32, |m, v| m.max(v.abs()));
+                    let clipped = sfx.samples.iter().filter(|v| v.abs() >= 0.999).count();
+                    assert!(peak > 0.05 && clipped * 1000 < sfx.samples.len(), "{name}");
+                    adx += 1;
+                }
+                2 => hca += 1,
+                other => panic!("{name}: encode type {other}"),
+            }
+            assert_eq!(
+                (sfx.rate, sfx.channels, sfx.frames()),
+                (w.sample_rate, w.channels.into(), w.num_samples as usize),
+                "{name}"
+            );
+            assert!(sfx.samples.iter().all(|v| v.is_finite()), "{name}");
+            assert_eq!(sfx.loop_range.is_some(), w.loop_range.is_some(), "{name}");
+            looped += usize::from(sfx.loop_range.is_some());
+        }
+    }
+    eprintln!("SE tracks: {hca} HCA, {adx} ADX, {looped} looped; silent cues {silent:?}");
+    // 393 waveforms; hold cues reuse the tap waveform as their attack track.
+    assert_eq!(adx, 20);
+    assert_eq!(hca + adx, 407);
+    assert_eq!(silent, ["blank"]);
+}
+
+#[test]
+#[ignore]
+fn default_hit_sounds_resolve() {
+    let hits = HitSounds::load(&se_bank(), &DEFAULT_SE_SET, 48000).unwrap();
+    for one_shot in [
+        &hits.marvelous,
+        &hits.good,
+        &hits.slide_marvelous,
+        &hits.slide_good,
+        &hits.snap_marvelous,
+        &hits.snap_good,
+        &hits.chain,
+    ] {
+        assert_eq!(one_shot.len(), 1);
+        assert_eq!(one_shot[0].rate, 48000);
+        assert!(one_shot[0].loop_range.is_none());
+        let peak = one_shot[0].samples.iter().fold(0f32, |m, v| m.max(v.abs()));
+        assert!(peak > 0.05, "peak {peak}");
+    }
+    // Hold = looping sustain + one-shot attack (the tap sound); re-hold is only the sustain.
+    assert_eq!(hits.hold_good.len(), 2);
+    assert_eq!(hits.hold_good[0].loop_range, Some((80825, 202520)));
+    assert_eq!(hits.hold_good[1], hits.good[0]);
+    assert_eq!(hits.hold_marvelous[0].loop_range, Some((78381, 171936)));
+    assert_eq!(hits.re_hold.len(), 1);
+    assert_eq!(hits.re_hold[0].loop_range, Some((92875, 163251)));
+}
 
 fn assets() -> PathBuf {
     PathBuf::from(std::env::var("WACCA_ASSETS").expect("set WACCA_ASSETS to the assets directory"))
