@@ -32,6 +32,16 @@ pub enum Difficulty {
 
 impl Difficulty {
     pub const ALL: [Difficulty; 4] = [Self::Normal, Self::Hard, Self::Expert, Self::Inferno];
+
+    /// From the `_NN` chart file suffix (`0..=3`).
+    pub fn from_file_suffix(suffix: u8) -> Option<Self> {
+        Self::ALL.get(usize::from(suffix)).copied()
+    }
+
+    /// Chart file name `{song_id}_{NN}.mer` (the game's `%s/%s_%02d%s`).
+    pub fn chart_file_name(self, song_id: &str) -> String {
+        format!("{song_id}_{:02}.mer", self as u8)
+    }
 }
 
 /// Score/gauge variant of a note.
@@ -187,6 +197,16 @@ mod tests {
         assert!(a.contains(58) && a.contains(59) && a.contains(0) && a.contains(1));
         assert!(!a.contains(2) && !a.contains(57));
         assert!((0..60).all(|l| Arc { lane: 7, width: 60 }.contains(l)));
+    }
+
+    #[test]
+    fn difficulty_file_suffix() {
+        assert_eq!(Difficulty::from_file_suffix(2), Some(Difficulty::Expert));
+        assert_eq!(Difficulty::from_file_suffix(4), None);
+        assert_eq!(
+            Difficulty::Inferno.chart_file_name("S03-011"),
+            "S03-011_03.mer"
+        );
     }
 
     #[test]
