@@ -149,7 +149,46 @@ pub fn stop(cfg: &GameConfig) -> Vec<String> {
         }
     }
     log::info!("stopped (killed): {killed:?}");
+    // taskkill returns before the processes are gone (the game takes ~1-3 s to exit); wait so callers can rely
+    // on nothing being left.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let listing = std::process::Command::new("tasklist")
+            .args(["/fo", "csv", "/nh"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+        let left = match listing {
+            Ok(l) => still_running(&cfg.processes, &l),
+            Err(e) => {
+                log::warn!("tasklist: {e}");
+                break;
+            }
+        };
+        if left.is_empty() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            log::warn!("still running after stop: {left:?}");
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
     killed
+}
+
+/// Names from `names` that appear as image names in `tasklist /fo csv /nh` output (case-insensitive).
+pub fn still_running(names: &[String], tasklist_csv: &str) -> Vec<String> {
+    let running: Vec<String> = tasklist_csv
+        .lines()
+        .filter_map(|l| l.trim_start().strip_prefix('"')?.split('"').next())
+        .map(str::to_ascii_lowercase)
+        .collect();
+    names
+        .iter()
+        .filter(|n| running.contains(&n.to_ascii_lowercase()))
+        .cloned()
+        .collect()
 }
 
 /// Polls for the game window until `timeout`.
@@ -309,6 +348,21 @@ mod tests {
         ] {
             assert!(p.iter().any(|n| n == name), "{name}");
         }
+    }
+
+    #[test]
+    fn finds_survivors_in_tasklist_output() {
+        let names = GameConfig::default().processes;
+        let csv = concat!(
+            "\"System\",\"4\",\"Services\",\"0\",\"144 K\"\r\n",
+            "\"Mercury-Win64-Shipping.exe\",\"14448\",\"Console\",\"1\",\"638,116 K\"\r\n",
+            "\"AMDAEMON.EXE\",\"1\",\"Console\",\"1\",\"1 K\"\r\n",
+        );
+        assert_eq!(
+            still_running(&names, csv),
+            ["Mercury-Win64-Shipping.exe", "amdaemon.exe"]
+        );
+        assert!(still_running(&names, "INFO: No tasks are running.\r\n").is_empty());
     }
 
     #[test]

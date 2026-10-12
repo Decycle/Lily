@@ -441,6 +441,9 @@ Steps:
 
 Outcome: confirmed (or corrected) `cells.rs`, minimum tap duration, latency distribution → `align.json` defaults.
 
+**Done 2026-10-12, results in doc 08:** all 240 cells map as `cells.rs` predicts; taps ≥ 17 ms always register,
+shorter ones only sometimes; DLL ack ~1.1 ms; injection → input-test screen ~115 ms in capture (~85–95 ms in the game).
+
 ### E2 — clock alignment and judgement offset (needs `sync`)
 
 Guest play of one slow Normal chart; the script hits each isolated touch note at `note_time + δ` with the δ
