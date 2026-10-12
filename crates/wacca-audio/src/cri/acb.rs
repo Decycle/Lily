@@ -28,7 +28,7 @@ pub const SPEAKER_BUS: &str = "BGM_SPEAKER";
 pub enum Source {
     /// Entry `id` of the stream AWB on `port` (see [`Acb::stream_awb`]).
     Stream { port: u16, id: u32 },
-    /// Entry `id` of the ACB's in-memory AWB (`AwbFile`, used by MER_SE; not handled yet).
+    /// Entry `id` of the ACB's in-memory AWB (`AwbFile`, used by MER_SE; see [`Acb::parse_with_awb`]).
     Memory { id: u32 },
 }
 
@@ -42,6 +42,8 @@ pub struct Waveform {
     pub channels: u8,
     pub sample_rate: u32,
     pub num_samples: u32,
+    /// Loop region `[start, end)` in frames, from `ExtensionData → WaveformExtensionDataTable`.
+    pub loop_range: Option<(u32, u32)>,
 }
 
 /// A track's send to a mixer bus (level 0..=1).
@@ -106,6 +108,7 @@ struct Tables<'a> {
     cue: Table<'a>,
     cue_name: Table<'a>,
     waveform: Table<'a>,
+    waveform_ext: Option<Table<'a>>,
     synth: Option<Table<'a>>,
     sequence: Option<Table<'a>>,
     track: Option<Table<'a>>,
@@ -217,6 +220,18 @@ impl Tables<'_> {
                 id: w.uint(index, "MemoryAwbId")? as u32,
             }
         };
+        let loop_range = match (w.uint(index, "ExtensionData"), &self.waveform_ext) {
+            (Ok(NONE_U16) | Err(Error::MissingColumn { .. }), _) => None,
+            (Ok(ext), Some(t)) => {
+                let ext = ext as usize;
+                Some((
+                    t.uint(ext, "LoopStart")? as u32,
+                    t.uint(ext, "LoopEnd")? as u32,
+                ))
+            }
+            (Ok(_), None) => return Err(missing("WaveformExtensionDataTable")),
+            (Err(e), _) => return Err(e),
+        };
         Ok(Waveform {
             index: index as u16,
             source,
@@ -224,6 +239,7 @@ impl Tables<'_> {
             channels: w.uint(index, "NumChannels")? as u8,
             sample_rate: w.uint(index, "SamplingRate")? as u32,
             num_samples: w.uint(index, "NumSamples")? as u32,
+            loop_range,
         })
     }
 
@@ -249,20 +265,29 @@ impl Tables<'_> {
 impl Acb {
     /// Parse the ACB at the first `@UTF` in `buf` (a raw `.acb` or a UE4 `.uexp`).
     pub fn parse(buf: &[u8]) -> Result<Self, Error> {
+        Self::parse_with_awb(buf).map(|(acb, _)| acb)
+    }
+
+    /// Like [`Acb::parse`], also returning the in-memory AWB (`Header.AwbFile`) if there is one.
+    /// [`Source::Memory`] ids index into it.
+    pub fn parse_with_awb(buf: &[u8]) -> Result<(Self, Option<&[u8]>), Error> {
         let at = utf::find(buf).ok_or(Error::BadMagic {
             what: "ACB",
             expected: "@UTF",
             offset: 0,
         })?;
         let header = Table::parse(&buf[at..])?;
-        let sub = |name: &str| match header.sub_table(0, name) {
+        // Absent, empty and non-`@UTF` cells (MER_SE's StreamAwbHash is 16 zero bytes) are `None`.
+        let sub = |name: &str| match header.data(0, name) {
             Err(Error::MissingColumn { .. }) => Ok(None),
-            r => r,
+            Ok(d) if !d.starts_with(b"@UTF") => Ok(None),
+            _ => header.sub_table(0, name),
         };
         let t = Tables {
             cue: required(sub("CueTable")?, "CueTable")?,
             cue_name: required(sub("CueNameTable")?, "CueNameTable")?,
             waveform: required(sub("WaveformTable")?, "WaveformTable")?,
+            waveform_ext: sub("WaveformExtensionDataTable")?,
             synth: sub("SynthTable")?,
             sequence: sub("SequenceTable")?,
             track: sub("TrackTable")?,
@@ -308,11 +333,19 @@ impl Acb {
             cues.len(),
             stream_awbs.len()
         );
-        Ok(Acb {
-            name,
-            cues,
-            stream_awbs,
-        })
+        let awb = match header.data(0, "AwbFile") {
+            Ok([]) | Err(Error::MissingColumn { .. }) => None,
+            Ok(d) => Some(d),
+            Err(e) => return Err(e),
+        };
+        Ok((
+            Acb {
+                name,
+                cues,
+                stream_awbs,
+            },
+            awb,
+        ))
     }
 
     /// All cue names, sorted.
