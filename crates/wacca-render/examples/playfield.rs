@@ -11,7 +11,7 @@ use wacca_chart::{
     Arc, BeatPos, Bonus, Chart, ChartHeader, HoldNode, MaskDir, MaskEvent, Note, NoteBody,
     ScrollSegment, SlideDir, SnapDir,
 };
-use wacca_render::{Renderer, SceneOptions, build_scene};
+use wacca_render::{LiveState, Renderer, SceneOptions, build_scene};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -201,7 +201,12 @@ impl ApplicationHandler for App {
                 if self.clock.now() > self.chart.end_time + 1.0 {
                     self.clock = Clock::start(LEAD_IN);
                 }
-                let scene = build_scene(&self.chart, self.clock.now(), &self.opts);
+                let scene = build_scene(
+                    &self.chart,
+                    self.clock.now(),
+                    &self.opts,
+                    &LiveState::default(),
+                );
                 if let Some(gfx) = &mut self.gfx {
                     gfx.draw(&scene);
                 }

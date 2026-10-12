@@ -11,6 +11,10 @@ pub type Rgba = [f32; 4];
 pub const GUIDE_LANE: Rgba = [0.08, 0.08, 0.12, 1.0];
 pub const LANE_LINE: Rgba = [0.22, 0.22, 0.30, 1.0];
 pub const JUDGE_RING: Rgba = [0.92, 0.92, 0.98, 1.0];
+/// Pressed sensors, drawn over their ring.
+pub const TOUCH_HIGHLIGHT: Rgba = [0.40, 0.90, 1.0, 0.45];
+/// Faint circles at the sensor ring boundaries.
+pub const SENSOR_GUIDE: Rgba = [0.40, 0.45, 0.60, 0.35];
 
 pub const TOUCH: Rgba = [0.95, 0.25, 0.75, 1.0];
 pub const CHAIN: Rgba = [1.0, 0.85, 0.10, 1.0];
@@ -32,9 +36,21 @@ pub const ACCENT_THICKNESS: f32 = 0.025;
 /// Lanes trimmed from each end of a note narrower than the full ring (MM trims ~1 segment, 04 §2.3).
 pub const NOTE_TRIM_LANES: f32 = 0.15;
 pub const JUDGE_RING_WIDTH: f32 = 0.02;
+/// Radial half-width of a sensor guide circle.
+pub const SENSOR_GUIDE_HALF_WIDTH: f32 = 0.002;
+
+/// Touch sensor band (playfield units, judgement line = 1): [`SENSOR_DEPTHS`] equal rings from
+/// `SENSOR_INNER` to `SENSOR_OUTER`. Touches nearer the centre hit nothing; touches beyond the
+/// outer edge count as the outermost ring. Used by both drawing and touch mapping.
+// UNVERIFIED: the cabinet's sensors sit on the rim; this band is sized for fingers on a laptop
+// touchscreen so swipes in/out cross all rings comfortably.
+pub const SENSOR_INNER: f32 = 0.55;
+pub const SENSOR_OUTER: f32 = 1.15;
+/// Depth rings (= `wacca_game::input::DEPTHS`).
+pub const SENSOR_DEPTHS: usize = 4;
 pub const LANE_LINE_HALF_WIDTH: f32 = 0.002;
 /// Playfield-space radius mapped to the edge of the square viewport (room for the ring).
-pub const VIEW_EXTENT: f32 = 1.06;
+pub const VIEW_EXTENT: f32 = 1.17;
 
 pub fn note_color(body: &NoteBody) -> Rgba {
     match body {

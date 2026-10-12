@@ -1,29 +1,34 @@
-//! winit window + wgpu surface around a [`Session`]: audio-clocked rendering and input.
-//!
-//! Input timing: every touch/mouse event immediately feeds an `InputFrame` stamped with the chart
-//! time read from the audio clock at that moment (cheap: one mutex lock), and every rendered frame
-//! feeds one more with the current contacts so time-driven judgements (misses, holds, chains)
-//! advance even without input. With `--autoplay`, the scripted frames that fell due are fed
-//! instead and user input is ignored.
+//! winit window + wgpu surface: runs the screen state machine, draws screens, routes input.
+//! All decisions live in the pure modules (`screen`, `menu`, `select`, `options`, `results`,
+//! `hud`); this file only wires them to the window, audio and save file.
 
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
-use wacca_audio::Player;
-use wacca_chart::Chart;
+use wacca_audio::{BgmBank, DEFAULT_SE_SET, HitSounds, Player, SeBank};
 use wacca_game::grade::PlayResult;
-use wacca_game::input::InputFrame;
-use wacca_render::layout::playfield_viewport;
-use wacca_render::{Renderer, SceneOptions, Vertex, build_scene};
+use wacca_game::save::{self, SaveData};
+use wacca_render::layout::{Rect, letterbox, playfield_viewport};
+use wacca_render::text::{Fonts, TextRenderer};
+use wacca_render::{Renderer, Vertex};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition};
-use winit::event::{ElementState, KeyEvent, MouseButton, Touch, TouchPhase, WindowEvent};
+use winit::event::{
+    ElementState, KeyEvent, MouseButton, MouseScrollDelta, Touch, TouchPhase, WindowEvent,
+};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{Window, WindowId};
+use winit::window::{Fullscreen, Window, WindowId};
 
-use crate::args::SPEED_RANGE;
-use crate::session::{Autoplay, Session, chart_now, end_time, start_position};
-use crate::touch_mapping::{Contacts, sensor_at_pixel};
+use crate::gesture::{Gesture, Pointer, Scroller};
+use crate::menu::Menu;
+use crate::play::{PlayOptions, PlaySpec, PlayState, load_chart};
+use crate::results::Summary;
+use crate::screen::{self, Event, Next, Screen};
+use crate::ui::{Action, Item, View, WHITE};
+use crate::{hud, jacket, options, preview, record, results, select};
 
 /// Contact id used for the mouse (touch ids come from the OS).
 const MOUSE_ID: u64 = u64::MAX;
@@ -35,65 +40,48 @@ pub enum ShellError {
     EventLoop(#[from] winit::error::EventLoopError),
     #[error("graphics: {0}")]
     Graphics(String),
-    #[error("audio: {0}")]
-    Audio(#[from] wacca_audio::Error),
 }
 
-/// How the play ended.
+fn gfx_err(e: impl std::fmt::Display) -> ShellError {
+    ShellError::Graphics(e.to_string())
+}
+
+/// Everything the game needs, prepared by `main`.
 #[derive(Debug)]
-pub enum Outcome {
-    Completed(PlayResult),
-    GaveUp(PlayResult),
+pub struct Setup {
+    pub assets: PathBuf,
+    pub data: PathBuf,
+    pub bgm: BgmBank,
+    pub se: Option<SeBank>,
+    pub save_path: Option<PathBuf>,
+    pub save: SaveData,
+    pub menu: Menu,
+    /// Play this right away (`--chart`).
+    pub start: Option<PlaySpec>,
+    pub windowed: bool,
 }
 
-/// Everything one play needs; consumed by [`run`].
-#[derive(Debug)]
-pub struct Play {
-    pub title: String,
-    pub chart: Chart,
-    pub player: Player,
-    pub autoplay: bool,
-    pub speed: f64,
-    /// User offset, seconds.
-    pub offset: f64,
-    pub norma: f32,
-    pub bonus_effect: bool,
-}
-
-/// Open the window, play the chart to the end (or until Esc / close) and return the result.
-pub fn run(play: Play) -> Result<Outcome, ShellError> {
-    let end = end_time(&play.chart, play.player.duration(), play.offset);
-    log::info!(
-        "{} notes, chart end {:.2} s, audio {:.2} s, play ends at chart {end:.2} s",
-        play.chart.notes.len(),
-        play.chart.end_time,
-        play.player.duration()
-    );
+pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
     let mut app = App {
+        s: setup,
+        fonts: Some(fonts),
         gfx: None,
-        session: Session::new(&play.chart, play.bonus_effect),
-        autoplay: play.autoplay.then(|| Autoplay::new(&play.chart)),
-        opts: SceneOptions {
-            note_speed: play.speed,
-        },
-        end,
-        play,
-        contacts: Contacts::default(),
+        screen: Screen::SongSelect,
+        play: None,
+        summary: None,
+        last_spec: None,
+        hits: None,
+        preview: PreviewPlayer::default(),
+        pointers: HashMap::new(),
+        scroller: Scroller::default(),
         cursor: None,
         mouse_down: false,
-        paused: false,
-        shown_title: String::new(),
-        outcome: None,
+        alt: false,
+        jackets_tried: HashSet::new(),
         error: None,
     };
     EventLoop::new()?.run_app(&mut app)?;
-    if let Some(e) = app.error {
-        return Err(e);
-    }
-    Ok(app.outcome.unwrap_or_else(|| {
-        // Window closed without an explicit end.
-        Outcome::GaveUp(app.session.give_up(app.play.norma))
-    }))
+    app.error.map_or(Ok(()), Err)
 }
 
 struct Gfx {
@@ -103,14 +91,11 @@ struct Gfx {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     renderer: Renderer,
-}
-
-fn gfx_err(e: impl std::fmt::Display) -> ShellError {
-    ShellError::Graphics(e.to_string())
+    text: TextRenderer,
 }
 
 impl Gfx {
-    fn new(window: Arc<Window>) -> Result<Self, ShellError> {
+    fn new(window: Arc<Window>, fonts: Fonts) -> Result<Self, ShellError> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let surface = instance.create_surface(window.clone()).map_err(gfx_err)?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -129,6 +114,7 @@ impl Gfx {
         config.present_mode = wgpu::PresentMode::AutoVsync;
         surface.configure(&device, &config);
         let renderer = Renderer::new(&device, &queue, config.format);
+        let text = TextRenderer::new(&device, &queue, config.format, fonts);
         Ok(Self {
             window,
             surface,
@@ -136,7 +122,12 @@ impl Gfx {
             queue,
             config,
             renderer,
+            text,
         })
+    }
+
+    fn size(&self) -> [f32; 2] {
+        [self.config.width as f32, self.config.height as f32]
     }
 
     fn resize(&mut self, width: u32, height: u32) {
@@ -147,7 +138,8 @@ impl Gfx {
         }
     }
 
-    fn draw(&mut self, scene: &[Vertex]) {
+    /// Playfield `scene` (may be empty), then the `view` overlay.
+    fn draw(&mut self, scene: &[Vertex], view: &View, jackets: &mut Jackets) {
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(e) => {
@@ -156,156 +148,483 @@ impl Gfx {
                 return;
             }
         };
-        let view = frame
+        let target = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         let size = [self.config.width, self.config.height];
-        self.renderer.render(&mut encoder, &view, size, scene);
+        self.renderer.render(&mut encoder, &target, size, scene);
+        self.text.begin(size);
+        for item in &view.items {
+            match item {
+                Item::Fill { rect, color } => self.text.fill(*rect, *color),
+                Item::Text {
+                    text,
+                    at,
+                    px,
+                    color,
+                    align,
+                    max_width,
+                } => self.text.text(text, *at, *px, *color, *align, *max_width),
+                Item::Jacket { rect, key } => {
+                    jackets.ensure(&mut self.text, key);
+                    if self.text.has_image(key) {
+                        self.text.image(key, *rect, WHITE);
+                    } else {
+                        self.text.fill(*rect, jacket::placeholder_color(key));
+                    }
+                }
+            }
+        }
+        self.text.render(&mut encoder, &target);
         self.queue.submit([encoder.finish()]);
         self.window.pre_present_notify();
         frame.present();
     }
 }
 
+/// Loads each jacket PNG once, on first use.
+struct Jackets<'a> {
+    data: &'a std::path::Path,
+    tried: &'a mut HashSet<String>,
+}
+
+impl Jackets<'_> {
+    fn ensure(&mut self, text: &mut TextRenderer, key: &str) {
+        if key.is_empty() || !self.tried.insert(key.to_string()) {
+            return;
+        }
+        if let Some((size, rgba)) = jacket::load(&jacket::path(self.data, key)) {
+            text.set_image(key, size, &rgba);
+        }
+    }
+}
+
+/// Song-select preview: a separate [`Player`] per song, started after the cursor rests.
+#[derive(Default)]
+struct PreviewPlayer {
+    song: Option<u32>,
+    since: Option<Instant>,
+    player: Option<(Player, preview::Window)>,
+    /// Starting failed for this song; do not retry every frame.
+    failed: bool,
+    /// Song id → BGM cue (from its chart header).
+    cues: HashMap<u32, String>,
+}
+
+impl PreviewPlayer {
+    fn stop(&mut self) {
+        self.player = None;
+        self.song = None;
+    }
+
+    fn update(&mut self, s: &Setup) {
+        let song = s.menu.list.current();
+        let id = song.map(|s| s.id);
+        if id != self.song {
+            self.song = id;
+            self.since = Some(Instant::now());
+            self.player = None;
+            self.failed = false;
+        }
+        let Some(song) = song else { return };
+        let rested = self
+            .since
+            .is_some_and(|t| t.elapsed().as_secs_f64() >= preview::DEBOUNCE_SECS);
+        if self.player.is_none() && !self.failed && rested {
+            let w = preview::Window::new(song.preview_begin, song.preview_seconds);
+            match self.start(s, song, w) {
+                Ok(p) => self.player = Some((p, w)),
+                Err(e) => {
+                    log::warn!("preview of {}: {e}", song.folder);
+                    self.failed = true;
+                }
+            }
+        }
+        if let Some((p, w)) = &self.player {
+            let pos = p.position();
+            if w.over(pos)
+                && let Err(e) = p.seek(w.begin)
+            {
+                log::warn!("preview seek: {e}");
+            }
+            p.set_volume(w.gain(pos));
+        }
+    }
+
+    fn start(
+        &mut self,
+        s: &Setup,
+        song: &wacca_game::catalog::Song,
+        w: preview::Window,
+    ) -> Result<Player, Box<dyn std::error::Error>> {
+        let cue = match self.cues.get(&song.id) {
+            Some(c) => c.clone(),
+            None => {
+                let entry = song.charts.first().ok_or("no chart")?;
+                let chart = load_chart(&s.assets.join(&entry.chart_path))?;
+                let cue = chart.header.music_file_path;
+                self.cues.insert(song.id, cue.clone());
+                cue
+            }
+        };
+        let player = Player::new(Box::new(s.bgm.open_cue(&cue)?))?;
+        player.seek(w.begin)?;
+        player.set_volume(0.0);
+        player.play();
+        Ok(player)
+    }
+}
+
+/// Hit sounds at `rate`, decoded on first use (and again if the rate changes). A bank that
+/// fails to decode is dropped so the game plays silently instead of retrying.
+fn hit_sounds(
+    cache: &mut Option<HitSounds>,
+    se: &mut Option<SeBank>,
+    rate: u32,
+) -> Option<HitSounds> {
+    let stale = cache
+        .as_ref()
+        .is_none_or(|h| h.marvelous.first().is_some_and(|s| s.rate != rate));
+    if stale && let Some(bank) = se {
+        match HitSounds::load(bank, &DEFAULT_SE_SET, rate) {
+            Ok(h) => *cache = Some(h),
+            Err(e) => {
+                log::warn!("hit sounds: {e}; playing without them");
+                *se = None;
+            }
+        }
+    }
+    cache
+        .clone()
+        .filter(|h| h.marvelous.first().is_none_or(|s| s.rate == rate))
+}
+
 struct App {
+    s: Setup,
+    /// Moved into the text renderer once the window exists.
+    fonts: Option<Fonts>,
     gfx: Option<Gfx>,
-    play: Play,
-    session: Session,
-    autoplay: Option<Autoplay>,
-    opts: SceneOptions,
-    /// Chart time at which the play is over.
-    end: f64,
-    contacts: Contacts,
+    screen: Screen,
+    play: Option<PlayState>,
+    summary: Option<Summary>,
+    last_spec: Option<PlaySpec>,
+    /// Decoded once, at the first play.
+    hits: Option<HitSounds>,
+    preview: PreviewPlayer,
+    /// Menu gestures per contact.
+    pointers: HashMap<u64, Pointer>,
+    scroller: Scroller,
     /// Last cursor position in window pixels.
     cursor: Option<[f32; 2]>,
     mouse_down: bool,
-    paused: bool,
-    shown_title: String,
-    outcome: Option<Outcome>,
+    alt: bool,
+    jackets_tried: HashSet<String>,
     error: Option<ShellError>,
 }
 
 impl App {
-    fn now(&self) -> f64 {
-        chart_now(
-            &self.play.chart,
-            self.play.player.position(),
-            self.play.offset,
-        )
+    fn size(&self) -> [f32; 2] {
+        self.gfx.as_ref().map_or([1.0, 1.0], Gfx::size)
     }
 
-    fn feed_contacts(&mut self) {
-        if self.paused || self.autoplay.is_some() {
-            return;
+    /// The 9:16 menu area.
+    fn area(&self) -> Rect {
+        let [w, h] = self.size();
+        letterbox(w, h)
+    }
+
+    fn view(&self) -> View {
+        let area = self.area();
+        let m = &self.s.menu;
+        match self.screen {
+            Screen::SongSelect => select::select_view(&m.list, &self.s.save, area),
+            Screen::Difficulty => select::difficulty_view(&m.list, &self.s.save, area),
+            Screen::Options => {
+                let title = m.list.current().map_or("", |s| s.title.as_str());
+                options::view(&m.options, &m.settings, m.autoplay, title, area)
+            }
+            Screen::Results => self
+                .summary
+                .as_ref()
+                .map(|s| results::view(s, area))
+                .unwrap_or_default(),
+            Screen::Play => {
+                let [w, h] = self.size();
+                let window = Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w,
+                    h,
+                };
+                self.play.as_ref().map_or_else(View::default, |p| {
+                    hud::view(&p.hud(), &p.spec.title, window, playfield_viewport(w, h))
+                })
+            }
         }
-        let frame = InputFrame {
-            time: self.now(),
-            sensors: self.contacts.sensors(),
+    }
+
+    fn event(&mut self, event_loop: &ActiveEventLoop, e: Event) {
+        match screen::next(self.screen, e) {
+            Next::Stay => {}
+            Next::Quit => event_loop.exit(),
+            Next::Go(Screen::Play) => {
+                let spec = if self.screen == Screen::Results {
+                    self.last_spec.clone()
+                } else {
+                    self.spec_from_menu()
+                };
+                if self.screen == Screen::Options {
+                    self.save_settings();
+                }
+                match spec {
+                    Some(spec) => self.start_play(spec),
+                    None => log::warn!("no chart selected"),
+                }
+            }
+            Next::Go(s) => self.screen = s,
+        }
+    }
+
+    fn spec_from_menu(&self) -> Option<PlaySpec> {
+        let (song, c) = self.s.menu.list.chart()?;
+        Some(PlaySpec {
+            title: song.title.clone(),
+            jacket: song.jacket.clone(),
+            song_id: Some(song.id),
+            difficulty: Some(c.difficulty),
+            level: Some(c.level),
+            chart_path: self.s.assets.join(&c.chart_path),
+            norma: c.norma,
+        })
+    }
+
+    fn start_play(&mut self, spec: PlaySpec) {
+        self.preview.stop();
+        let m = &self.s.menu;
+        let opts = PlayOptions {
+            note_speed: f64::from(m.settings.note_speed),
+            offset: options::offset_secs(m.settings.judge_offset),
+            autoplay: m.autoplay,
+            bonus_effect: m.settings.bonus_effect,
         };
-        self.session.feed(&frame);
-    }
-
-    /// Playfield sensor under a window position (physical pixels, like the surface).
-    fn pointer(&mut self, id: u64, at: Option<PhysicalPosition<f64>>) {
-        let sensor = at.and_then(|p| {
-            let gfx = self.gfx.as_ref()?;
-            let vp = playfield_viewport(gfx.config.width as f32, gfx.config.height as f32);
-            sensor_at_pixel([p.x as f32, p.y as f32], vp)
-        });
-        self.contacts.set(id, sensor);
-        self.feed_contacts();
-    }
-
-    fn touch(&mut self, t: Touch) {
-        match t.phase {
-            TouchPhase::Started | TouchPhase::Moved => self.pointer(t.id, Some(t.location)),
-            TouchPhase::Ended | TouchPhase::Cancelled => self.pointer(t.id, None),
+        if m.settings.mirror {
+            log::warn!("mirror is not implemented yet; playing unmirrored");
+        }
+        self.last_spec = Some(spec.clone());
+        let (cache, se) = (&mut self.hits, &mut self.s.se);
+        let hits = |rate| hit_sounds(cache, se, rate);
+        match PlayState::new(spec, opts, &self.s.bgm, hits).and_then(|mut p| {
+            p.start()?;
+            Ok(p)
+        }) {
+            Ok(p) => {
+                self.play = Some(p);
+                self.screen = Screen::Play;
+            }
+            Err(e) => {
+                log::error!("cannot start play: {e}");
+                self.screen = Screen::SongSelect;
+            }
         }
     }
 
-    fn mouse_at(&self) -> Option<PhysicalPosition<f64>> {
-        let c = self.cursor.filter(|_| self.mouse_down)?;
-        Some(PhysicalPosition::new(f64::from(c[0]), f64::from(c[1])))
+    fn end_play(&mut self, event_loop: &ActiveEventLoop, result: PlayResult, completed: bool) {
+        let Some(play) = self.play.take() else { return };
+        let spec = &play.spec;
+        let key = spec.song_id.zip(spec.difficulty);
+        let previous_best = key
+            .and_then(|(id, d)| self.s.save.record(id, d))
+            .filter(|r| r.play_count > 0)
+            .map(|r| r.best_score);
+        let (mut new_best, mut not_saved) = (false, None);
+        match (key, &self.s.save_path) {
+            _ if play.opts.autoplay => not_saved = Some("AUTOPLAY: NOT SAVED".to_string()),
+            (None, _) => not_saved = Some("UNKNOWN SONG: NOT SAVED".into()),
+            (_, None) => not_saved = Some("NO SAVE LOCATION: NOT SAVED".into()),
+            (Some((id, d)), Some(path)) => {
+                match record::save_result(path, &mut self.s.save, id, d, &result) {
+                    Ok(best) => {
+                        new_best = best;
+                        log::info!(
+                            "saved to {}{}",
+                            path.display(),
+                            if best { " (new best)" } else { "" }
+                        );
+                    }
+                    Err(e) => {
+                        log::error!("save: {e}");
+                        not_saved = Some("SAVE FAILED".into());
+                    }
+                }
+            }
+        }
+        self.summary = Some(Summary {
+            title: spec.title.clone(),
+            jacket: spec.jacket.clone(),
+            difficulty: spec.difficulty,
+            level: spec.level,
+            result,
+            completed,
+            previous_best,
+            new_best,
+            not_saved,
+        });
+        self.event(event_loop, Event::PlayOver);
+    }
+
+    fn save_settings(&mut self) {
+        self.s.save.settings = self.s.menu.settings.clone();
+        if let Some(path) = &self.s.save_path
+            && let Err(e) = save::save(path, &self.s.save)
+        {
+            log::error!("save settings: {e}");
+        }
+    }
+
+    fn action(&mut self, event_loop: &ActiveEventLoop, a: Action) {
+        if let Some(e) = self.s.menu.act(self.screen, a) {
+            self.event(event_loop, e);
+        }
+    }
+
+    fn toggle_fullscreen(&self) {
+        if let Some(g) = &self.gfx {
+            let full = g.window.fullscreen().is_some();
+            g.window
+                .set_fullscreen((!full).then_some(Fullscreen::Borderless(None)));
+        }
     }
 
     fn key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode) {
-        match code {
-            KeyCode::Escape => {
-                log::info!("given up");
-                self.outcome = Some(Outcome::GaveUp(self.session.give_up(self.play.norma)));
-                event_loop.exit();
-            }
-            KeyCode::Space => {
-                self.paused = !self.paused;
-                if self.paused {
-                    self.play.player.pause();
-                } else {
-                    self.play.player.play();
+        if code == KeyCode::F11 || (code == KeyCode::Enter && self.alt) {
+            self.toggle_fullscreen();
+            return;
+        }
+        if self.screen == Screen::Play {
+            match code {
+                KeyCode::Escape => {
+                    if let Some(p) = &mut self.play {
+                        let r = p.give_up();
+                        self.end_play(event_loop, r, false);
+                    }
                 }
-                log::info!("paused: {} at chart {:.3}", self.paused, self.now());
+                KeyCode::Space => self.play.iter_mut().for_each(PlayState::toggle_pause),
+                KeyCode::ArrowUp => self
+                    .play
+                    .iter_mut()
+                    .for_each(|p| p.change_speed(SPEED_STEP)),
+                KeyCode::ArrowDown => self
+                    .play
+                    .iter_mut()
+                    .for_each(|p| p.change_speed(-SPEED_STEP)),
+                _ => {}
             }
-            KeyCode::ArrowUp | KeyCode::ArrowDown => {
-                let step = if code == KeyCode::ArrowUp {
-                    SPEED_STEP
-                } else {
-                    -SPEED_STEP
-                };
-                self.opts.note_speed =
-                    (self.opts.note_speed + step).clamp(*SPEED_RANGE.start(), *SPEED_RANGE.end());
-                log::info!("note speed {:.1}", self.opts.note_speed);
+            return;
+        }
+        let action = match code {
+            KeyCode::ArrowUp => Action::Up,
+            KeyCode::ArrowDown => Action::Down,
+            KeyCode::ArrowLeft => Action::Left,
+            KeyCode::ArrowRight => Action::Right,
+            KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => Action::Confirm,
+            KeyCode::Escape | KeyCode::Backspace => Action::Back,
+            KeyCode::KeyS => Action::NextSort,
+            KeyCode::KeyF => Action::ToggleFilter,
+            KeyCode::KeyR => Action::Retry,
+            _ => return,
+        };
+        self.action(event_loop, action);
+    }
+
+    /// Pointer `id` pressed (`Some(true)`), moved (`None`) or released (`Some(false)`) at `p`.
+    fn pointer(&mut self, event_loop: &ActiveEventLoop, id: u64, p: [f32; 2], down: Option<bool>) {
+        if self.screen == Screen::Play {
+            let [w, h] = self.size();
+            let at = (down != Some(false)).then_some(p);
+            if let Some(play) = &mut self.play {
+                play.pointer(id, at, playfield_viewport(w, h));
+            }
+            return;
+        }
+        let g = self.pointers.entry(id).or_default();
+        let gesture = match down {
+            Some(true) => {
+                g.down(p);
+                None
+            }
+            None => g.moved(p),
+            Some(false) => g.up(p),
+        };
+        match gesture {
+            Some(Gesture::Tap(at)) => {
+                if let Some(a) = self.view().hit(at) {
+                    self.action(event_loop, a);
+                }
+            }
+            Some(Gesture::Drag(dy)) if self.screen == Screen::SongSelect => {
+                let row = self.area().w * 0.12;
+                let n = self.scroller.steps(dy, row);
+                if n != 0 {
+                    self.action(event_loop, Action::Scroll(n));
+                }
             }
             _ => {}
         }
     }
 
+    fn touch(&mut self, event_loop: &ActiveEventLoop, t: Touch) {
+        let p = [t.location.x as f32, t.location.y as f32];
+        let down = match t.phase {
+            TouchPhase::Started => Some(true),
+            TouchPhase::Moved => None,
+            TouchPhase::Ended | TouchPhase::Cancelled => Some(false),
+        };
+        self.pointer(event_loop, t.id, p, down);
+    }
+
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
-        let now = self.now();
-        if !self.paused {
-            match &mut self.autoplay {
-                Some(auto) => {
-                    for f in auto.due(now) {
-                        self.session.feed(f);
-                    }
+        let mut scene = Vec::new();
+        match self.screen {
+            Screen::Play => {
+                let over = self.play.as_mut().and_then(PlayState::frame);
+                if let Some(r) = over {
+                    self.end_play(event_loop, r, true);
+                } else if let Some(p) = &self.play {
+                    scene = p.scene();
                 }
-                None => self.feed_contacts(),
             }
-            if now >= self.end {
-                log::info!("song over at chart {now:.3}");
-                self.outcome = Some(Outcome::Completed(self.session.finish(self.play.norma)));
-                event_loop.exit();
-                return;
-            }
+            Screen::Results => {}
+            _ => self.preview.update(&self.s),
         }
-        let scene = build_scene(&self.play.chart, now, &self.opts);
-        let Some(gfx) = &mut self.gfx else { return };
-        gfx.draw(&scene);
-        let paused = if self.paused { "  [paused]" } else { "" };
-        let title = format!(
-            "{}  {}  x{:.1}{paused}",
-            self.play.title,
-            self.session.status(),
-            self.opts.note_speed
-        );
-        if title != self.shown_title {
-            gfx.window.set_title(&title);
-            self.shown_title = title;
+        let view = self.view();
+        let mut jackets = Jackets {
+            data: &self.s.data,
+            tried: &mut self.jackets_tried,
+        };
+        if let Some(gfx) = &mut self.gfx {
+            gfx.draw(&scene, &view, &mut jackets);
         }
     }
 
     fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<(), ShellError> {
-        let attrs = Window::default_attributes()
-            .with_title(&self.play.title)
+        let mut attrs = Window::default_attributes()
+            .with_title("WACCA_slim")
             .with_inner_size(LogicalSize::new(450.0, 800.0));
+        if !self.s.windowed {
+            attrs = attrs.with_fullscreen(Some(Fullscreen::Borderless(None)));
+        }
         let window = event_loop.create_window(attrs).map_err(gfx_err)?;
-        self.gfx = Some(Gfx::new(Arc::new(window))?);
-        // Start the music only once the window is up so the lead-in is not spent on setup.
-        let start = start_position(&self.play.chart, self.play.offset);
-        self.play.player.seek(start)?;
-        self.play.player.play();
-        log::info!("playing from audio {start:.3} s");
+        let fonts = self
+            .fonts
+            .take()
+            .ok_or_else(|| gfx_err("window created twice"))?;
+        self.gfx = Some(Gfx::new(Arc::new(window), fonts)?);
+        if let Some(spec) = self.s.start.take() {
+            self.start_play(spec);
+        }
         Ok(())
     }
 }
@@ -324,7 +643,10 @@ impl ApplicationHandler for App {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => {
-                self.outcome = Some(Outcome::GaveUp(self.session.give_up(self.play.norma)));
+                if let Some(p) = &mut self.play {
+                    let r = p.give_up();
+                    self.end_play(event_loop, r, false);
+                }
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => {
@@ -332,26 +654,38 @@ impl ApplicationHandler for App {
                     gfx.resize(size.width, size.height);
                 }
             }
+            WindowEvent::ModifiersChanged(m) => self.alt = m.state().alt_key(),
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
                         physical_key: PhysicalKey::Code(code),
                         state: ElementState::Pressed,
-                        repeat: false,
+                        repeat,
                         ..
                     },
                 ..
-            } => self.key(event_loop, code),
-            WindowEvent::Touch(t) => self.touch(t),
-            WindowEvent::CursorMoved { position, .. } => {
-                self.cursor = Some([position.x as f32, position.y as f32]);
+            } => {
+                // Menus scroll on key repeat; play ignores it.
+                if !repeat || self.screen != Screen::Play {
+                    self.key(event_loop, code);
+                }
+            }
+            WindowEvent::Touch(t) => self.touch(event_loop, t),
+            WindowEvent::CursorMoved {
+                position: PhysicalPosition { x, y },
+                ..
+            } => {
+                let p = [x as f32, y as f32];
+                self.cursor = Some(p);
                 if self.mouse_down {
-                    self.pointer(MOUSE_ID, self.mouse_at());
+                    self.pointer(event_loop, MOUSE_ID, p, None);
                 }
             }
             WindowEvent::CursorLeft { .. } => {
-                self.cursor = None;
-                self.pointer(MOUSE_ID, None);
+                if let Some(p) = self.cursor.filter(|_| self.mouse_down) {
+                    self.mouse_down = false;
+                    self.pointer(event_loop, MOUSE_ID, p, Some(false));
+                }
             }
             WindowEvent::MouseInput {
                 state,
@@ -359,7 +693,18 @@ impl ApplicationHandler for App {
                 ..
             } => {
                 self.mouse_down = state == ElementState::Pressed;
-                self.pointer(MOUSE_ID, self.mouse_at());
+                if let Some(p) = self.cursor {
+                    self.pointer(event_loop, MOUSE_ID, p, Some(self.mouse_down));
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } if self.screen == Screen::SongSelect => {
+                let dy = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y,
+                    MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
+                };
+                if dy.abs() >= 1.0 {
+                    self.action(event_loop, Action::Scroll(-dy.round() as i32));
+                }
             }
             WindowEvent::RedrawRequested => self.frame(event_loop),
             _ => {}

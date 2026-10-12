@@ -5,7 +5,7 @@ use std::path::Path;
 use wacca_chart::Difficulty;
 use wacca_game::catalog::Song;
 use wacca_game::grade::PlayResult;
-use wacca_game::save::{self, SaveError};
+use wacca_game::save::{self, SaveData, SaveError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RecordError {
@@ -59,16 +59,16 @@ pub fn default_norma(d: Difficulty) -> f32 {
     }
 }
 
-/// Load the save at `path`, merge `result`, write it back. Returns `true` on a new best score.
+/// Merge `result` into `data` and write it to `path`. Returns `true` on a new best score.
 pub fn save_result(
     path: &Path,
+    data: &mut SaveData,
     song_id: u32,
     d: Difficulty,
     result: &PlayResult,
 ) -> Result<bool, RecordError> {
-    let mut data = save::load(path)?;
     let best = data.merge(song_id, d, result);
-    save::save(path, &data)?;
+    save::save(path, data)?;
     Ok(best)
 }
 
@@ -130,9 +130,10 @@ mod tests {
             total_notes: 10,
             gauge: 0.9,
         };
-        assert!(save_result(&path, 1003, Difficulty::Expert, &result).unwrap());
-        assert!(!save_result(&path, 1003, Difficulty::Expert, &result).unwrap());
-        let data = save::load(&path).unwrap();
+        let mut data = SaveData::default();
+        assert!(save_result(&path, &mut data, 1003, Difficulty::Expert, &result).unwrap());
+        assert!(!save_result(&path, &mut data, 1003, Difficulty::Expert, &result).unwrap());
+        assert_eq!(save::load(&path).unwrap(), data);
         let rec = data.record(1003, Difficulty::Expert).unwrap();
         assert_eq!((rec.best_score, rec.play_count), (950_000, 2));
         std::fs::remove_dir_all(&dir).unwrap();
