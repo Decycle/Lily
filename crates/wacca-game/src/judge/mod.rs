@@ -113,9 +113,8 @@ impl Judge {
             .notes
             .partition_point(|n| n.time - self.lookahead <= t + EPS);
         let mut events = Vec::new();
-        for press in sense::presses(&self.prev, &cur) {
-            self.press(press, t, open_end, &mut events);
-        }
+        let mut pressed = sense::new_presses(&self.prev, &cur);
+        while pressed != 0 && self.press(&mut pressed, t, open_end, &mut events) {}
         for i in self.first_open..open_end {
             self.step(i, &cur, t, &mut events);
         }
@@ -143,10 +142,20 @@ impl Judge {
         events
     }
 
-    /// One new press hits at most the earliest open touch / hold start in its span.
+    /// Newly pressed lanes hit the earliest open touch / hold start they overlap, together with
+    /// every other such note at the same time (stacked chords). The hit notes' lanes are then
+    /// used up, so notes stacked at different times need separate presses while side-by-side
+    /// notes can share one. Returns whether a note was hit.
     // UNVERIFIED: `ProtectInvolveRockFrameNum = -1` may mean one press can hit several notes.
-    fn press(&mut self, press: Arc, t: f64, open_end: usize, events: &mut Vec<JudgeEvent>) {
-        let hit = (self.first_open..open_end).find(|&i| {
+    fn press(
+        &mut self,
+        pressed: &mut u64,
+        t: f64,
+        open_end: usize,
+        events: &mut Vec<JudgeEvent>,
+    ) -> bool {
+        let lanes = *pressed;
+        let hittable = |i: usize| {
             let s = &self.slots[i];
             let waiting = match &s.state {
                 State::Open => s.class == JudgeClass::Touch,
@@ -154,19 +163,28 @@ impl Judge {
                 _ => false,
             };
             waiting
-                && sense::arcs_overlap(self.notes[i].arc, press)
+                && sense::arc_mask(self.notes[i].arc) & lanes != 0
                 && in_window(s, t - self.notes[i].time)
-        });
-        let Some(i) = hit else { return };
-        let offset = t - self.notes[i].time;
-        let judgement = grade(self.table.windows(self.slots[i].class), offset);
-        if let State::Hold(h) = &mut self.slots[i].state {
-            h.start = Some((judgement, offset));
-            h.touched = true;
-            h.released_at = None;
-        } else {
-            self.emit(i, judgement, Some(offset), t, events);
+        };
+        let Some(first) = (self.first_open..open_end).find(|&i| hittable(i)) else {
+            return false;
+        };
+        let chord: Vec<usize> = (first..open_end)
+            .filter(|&i| (self.notes[i].time - self.notes[first].time).abs() < EPS && hittable(i))
+            .collect();
+        for i in chord {
+            *pressed &= !sense::arc_mask(self.notes[i].arc);
+            let offset = t - self.notes[i].time;
+            let judgement = grade(self.table.windows(self.slots[i].class), offset);
+            if let State::Hold(h) = &mut self.slots[i].state {
+                h.start = Some((judgement, offset));
+                h.touched = true;
+                h.released_at = None;
+            } else {
+                self.emit(i, judgement, Some(offset), t, events);
+            }
         }
+        true
     }
 
     fn step(&mut self, i: usize, cur: &SensorState, t: f64, events: &mut Vec<JudgeEvent>) {
@@ -188,7 +206,8 @@ impl Judge {
             (State::Done, _) => None,
             (State::Hold(h), NoteBody::Hold { nodes }) => {
                 let end = nodes.last().map_or(note.time, |n| n.time);
-                if h.start.is_some() || offset >= -EPS {
+                // A frame after the end describes input after it: only the release gap counts.
+                if (h.start.is_some() || offset >= -EPS) && t <= end + EPS {
                     track_hold(h, sense::arc_touched(cur, hold_arc_at(note, t)), t);
                 }
                 if t < end - EPS {

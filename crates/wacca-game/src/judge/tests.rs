@@ -149,16 +149,59 @@ fn resting_finger_does_not_hit_touch() {
 
 #[test]
 fn one_press_hits_one_note() {
-    // Two notes on the same lanes at the same time: one press only takes the first.
+    // Overlapping notes 2 frames apart: one press only takes the first.
     let notes = vec![
         note(T, arc(10, 4), NoteBody::Touch),
-        note(T, arc(12, 4), NoteBody::Touch),
+        note(T + 2.0 * F, arc(12, 4), NoteBody::Touch),
     ];
     let ev = run(notes, &[fr(T, on(arc(12, 2), 0..2))]);
     assert_eq!(
         judgements(&ev),
         vec![(0, Judgement::Marvelous), (1, Judgement::Miss)]
     );
+}
+
+#[test]
+fn one_press_hits_a_chord() {
+    // Stacked notes at the same time (e.g. two holds splitting apart) and side-by-side notes
+    // covered by one wide press are all hit.
+    let notes = vec![
+        hold(&[(T, arc(10, 4)), (T + 0.5, arc(5, 4))]),
+        hold(&[(T, arc(10, 4)), (T + 0.5, arc(15, 4))]),
+        note(T, arc(14, 4), NoteBody::Touch),
+    ];
+    let mut s = on(arc(12, 4), 0..1);
+    let ev = run(
+        notes,
+        &[
+            fr(T, s),
+            fr(T + 0.5, {
+                s = on(arc(5, 1), 3..4);
+                s.rings[3] |= on(arc(15, 1), 3..4).rings[3];
+                s
+            }),
+        ],
+    );
+    let all = vec![
+        (0, Judgement::Marvelous),
+        (1, Judgement::Marvelous),
+        (2, Judgement::Marvelous),
+    ];
+    assert_eq!(judgements(&ev), all);
+}
+
+#[test]
+fn hold_ignores_input_after_its_end() {
+    // Released at the end, then the same lanes are pressed again much later.
+    let ev = run(
+        vec![hold(&[(T, arc(10, 4)), (T + 0.5, arc(10, 4))])],
+        &[
+            fr(T, on(arc(10, 1), 0..1)),
+            empty(T + 0.49),
+            fr(T + 1.5, on(arc(10, 1), 0..1)),
+        ],
+    );
+    assert_eq!(judgements(&ev), vec![(0, Judgement::Marvelous)]);
 }
 
 #[test]
@@ -461,6 +504,10 @@ fn autoplay_is_all_marvelous() {
         note(2.9, arc(5, 4), NoteBody::Touch),
         note(2.91, arc(5, 4), NoteBody::Chain),
     ];
+    assert_autoplay_perfect(notes);
+}
+
+fn assert_autoplay_perfect(notes: Vec<Note>) {
     let n = notes.len();
     let c = chart(notes);
     let mut judge = Judge::new(&c, JudgeTable::reverse());
@@ -471,4 +518,32 @@ fn autoplay_is_all_marvelous() {
     ev.extend(judge.finish());
     let want: Vec<_> = (0..n).map(|i| (i, Judgement::Marvelous)).collect();
     assert_eq!(judgements(&ev), want);
+}
+
+#[test]
+fn autoplay_taps_inside_a_held_hold() {
+    // The resting hold finger must not mask presses (or slides) on notes in its lanes.
+    assert_autoplay_perfect(vec![
+        hold(&[(1.0, arc(10, 12)), (2.0, arc(10, 12))]),
+        note(1.3, arc(11, 10), NoteBody::Touch),
+        note(1.5, arc(10, 12), NoteBody::Chain),
+        note(1.7, arc(10, 12), NoteBody::Slide(SlideDir::Ccw)),
+        hold(&[(1.8, arc(12, 4)), (1.9, arc(12, 4))]),
+    ]);
+}
+
+#[test]
+fn autoplay_hold_finger_waits_before_entering_a_tap() {
+    // A narrow hold walks into a touch's lanes 6 frames before it: the finger must not arrive
+    // early (fresh sensors are presses), nor move while the path stays under it.
+    let walk: Vec<(f64, Arc)> = (0..=6)
+        .map(|k| (1.0 + 0.05 * k as f64, arc(30 - k as u8, 1)))
+        .chain([(1.5, arc(24, 1))])
+        .collect();
+    assert_autoplay_perfect(vec![
+        hold(&walk),
+        note(1.3, arc(15, 12), NoteBody::Touch),
+        hold(&[(2.0, arc(40, 10)), (2.5, arc(41, 10)), (3.0, arc(44, 10))]),
+        note(2.9, arc(45, 4), NoteBody::Touch),
+    ]);
 }

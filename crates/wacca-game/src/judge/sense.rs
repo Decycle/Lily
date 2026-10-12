@@ -1,4 +1,4 @@
-//! Pure sensor-grid predicates used by the judge: presses, arc touches, snap and slide motion.
+//! Pure sensor-grid predicates used by the judge: new presses, arc touches, snap and slide motion.
 
 use crate::input::{DEPTHS, SensorState};
 use wacca_chart::{Arc, LANES, SlideDir, SnapDir};
@@ -25,35 +25,14 @@ pub fn arc_touched(s: &SensorState, arc: Arc) -> bool {
     (0..arc.width).any(|o| s.lane_touched(lane_at(arc, o)))
 }
 
-/// New presses: contiguous runs (wrapping 59→0) of lanes with a sensor that went off→on.
-pub fn presses(prev: &SensorState, cur: &SensorState) -> Vec<Arc> {
-    let mask = (0..DEPTHS).fold(0, |m, d| m | (cur.rings[d] & !prev.rings[d])) & ALL_LANES;
-    if mask == 0 {
-        return Vec::new();
-    }
-    if mask == ALL_LANES {
-        return vec![Arc {
-            lane: 0,
-            width: LANES,
-        }];
-    }
-    let set = |l: u8| mask >> l & 1 == 1;
-    // Start scanning just after an unset lane so no run is split by the wrap.
-    let gap = (0..LANES).find(|&l| !set(l)).unwrap_or(0);
-    let mut runs = Vec::new();
-    let mut run: Option<Arc> = None;
-    for k in 1..=LANES {
-        let lane = (gap + k) % LANES;
-        if !set(lane) {
-            runs.extend(run.take());
-        } else if let Some(r) = run.as_mut() {
-            r.width += 1;
-        } else {
-            run = Some(Arc { lane, width: 1 });
-        }
-    }
-    runs.extend(run);
-    runs
+/// Bit set of lanes in `arc`.
+pub fn arc_mask(arc: Arc) -> u64 {
+    (0..arc.width).fold(0, |m, o| m | 1 << lane_at(arc, o))
+}
+
+/// Lanes with a sensor (any depth) that went off→on between two frames.
+pub fn new_presses(prev: &SensorState, cur: &SensorState) -> u64 {
+    (0..DEPTHS).fold(0, |m, d| m | (cur.rings[d] & !prev.rings[d])) & ALL_LANES
 }
 
 /// Min/max pressed depth over `lanes`, if any is pressed.
@@ -136,16 +115,13 @@ mod tests {
     }
 
     #[test]
-    fn presses_group_runs_and_wrap() {
+    fn new_presses_and_masks() {
         let prev = s(&[(10, 0)]);
-        let cur = s(&[(10, 0), (11, 1), (12, 3), (59, 0), (0, 2), (30, 1)]);
-        let mut p = presses(&prev, &cur);
-        p.sort_by_key(|r| r.lane);
-        assert_eq!(p, vec![a(11, 2), a(30, 1), a(59, 2)]);
-        assert!(presses(&cur, &cur).is_empty());
-        let mut full = SensorState::default();
-        full.rings[2] = ALL_LANES;
-        assert_eq!(presses(&prev, &full), vec![a(0, 60)]);
+        let cur = s(&[(10, 0), (10, 1), (11, 1), (59, 3)]);
+        assert_eq!(new_presses(&prev, &cur), 1 << 10 | 1 << 11 | 1 << 59);
+        assert_eq!(new_presses(&cur, &cur), 0);
+        assert_eq!(arc_mask(a(58, 3)), 1 << 58 | 1 << 59 | 1);
+        assert_eq!(arc_mask(a(7, 60)), ALL_LANES);
     }
 
     #[test]

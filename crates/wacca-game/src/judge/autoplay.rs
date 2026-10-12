@@ -2,10 +2,16 @@
 
 use crate::input::{DEPTHS, InputFrame, SensorState};
 use crate::rules::FRAME_SECS;
-use wacca_chart::{Arc, Chart, LANES, NoteBody, SlideDir, SnapDir};
+use wacca_chart::{Arc, Chart, HoldNode, LANES, NoteBody, SlideDir, SnapDir};
 
 /// Length of each scripted contact phase; short so neighbouring notes get fresh presses.
 const STEP: f64 = FRAME_SECS / 4.0;
+/// Rings used for hold starts and resting hold fingers (taps and chains use ring 0).
+const HOLD_START: usize = 2;
+const HOLD_BODY: usize = DEPTHS - 1;
+/// Early window of tap-like notes (Touch/Hold Good = 6 frames, plus margin). Delaying a hold
+/// finger by up to this stays within `HOLD_DROP_LENIENCY`.
+const TAP_EARLY: f64 = 6.5 * FRAME_SECS;
 
 /// Sensors held during `[start, end)`.
 #[derive(Clone, Copy, Debug)]
@@ -39,12 +45,18 @@ fn contacts(chart: &Chart) -> Vec<Contact> {
         end,
         sensors,
     };
+    let taps: Vec<(f64, Arc)> = chart
+        .notes
+        .iter()
+        .filter(|n| matches!(n.body, NoteBody::Touch | NoteBody::Hold { .. }))
+        .map(|n| (n.time, n.arc))
+        .collect();
     let mut out = Vec::new();
     for note in &chart.notes {
         let t = note.time;
         let all = 0..DEPTHS;
         match &note.body {
-            NoteBody::Touch | NoteBody::Chain => out.push(c(t, t + STEP, mask(note.arc, all))),
+            NoteBody::Touch | NoteBody::Chain => out.push(c(t, t + STEP, mask(note.arc, 0..1))),
             NoteBody::Snap(dir) => {
                 let (from, to) = match dir {
                     SnapDir::In => (DEPTHS - 1, 0),
@@ -54,9 +66,10 @@ fn contacts(chart: &Chart) -> Vec<Contact> {
                 out.push(c(t, t + STEP, mask(note.arc, to..to + 1)));
             }
             NoteBody::Slide(dir) => {
-                // Move from the trailing edge up to 3 lanes forward (needs width >= 3).
+                // Move from the trailing edge up to 8 lanes forward (needs width >= 3); the long
+                // travel keeps the mean moving past the threshold despite resting hold fingers.
                 let last = note.arc.width.saturating_sub(1);
-                let dist = last.min(3);
+                let dist = last.min(8);
                 let (from, to) = match dir {
                     SlideDir::Ccw => (0, dist),
                     SlideDir::Cw => (last, last - dist),
@@ -65,19 +78,48 @@ fn contacts(chart: &Chart) -> Vec<Contact> {
                 out.push(c(t, t + STEP, mask(lane(note.arc, to), all)));
             }
             NoteBody::Hold { nodes } => {
+                // Tap the start on its own ring, then rest one sensor on the rim so taps,
+                // chains and other hold starts in the same lanes still see fresh presses.
+                out.push(c(t, t + STEP, mask(note.arc, HOLD_START..HOLD_START + 1)));
                 let end = nodes.last().map_or(t, |n| n.time);
-                // Release just before the end so a note on the end gets a fresh press.
                 let release = (end - STEP).max(t + STEP);
-                for (k, node) in nodes.iter().enumerate() {
-                    let next = nodes.get(k + 1).map_or(release, |n| n.time.min(release));
-                    if next > node.time {
-                        out.push(c(node.time, next, mask(node.arc, all.clone())));
+                let moves = hold_finger(note.arc, nodes, &taps);
+                for (k, &(start, finger)) in moves.iter().enumerate() {
+                    let next = moves.get(k + 1).map_or(release, |m| m.0.min(release));
+                    if next > start {
+                        out.push(c(start, next, mask(finger, HOLD_BODY..HOLD_BODY + 1)));
                     }
                 }
             }
         }
     }
     out
+}
+
+/// Where the resting hold finger is from each time on. It only moves when the path leaves it,
+/// since entering new sensors counts as a fresh press; a move into the arc of a tap note whose
+/// window is open waits for that note's time (well within the hold's release allowance).
+fn hold_finger(start: Arc, nodes: &[HoldNode], taps: &[(f64, Arc)]) -> Vec<(f64, Arc)> {
+    let mut finger = lane(start, start.width / 2);
+    let mut moves = vec![(nodes.first().map_or(0.0, |n| n.time), finger)];
+    for node in nodes.iter().skip(1) {
+        if node.arc.contains(finger.lane) {
+            continue;
+        }
+        finger = lane(node.arc, node.arc.width / 2);
+        // Arriving together with the earliest such note hits it on time and uses up its lanes.
+        let at = taps
+            .iter()
+            .filter(|(t, a)| {
+                a.contains(finger.lane) && node.time >= t - TAP_EARLY && node.time < *t
+            })
+            .map(|&(t, _)| t)
+            .reduce(f64::min)
+            .unwrap_or(node.time);
+        let prev = moves.last().map_or(at, |m| m.0);
+        moves.push((at.max(prev), finger));
+    }
+    moves
 }
 
 /// Sensor snapshots that hit every note of `chart` on time, ending with an empty frame one
