@@ -10,6 +10,8 @@ use std::f32::consts::TAU;
 
 use wacca_chart::{Chart, HoldNode, LANES, MaskDir, MaskEvent};
 
+use crate::style::{SENSOR_DEPTHS, SENSOR_INNER, SENSOR_OUTER};
+
 /// Seconds a note is visible at note speed 1.0.
 // UNVERIFIED: community values are 3.2667 s and 3.3333 s (04 §2.2).
 pub const APPROACH_SECS: f64 = 3.3;
@@ -226,15 +228,23 @@ pub fn letterbox(w: f32, h: f32) -> Rect {
     }
 }
 
-/// Square viewport for the playfield: as wide as the letterbox and centred in it.
+/// Square viewport for the playfield: the largest square centred in the `w × h` window (full
+/// height on a landscape screen). Touch input maps through the same rectangle.
 pub fn playfield_viewport(w: f32, h: f32) -> Rect {
-    let b = letterbox(w, h);
+    let side = w.min(h);
     Rect {
-        x: b.x,
-        y: b.y + (b.h - b.w) / 2.0,
-        w: b.w,
-        h: b.w,
+        x: (w - side) / 2.0,
+        y: (h - side) / 2.0,
+        w: side,
+        h: side,
     }
+}
+
+/// Inner and outer radius (playfield units) of sensor depth ring `depth` (0 = innermost).
+pub fn sensor_ring(depth: usize) -> (f32, f32) {
+    let step = (SENSOR_OUTER - SENSOR_INNER) / SENSOR_DEPTHS as f32;
+    let inner = SENSOR_INNER + step * depth as f32;
+    (inner, inner + step)
 }
 
 #[cfg(test)]
@@ -477,7 +487,17 @@ mod tests {
                 h: 1600.0
             }
         );
-        // Playfield square sits in the middle of the letterbox.
+        // Playfield square: full width in portrait, full height in landscape.
+        let p = playfield_viewport(1920.0, 1200.0);
+        assert_eq!(
+            p,
+            Rect {
+                x: 360.0,
+                y: 0.0,
+                w: 1200.0,
+                h: 1200.0
+            }
+        );
         let p = playfield_viewport(900.0, 1600.0);
         assert_eq!(
             p,
@@ -488,5 +508,12 @@ mod tests {
                 h: 900.0
             }
         );
+    }
+
+    #[test]
+    fn sensor_rings_split_the_band_evenly() {
+        assert_eq!(sensor_ring(0).0, SENSOR_INNER);
+        assert!((sensor_ring(SENSOR_DEPTHS - 1).1 - SENSOR_OUTER).abs() < 1e-6);
+        assert!((sensor_ring(1).0 - sensor_ring(0).1).abs() < 1e-6);
     }
 }

@@ -10,8 +10,10 @@ publish.workspace = true
 [dependencies]
 wacca-chart.workspace = true
 log.workspace = true
+thiserror.workspace = true
 bytemuck = { version = "1", features = ["derive"] }
 wgpu = { version = "27", default-features = false, features = ["std", "parking_lot", "dx12", "vulkan", "wgsl"] }
+ab_glyph = "0.2"
 
 [dev-dependencies]
 winit = "0.30"

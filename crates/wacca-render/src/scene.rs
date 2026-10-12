@@ -4,14 +4,24 @@ use wacca_chart::{Chart, LANES, Note, NoteBody};
 
 use crate::layout::{
     Vertex, depth_to_radius, last_drawable_time, mask_state, push_hold_body, push_radial_line,
-    push_sector, raw_depth,
+    push_sector, raw_depth, sensor_ring,
 };
-use crate::style;
+use crate::style::{self, SENSOR_DEPTHS};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SceneOptions {
     /// Player note-speed option (1.0..=6.0).
     pub note_speed: f64,
+}
+
+/// Live play state drawn on top of the chart.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LiveState<'a> {
+    /// `judged[i]`: note `i` (index into `Chart::notes`) is decided and no longer drawn.
+    /// Shorter than the note list = the rest are not judged.
+    pub judged: &'a [bool],
+    /// Pressed sensors: `touched[depth]` bit `lane` (as `wacca_game::input::SensorState`).
+    pub touched: [u64; SENSOR_DEPTHS],
 }
 
 impl Default for SceneOptions {
@@ -21,7 +31,7 @@ impl Default for SceneOptions {
 }
 
 /// Triangle list (back to front) of the playfield at chart time `now`.
-pub fn build_scene(chart: &Chart, now: f64, opts: &SceneOptions) -> Vec<Vertex> {
+pub fn build_scene(chart: &Chart, now: f64, opts: &SceneOptions, live: &LiveState) -> Vec<Vertex> {
     let mut out = Vec::new();
     let lanes = LANES as usize;
 
@@ -43,20 +53,22 @@ pub fn build_scene(chart: &Chart, now: f64, opts: &SceneOptions) -> Vec<Vertex> 
     let last_time = last_drawable_time(chart, now);
     let now_dist = chart.dist_at(chart.view_time(now));
     let depth_of = |t: f64| raw_depth(chart, t, now_dist, opts.note_speed);
-    let drawable = |n: &&Note| last_time.is_none_or(|last| n.time <= last);
+    let judged = |i: usize| live.judged.get(i).copied().unwrap_or(false);
+    let drawable =
+        |&(i, n): &(usize, &Note)| !judged(i) && last_time.is_none_or(|last| n.time <= last);
     let visible = |t: f64| {
         Some(depth_of(t))
             .filter(|d| (0.0..=1.0).contains(d))
             .map(|d| d as f32)
     };
 
-    for note in chart.notes.iter().filter(drawable) {
+    for (_, note) in chart.notes.iter().enumerate().filter(drawable) {
         if let NoteBody::Hold { nodes } = &note.body {
             push_hold_body(&mut out, nodes, depth_of, style::HOLD_BODY);
         }
     }
     // Far notes first so nearer ones are drawn on top.
-    for note in chart.notes.iter().rev().filter(drawable) {
+    for (_, note) in chart.notes.iter().enumerate().rev().filter(drawable) {
         if let NoteBody::Hold { nodes } = &note.body
             && let Some(end) = nodes.last().filter(|_| nodes.len() > 1)
             && let Some(d) = visible(end.time)
@@ -84,7 +96,44 @@ pub fn build_scene(chart: &Chart, now: f64, opts: &SceneOptions) -> Vec<Vertex> 
         LANES as f32,
         style::JUDGE_RING,
     );
+    push_sensor_guides(&mut out, live.touched);
     out
+}
+
+/// Faint sensor ring boundaries and the pressed sensors.
+fn push_sensor_guides(out: &mut Vec<Vertex>, touched: [u64; SENSOR_DEPTHS]) {
+    let w = style::SENSOR_GUIDE_HALF_WIDTH;
+    for (depth, &ring) in touched.iter().enumerate() {
+        let (r_in, r_out) = sensor_ring(depth);
+        push_sector(
+            out,
+            r_in - w,
+            r_in + w,
+            0.0,
+            LANES as f32,
+            style::SENSOR_GUIDE,
+        );
+        if depth + 1 == SENSOR_DEPTHS {
+            push_sector(
+                out,
+                r_out - w,
+                r_out + w,
+                0.0,
+                LANES as f32,
+                style::SENSOR_GUIDE,
+            );
+        }
+        for lane in (0..LANES).filter(|&l| ring >> l & 1 == 1) {
+            push_sector(
+                out,
+                r_in,
+                r_out,
+                f32::from(lane),
+                1.0,
+                style::TOUCH_HIGHLIGHT,
+            );
+        }
+    }
 }
 
 fn push_note(
@@ -161,7 +210,12 @@ mod tests {
 
     #[test]
     fn empty_chart_has_all_lanes_and_ring() {
-        let v = build_scene(&chart(vec![]), 0.0, &SceneOptions::default());
+        let v = build_scene(
+            &chart(vec![]),
+            0.0,
+            &SceneOptions::default(),
+            &LiveState::default(),
+        );
         assert_eq!(count(&v, style::GUIDE_LANE), 60 * 6);
         assert_eq!(count(&v, style::LANE_LINE), 60 * 6);
         assert_eq!(count(&v, style::JUDGE_RING), 60 * 6);
@@ -178,7 +232,7 @@ mod tests {
             add: true,
             dir: MaskDir::Plus,
         }];
-        let v = build_scene(&c, 5.0, &SceneOptions::default());
+        let v = build_scene(&c, 5.0, &SceneOptions::default(), &LiveState::default());
         assert_eq!(count(&v, style::GUIDE_LANE), 10 * 6);
         assert_eq!(count(&v, style::LANE_LINE), 11 * 6);
     }
@@ -189,12 +243,17 @@ mod tests {
             note(1.0, NoteBody::Touch, Bonus::R),
             note(1.0 + APPROACH_SECS + 1.0, NoteBody::Chain, Bonus::None),
         ]);
-        let v = build_scene(&c, 0.5, &SceneOptions::default());
+        let v = build_scene(&c, 0.5, &SceneOptions::default(), &LiveState::default());
         assert_eq!(count(&v, style::TOUCH), 4 * 6);
         assert_eq!(count(&v, style::R_ACCENT), 4 * 6);
         assert_eq!(count(&v, style::CHAIN), 0);
         // Faster note speed shrinks the window further; the touch note is still inside.
-        let v = build_scene(&c, 0.5, &SceneOptions { note_speed: 6.0 });
+        let v = build_scene(
+            &c,
+            0.5,
+            &SceneOptions { note_speed: 6.0 },
+            &LiveState::default(),
+        );
         assert_eq!(count(&v, style::TOUCH), 4 * 6);
     }
 
@@ -213,6 +272,7 @@ mod tests {
             &chart(vec![note(1.0, hold, Bonus::None)]),
             0.5,
             &SceneOptions::default(),
+            &LiveState::default(),
         );
         assert!(count(&v, style::HOLD_BODY) > 0);
         assert_eq!(count(&v, style::HOLD), 2 * 4 * 6);
@@ -229,8 +289,26 @@ mod tests {
             end: 12.0,
             note_end: 14.0,
         }];
-        let v = build_scene(&c, 11.0, &SceneOptions::default());
+        let v = build_scene(&c, 11.0, &SceneOptions::default(), &LiveState::default());
         assert!(count(&v, style::TOUCH) > 0);
         assert_eq!(count(&v, style::CHAIN), 0);
+    }
+
+    #[test]
+    fn judged_notes_vanish_and_touched_lanes_light_up() {
+        let c = chart(vec![
+            note(1.0, NoteBody::Touch, Bonus::None),
+            note(1.2, NoteBody::Chain, Bonus::None),
+        ]);
+        let live = LiveState {
+            judged: &[true],
+            touched: [1 | 1 << 59, 0, 0, 1 << 5],
+        };
+        let v = build_scene(&c, 0.5, &SceneOptions::default(), &live);
+        assert_eq!(count(&v, style::TOUCH), 0);
+        assert_eq!(count(&v, style::CHAIN), 4 * 6);
+        assert_eq!(count(&v, style::TOUCH_HIGHLIGHT), 3 * 6);
+        // Five full guide circles (4 ring starts + the outer edge).
+        assert_eq!(count(&v, style::SENSOR_GUIDE), 5 * 60 * 6);
     }
 }

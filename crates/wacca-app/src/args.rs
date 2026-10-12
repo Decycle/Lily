@@ -4,11 +4,10 @@ use std::path::{Path, PathBuf};
 
 use wacca_chart::Difficulty;
 
-pub const USAGE: &str = "usage: wacca-app --assets <dir> --chart <MusicData/<song>/<song>_NN.mer | MusicData/<song>> \
-[--difficulty normal|hard|expert|inferno] [--autoplay] [--speed 1.0..6.0] [--offset-ms N] [--data <dir>]";
+pub const USAGE: &str = "usage: wacca-app --assets <dir> [--data <dir>] [--save <file>] [--windowed] \
+[--autoplay] [--speed 1.0..6.0] [--offset-ms N] \
+[--chart <MusicData/<song>/<song>_NN.mer | MusicData/<song>> [--difficulty normal|hard|expert|inferno]]";
 
-/// Default note speed (the save file's default hi-speed).
-pub const DEFAULT_SPEED: f64 = 4.0;
 pub const SPEED_RANGE: std::ops::RangeInclusive<f64> = 1.0..=6.0;
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -26,15 +25,21 @@ pub enum ArgsError {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Args {
     pub assets: PathBuf,
-    /// `.mer` file or song folder, relative to `assets` unless absolute.
-    pub chart: PathBuf,
+    /// Play this `.mer` file or song folder (relative to `assets` unless absolute) right away
+    /// instead of starting at song select.
+    pub chart: Option<PathBuf>,
     pub difficulty: Option<Difficulty>,
+    /// Initial autoplay option.
     pub autoplay: bool,
-    pub speed: f64,
-    /// User timing offset in seconds, added to chart time.
-    pub offset: f64,
-    /// Directory with `songs.json` (from `wacca-convert`).
+    /// Note speed for this session (overrides the saved setting).
+    pub speed: Option<f64>,
+    /// User timing offset in seconds, added to chart time (overrides the saved setting).
+    pub offset: Option<f64>,
+    /// Directory with `songs.json`, `jackets/`, `fonts/` (from `wacca-convert`).
     pub data: PathBuf,
+    /// Save file (default `%APPDATA%/wacca-slim/save.json`).
+    pub save: Option<PathBuf>,
+    pub windowed: bool,
 }
 
 fn value<T: std::str::FromStr>(flag: &'static str, v: Option<String>) -> Result<T, ArgsError> {
@@ -54,31 +59,36 @@ fn difficulty(v: &str) -> Option<Difficulty> {
 
 pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, ArgsError> {
     let mut args = args.into_iter();
-    let (mut assets, mut chart, mut diff) = (None, None, None);
+    let (mut assets, mut diff) = (None, None);
     let mut out = Args {
         assets: PathBuf::new(),
-        chart: PathBuf::new(),
+        chart: None,
         difficulty: None,
         autoplay: false,
-        speed: DEFAULT_SPEED,
-        offset: 0.0,
+        speed: None,
+        offset: None,
         data: PathBuf::from("data"),
+        save: None,
+        windowed: false,
     };
     while let Some(flag) = args.next() {
         match flag.as_str() {
             "--assets" => assets = Some(value::<PathBuf>("--assets", args.next())?),
-            "--chart" => chart = Some(value::<PathBuf>("--chart", args.next())?),
+            "--chart" => out.chart = Some(value::<PathBuf>("--chart", args.next())?),
+            "--save" => out.save = Some(value::<PathBuf>("--save", args.next())?),
+            "--windowed" => out.windowed = true,
             "--data" => out.data = value("--data", args.next())?,
             "--difficulty" => diff = Some(value::<String>("--difficulty", args.next())?),
             "--autoplay" => out.autoplay = true,
             "--speed" => {
-                out.speed = value("--speed", args.next())?;
-                if !SPEED_RANGE.contains(&out.speed) {
+                let speed = value("--speed", args.next())?;
+                if !SPEED_RANGE.contains(&speed) {
                     return Err(ArgsError::Value {
                         flag: "--speed",
-                        value: out.speed.to_string(),
+                        value: speed.to_string(),
                     });
                 }
+                out.speed = Some(speed);
             }
             "--offset-ms" => {
                 let ms: f64 = value("--offset-ms", args.next())?;
@@ -88,7 +98,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, ArgsError> 
                         value: ms.to_string(),
                     });
                 }
-                out.offset = ms / 1000.0;
+                out.offset = Some(ms / 1000.0);
             }
             "-h" | "--help" => return Err(ArgsError::Usage),
             _ => return Err(ArgsError::Unknown(flag)),
@@ -102,14 +112,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, ArgsError> 
             })
         })
         .transpose()?;
-    match (assets, chart) {
-        (Some(a), Some(c)) => {
-            out.assets = a;
-            out.chart = c;
-            Ok(out)
-        }
-        _ => Err(ArgsError::Usage),
-    }
+    out.assets = assets.ok_or(ArgsError::Usage)?;
+    Ok(out)
 }
 
 /// What the chart path says about the song.
@@ -121,10 +125,10 @@ pub struct ChartRef {
     pub difficulty: Option<Difficulty>,
 }
 
-/// Resolve `--chart` (+ `--difficulty`) to a `.mer` path: a song folder becomes
+/// Resolve `chart` (+ `--difficulty`) to a `.mer` path: a song folder becomes
 /// `<folder>/<folder>_NN.mer`; a file's difficulty comes from its `_NN` suffix unless given.
-pub fn resolve_chart(args: &Args) -> Result<ChartRef, ArgsError> {
-    let path = args.assets.join(&args.chart);
+pub fn resolve_chart(args: &Args, chart: &Path) -> Result<ChartRef, ArgsError> {
+    let path = args.assets.join(chart);
     let is_file = path
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("mer"));
@@ -163,22 +167,27 @@ mod tests {
 
     #[test]
     fn parses_all_flags() {
-        let a = args("--assets A --chart c.mer --autoplay --speed 2.5 --offset-ms -20 --data D --difficulty hard").unwrap();
+        let a = args("--assets A --chart c.mer --autoplay --speed 2.5 --offset-ms -20 --data D --difficulty hard --save S --windowed").unwrap();
         assert_eq!(a.assets, PathBuf::from("A"));
-        assert_eq!(a.chart, PathBuf::from("c.mer"));
-        assert!(a.autoplay);
-        assert_eq!(a.speed, 2.5);
-        assert!((a.offset + 0.020).abs() < 1e-12);
+        assert_eq!(a.chart, Some(PathBuf::from("c.mer")));
+        assert!(a.autoplay && a.windowed);
+        assert_eq!(a.speed, Some(2.5));
+        assert!((a.offset.unwrap() + 0.020).abs() < 1e-12);
         assert_eq!(a.data, PathBuf::from("D"));
+        assert_eq!(a.save, Some(PathBuf::from("S")));
         assert_eq!(a.difficulty, Some(Difficulty::Hard));
     }
 
     #[test]
     fn defaults_and_errors() {
-        let a = args("--chart x.mer --assets A").unwrap();
-        assert_eq!((a.speed, a.offset, a.autoplay), (DEFAULT_SPEED, 0.0, false));
+        let a = args("--assets A").unwrap();
+        assert_eq!(
+            (a.speed, a.offset, a.autoplay, a.windowed),
+            (None, None, false, false)
+        );
+        assert_eq!((a.chart, a.save), (None, None));
         assert_eq!(a.data, PathBuf::from("data"));
-        assert_eq!(args("--assets A"), Err(ArgsError::Usage));
+        assert_eq!(args("--chart c.mer"), Err(ArgsError::Usage));
         assert_eq!(args("--assets"), Err(ArgsError::Usage));
         assert!(matches!(
             args("--assets A --chart c --bogus"),
@@ -201,7 +210,7 @@ mod tests {
     #[test]
     fn resolves_chart_file_with_suffix_difficulty() {
         let a = args("--assets A --chart MusicData/S00-003/S00-003_02.mer").unwrap();
-        let c = resolve_chart(&a).unwrap();
+        let c = resolve_chart(&a, a.chart.as_deref().unwrap()).unwrap();
         assert_eq!(
             c.path,
             Path::new("A").join("MusicData/S00-003/S00-003_02.mer")
@@ -213,7 +222,7 @@ mod tests {
     #[test]
     fn resolves_song_folder_and_difficulty() {
         let a = args("--assets A --chart MusicData/S03-011 --difficulty inferno").unwrap();
-        let c = resolve_chart(&a).unwrap();
+        let c = resolve_chart(&a, a.chart.as_deref().unwrap()).unwrap();
         assert_eq!(
             c.path,
             Path::new("A")
@@ -224,7 +233,7 @@ mod tests {
         assert_eq!(c.difficulty, Some(Difficulty::Inferno));
         let no_diff = args("--assets A --chart MusicData/S03-011").unwrap();
         assert!(matches!(
-            resolve_chart(&no_diff),
+            resolve_chart(&no_diff, Path::new("MusicData/S03-011")),
             Err(ArgsError::NeedsDifficulty(_))
         ));
     }

@@ -9,15 +9,8 @@ use std::f32::consts::TAU;
 use wacca_chart::LANES;
 use wacca_game::input::{DEPTHS, SensorState};
 use wacca_render::layout::Rect;
-use wacca_render::style::VIEW_EXTENT;
-
-/// Inner edge of the sensor band (playfield units). Touches nearer the centre hit nothing.
-// UNVERIFIED: the cabinet's sensors sit on the rim; this band around the judgement line is a guess.
-pub const SENSOR_INNER: f32 = 0.7;
-/// Outer edge of the outermost ring; touches beyond it (towards the window edge) still count as
-/// the outermost ring so overshooting fingers are not lost.
-// UNVERIFIED: see SENSOR_INNER.
-pub const SENSOR_OUTER: f32 = 1.1;
+// The sensor band is shared with the renderer, which draws its rings.
+use wacca_render::style::{SENSOR_INNER, SENSOR_OUTER, VIEW_EXTENT};
 /// A contact also presses this many lanes on each side (a fingertip covers ~3 segments).
 // UNVERIFIED: doc 04 §3 suggests ±1 segment, "tune".
 pub const CONTACT_SPREAD: u8 = 1;
@@ -158,5 +151,18 @@ mod tests {
         c.release(9);
         c.release(42);
         assert!(c.sensors().is_empty());
+    }
+
+    #[test]
+    fn radial_swipe_crosses_all_depths() {
+        assert_eq!(DEPTHS, wacca_render::style::SENSOR_DEPTHS);
+        let depths: Vec<usize> = (0..=100)
+            .filter_map(|i| sensor_at_pixel(px(0.4 + i as f32 * 0.008, 100.0), VP))
+            .map(|s| s.depth)
+            .collect();
+        assert!(depths.windows(2).all(|w| w[0] <= w[1]));
+        for d in 0..DEPTHS {
+            assert!(depths.contains(&d), "depth {d} missing");
+        }
     }
 }

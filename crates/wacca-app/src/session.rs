@@ -6,7 +6,7 @@ use wacca_chart::Chart;
 use wacca_game::grade::PlayResult;
 use wacca_game::input::InputFrame;
 use wacca_game::judge::{Judge, JudgeTable, autoplay_frames, class_of};
-use wacca_game::rules::{JudgeEvent, Judgement};
+use wacca_game::rules::JudgeEvent;
 use wacca_game::score::PlayTally;
 
 /// Silence before the first note (chart seconds) so it does not arrive at t = 0.
@@ -47,6 +47,8 @@ pub struct Session {
     /// Time of the last frame fed (frames must not go backwards).
     now: f64,
     last: Option<JudgeEvent>,
+    /// Per note: decided (drawn no more).
+    judged: Vec<bool>,
 }
 
 impl Session {
@@ -57,6 +59,7 @@ impl Session {
             tally: PlayTally::new(&notes, bonus_effect),
             now: f64::NEG_INFINITY,
             last: None,
+            judged: vec![false; chart.notes.len()],
         }
     }
 
@@ -90,11 +93,28 @@ impl Session {
             );
             self.tally.apply(e);
             self.last = Some(*e);
+            if let Some(j) = self.judged.get_mut(e.note) {
+                *j = true;
+            }
         }
     }
 
-    pub fn last_judgement(&self) -> Option<Judgement> {
-        self.last.map(|e| e.judgement)
+    /// Most recent judgement (for the HUD popup).
+    pub fn last_event(&self) -> Option<JudgeEvent> {
+        self.last
+    }
+
+    /// `judged()[i]`: note `i` is decided.
+    pub fn judged(&self) -> &[bool] {
+        &self.judged
+    }
+
+    pub fn score(&self) -> u32 {
+        self.tally.score()
+    }
+
+    pub fn combo(&self) -> u32 {
+        self.tally.combo()
     }
 
     /// Song played to the end: unresolved notes are missed, then the result.
@@ -107,20 +127,6 @@ impl Session {
     /// Abandoned: unjudged notes count as misses and the play is failed.
     pub fn give_up(&self, norma: f32) -> PlayResult {
         self.tally.finish(norma)
-    }
-
-    /// One-line live status, e.g. `998,500  combo 312  Great`.
-    pub fn status(&self) -> String {
-        let s = self.tally.score();
-        let last = self
-            .last_judgement()
-            .map_or(String::new(), |j| format!("  {j:?}"));
-        format!(
-            "{},{:03}  combo {}{last}",
-            s / 1000,
-            s % 1000,
-            self.tally.combo()
-        )
     }
 }
 
@@ -153,6 +159,7 @@ mod tests {
     use wacca_chart::{Arc, BeatPos, Bonus, ChartHeader, Note, NoteBody};
     use wacca_game::grade::Lamp;
     use wacca_game::input::SensorState;
+    use wacca_game::rules::Judgement;
 
     fn touch(time: f64, lane: u8) -> Note {
         Note {
@@ -197,13 +204,17 @@ mod tests {
         assert!(s.feed(&frame(0.5, None)).is_empty());
         let hit = s.feed(&frame(1.0, Some(1)));
         assert_eq!(hit.len(), 1);
-        assert_eq!(s.last_judgement(), Some(Judgement::Marvelous));
-        assert_eq!(s.tally.score(), 500_000);
-        assert_eq!(s.status(), "500,000  combo 1  Marvelous");
+        assert_eq!(
+            s.last_event().map(|e| e.judgement),
+            Some(Judgement::Marvelous)
+        );
+        assert_eq!((s.score(), s.combo()), (500_000, 1));
+        assert_eq!(s.judged(), [true, false]);
         // Note 2 is never touched: missed once its window passes.
         s.feed(&frame(1.1, None));
         let late = s.feed(&frame(2.5, None));
         assert_eq!(late[0].judgement, Judgement::Miss);
+        assert_eq!(s.judged(), [true, true]);
         assert_eq!(s.tally.combo(), 0);
         let r = s.finish(0.0);
         assert_eq!(

@@ -7,7 +7,8 @@ pub mod layout;
 mod renderer;
 pub mod scene;
 pub mod style;
+pub mod text;
 
 pub use layout::Vertex;
 pub use renderer::Renderer;
-pub use scene::{SceneOptions, build_scene};
+pub use scene::{LiveState, SceneOptions, build_scene};

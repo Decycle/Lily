@@ -1,43 +1,57 @@
-//! WACCA_slim. M4: play one chart with audio, touch/mouse input, judgement and score.
+//! WACCA_slim. M5: song select → difficulty → options → play → results, with save data.
 //!
-//! `wacca-app --assets <dir> --chart MusicData/S00-003/S00-003_02.mer [--autoplay] [--speed 4.0] [--offset-ms N]`
-//! Keys: Esc give up, Space pause, Up/Down note speed. `RUST_LOG=debug` logs every judgement.
+//! `wacca-app --assets <dir> [--data data] [--autoplay] [--windowed] [--chart <mer>]` (see [`args::USAGE`]).
+//! Menus: arrows / Enter / Esc, tap, drag or wheel to scroll, S sort, F filter.
+//! Play: Esc give up, Space pause, Up/Down note speed. F11 / Alt+Enter toggles fullscreen.
+//! `RUST_LOG=wacca_app=debug` logs every judgement.
 #![cfg_attr(test, allow(clippy::unwrap_used))] // tests may unwrap (CONTRIBUTING)
 
 mod args;
+mod gesture;
+mod hitsound;
+mod hud;
+mod jacket;
+mod labels;
+mod menu;
+mod options;
+mod play;
+mod preview;
 mod record;
+mod results;
+mod screen;
+mod select;
 mod session;
 mod shell;
 mod touch_mapping;
+mod ui;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use wacca_audio::{BgmBank, Player};
-use wacca_game::grade::PlayResult;
-use wacca_game::save::{self, Settings};
+use wacca_audio::{BgmBank, SeBank};
+use wacca_game::catalog::Song;
+use wacca_game::save::{self, SaveData, Settings};
+use wacca_render::text::{Fonts, TextError};
 
-use crate::args::{Args, ArgsError, ChartRef};
+use crate::args::{Args, ArgsError};
+use crate::menu::Menu;
+use crate::play::PlaySpec;
 use crate::record::RecordError;
-use crate::shell::{Outcome, Play, ShellError};
+use crate::select::SongList;
+use crate::shell::{Setup, ShellError};
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
     #[error(transparent)]
     Args(#[from] ArgsError),
-    #[error("{}: {source}", path.display())]
-    Io {
-        path: PathBuf,
-        source: std::io::Error,
-    },
-    #[error("chart: {0}")]
-    Chart(#[from] wacca_chart::ParseError),
     #[error("audio: {0}")]
     Audio(#[from] wacca_audio::Error),
     #[error(transparent)]
     Shell(#[from] ShellError),
     #[error(transparent)]
     Record(#[from] RecordError),
+    #[error(transparent)]
+    Text(#[from] TextError),
 }
 
 fn main() -> ExitCode {
@@ -54,90 +68,172 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(args: &Args) -> Result<(), Error> {
-    let chart_ref = args::resolve_chart(args)?;
-    let bytes = std::fs::read(&chart_ref.path).map_err(|source| Error::Io {
-        path: chart_ref.path.clone(),
-        source,
-    })?;
-    let chart = wacca_chart::parse(&bytes)?;
-    let cue = &chart.header.music_file_path;
-    let bank = BgmBank::open(args.assets.join("Sound").join("Bgm"))?;
-    let player = Player::new(Box::new(bank.open_cue(cue)?))?;
-    log::info!("{}: cue {cue}", chart_ref.path.display());
+/// Fonts in priority order, one per group (the first file of a group that exists): the game's
+/// Japanese UI font (exported by `wacca-convert --fonts`, or the raw `.ufont` = plain OpenType),
+/// a broad CJK fallback, then a Windows symbol font for arrows.
+fn font_candidates(data: &Path, assets: &Path) -> Vec<Vec<PathBuf>> {
+    let fonts = data.join("fonts");
+    let ufont = assets.join("UI").join("Font");
+    let windows = PathBuf::from(std::env::var_os("WINDIR").unwrap_or_else(|| "C:\\Windows".into()))
+        .join("Fonts");
+    vec![
+        vec![
+            fonts.join("FOT-UDKakugo_SmallPr6-B.otf"),
+            ufont.join("FOT-UDKakugo_SmallPr6-B.ufont"),
+        ],
+        vec![
+            fonts.join("DroidSansFallback.ttf"),
+            ufont.join("DroidSansFallback.ufont"),
+            windows.join("meiryo.ttc"),
+            windows.join("msgothic.ttc"),
+        ],
+        vec![windows.join("seguisym.ttf")],
+    ]
+}
 
-    let songs = record::load_songs(&args.data.join("songs.json"))?;
-    let song = songs
-        .as_deref()
-        .zip(chart_ref.folder.as_deref())
-        .and_then(|(songs, folder)| record::find_song(songs, folder));
-    let entry = song.zip(chart_ref.difficulty).and_then(|(s, d)| s.chart(d));
-    let norma = entry
-        .map(|e| e.norma)
-        .or(chart_ref.difficulty.map(record::default_norma))
-        .unwrap_or(record::default_norma(wacca_chart::Difficulty::Expert));
-    let title = song.map_or_else(
-        || chart_ref.folder.clone().unwrap_or_default(),
-        |s| s.title.clone(),
-    );
+/// First path of each group for which `exists` holds.
+fn pick_fonts(groups: Vec<Vec<PathBuf>>, exists: impl Fn(&Path) -> bool) -> Vec<PathBuf> {
+    groups
+        .into_iter()
+        .filter_map(|g| g.into_iter().find(|p| exists(p)))
+        .collect()
+}
 
-    let outcome = shell::run(Play {
-        title,
-        chart,
-        player,
-        autoplay: args.autoplay,
-        speed: args.speed,
-        offset: args.offset,
-        norma,
-        bonus_effect: Settings::default().bonus_effect,
-    })?;
-    let (result, completed) = match outcome {
-        Outcome::Completed(r) => (r, true),
-        Outcome::GaveUp(r) => (r, false),
-    };
-    print_result(&result, completed);
-    if args.autoplay {
-        log::info!("autoplay: not saved");
-        return Ok(());
+/// Saved settings with the command-line overrides applied.
+fn settings(saved: &Settings, args: &Args) -> Settings {
+    let mut s = saved.clone();
+    if let Some(speed) = args.speed {
+        s.note_speed = speed as f32;
     }
-    save_play(&chart_ref, song.map(|s| s.id), &result)
+    if let Some(offset) = args.offset {
+        let units = (offset / options::OFFSET_UNIT_SECS) as f32;
+        s.judge_offset = units.clamp(*options::OFFSET_RANGE.start(), *options::OFFSET_RANGE.end());
+    }
+    s
 }
 
-fn print_result(r: &PlayResult, completed: bool) {
-    let c = &r.counts;
-    println!(
-        "{}",
-        if completed {
-            "RESULT"
-        } else {
-            "RESULT (given up)"
+/// `--chart`: what to play straight away.
+fn start_spec(args: &Args, chart: &Path, songs: &[Song]) -> Result<PlaySpec, ArgsError> {
+    let r = args::resolve_chart(args, chart)?;
+    let song = r
+        .folder
+        .as_deref()
+        .and_then(|f| record::find_song(songs, f));
+    let entry = song.zip(r.difficulty).and_then(|(s, d)| s.chart(d));
+    Ok(PlaySpec {
+        title: song.map_or_else(|| r.folder.clone().unwrap_or_default(), |s| s.title.clone()),
+        jacket: song.map(|s| s.jacket.clone()).unwrap_or_default(),
+        song_id: song.map(|s| s.id),
+        difficulty: r.difficulty,
+        level: entry.map(|e| e.level),
+        norma: entry.map(|e| e.norma).unwrap_or_else(|| {
+            record::default_norma(r.difficulty.unwrap_or(wacca_chart::Difficulty::Expert))
+        }),
+        chart_path: r.path,
+    })
+}
+
+fn run(args: &Args) -> Result<(), Error> {
+    let songs = record::load_songs(&args.data.join("songs.json"))?.unwrap_or_else(|| {
+        log::warn!(
+            "{} missing; run wacca-convert (song select will be empty)",
+            args.data.join("songs.json").display()
+        );
+        Vec::new()
+    });
+    let start = args
+        .chart
+        .as_deref()
+        .map(|c| start_spec(args, c, &songs))
+        .transpose()?;
+
+    let mut save_path = args.save.clone().or_else(save::default_path);
+    let save = match &save_path {
+        Some(p) => save::load(p).unwrap_or_else(|e| {
+            // Do not overwrite a save we could not read.
+            log::error!("{e}; results will not be saved");
+            save_path = None;
+            SaveData::default()
+        }),
+        None => {
+            log::warn!("%APPDATA% not set; results will not be saved");
+            SaveData::default()
         }
-    );
-    println!("score      {}", r.score);
-    println!("grade      {:?}", r.grade);
-    println!("lamp       {:?}", r.lamp);
-    println!("max combo  {} / {} notes", r.max_combo, r.total_notes);
-    println!(
-        "judgements marvelous {}  great {}  good {}  miss {}  (fast {} / late {})",
-        c.marvelous, c.great, c.good, c.miss, c.fast, c.late
-    );
-    println!("gauge      {:.1} %", r.gauge * 100.0);
+    };
+    let menu = Menu {
+        list: SongList::new(songs),
+        options: options::OptionsMenu::default(),
+        settings: settings(&save.settings, args),
+        autoplay: args.autoplay,
+    };
+    let bgm = BgmBank::open(args.assets.join("Sound").join("Bgm"))?;
+    let se = SeBank::open(args.assets.join("Sound").join("Se"))
+        .map_err(|e| log::warn!("SE bank: {e}; no hit sounds"))
+        .ok();
+    let fonts = Fonts::load(&pick_fonts(
+        font_candidates(&args.data, &args.assets),
+        Path::exists,
+    ))?;
+    shell::run(
+        Setup {
+            assets: args.assets.clone(),
+            data: args.data.clone(),
+            bgm,
+            se,
+            save_path,
+            save,
+            menu,
+            start,
+            windowed: args.windowed,
+        },
+        fonts,
+    )?;
+    Ok(())
 }
 
-fn save_play(chart: &ChartRef, song_id: Option<u32>, r: &PlayResult) -> Result<(), Error> {
-    let (Some(id), Some(d)) = (song_id, chart.difficulty) else {
-        log::warn!("song id or difficulty unknown (no data/songs.json entry?); result not saved");
-        return Ok(());
-    };
-    let Some(path) = save::default_path() else {
-        log::warn!("%APPDATA% not set; result not saved");
-        return Ok(());
-    };
-    let best = record::save_result(&path, id, d, r)?;
-    log::info!(
-        "saved to {}{}",
-        path.display(),
-        if best { " (new best)" } else { "" }
-    );
-    Ok(())
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overrides_apply_to_saved_settings() {
+        let a = args::parse(
+            "--assets A --speed 2.5 --offset-ms 25"
+                .split_whitespace()
+                .map(String::from),
+        )
+        .unwrap();
+        let s = settings(&Settings::default(), &a);
+        assert_eq!(s.note_speed, 2.5);
+        assert!((s.judge_offset - 2.5).abs() < 1e-5);
+        let none = args::parse(["--assets".into(), "A".into()]).unwrap();
+        assert_eq!(settings(&Settings::default(), &none), Settings::default());
+    }
+
+    #[test]
+    fn game_fonts_come_first() {
+        let c = font_candidates(Path::new("data"), Path::new("assets"));
+        assert!(c[0][0].starts_with("data") && c[0][1].starts_with("assets"));
+        // Without the exported fonts the raw game fonts are used.
+        let picked = pick_fonts(c, |p| !p.starts_with("data"));
+        assert_eq!(picked.len(), 3);
+        assert!(picked[0].starts_with("assets") && picked[1].starts_with("assets"));
+        assert!(pick_fonts(vec![vec![PathBuf::from("x")]], |_| false).is_empty());
+    }
+
+    #[test]
+    fn start_spec_uses_catalog_when_known() {
+        let a = args::parse(
+            "--assets A --chart MusicData/S00-003/S00-003_02.mer"
+                .split_whitespace()
+                .map(String::from),
+        )
+        .unwrap();
+        let s = start_spec(&a, a.chart.as_deref().unwrap(), &[]).unwrap();
+        assert_eq!((s.title.as_str(), s.song_id), ("S00-003", None));
+        assert_eq!(
+            s.norma,
+            record::default_norma(wacca_chart::Difficulty::Expert)
+        );
+    }
 }
