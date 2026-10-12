@@ -11,6 +11,7 @@ wacca-ue4.workspace = true
 log.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
+png = "0.18.1"
 
 [lints]
 workspace = true

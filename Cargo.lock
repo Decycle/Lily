@@ -2115,6 +2115,7 @@ name = "wacca-convert"
 version = "0.1.0"
 dependencies = [
  "log",
+ "png",
  "serde_json",
  "thiserror 2.0.21",
  "wacca-game",
@@ -2136,6 +2137,9 @@ dependencies = [
 name = "wacca-realgame"
 version = "0.1.0"
 dependencies = [
+ "cpal",
+ "env_logger",
+ "log",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
