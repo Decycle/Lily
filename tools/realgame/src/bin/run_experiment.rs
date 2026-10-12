@@ -1,8 +1,12 @@
 //! One fully automatic real-game experiment: launch the game (unless running), record video (FFmpeg) + loopback
 //! audio, play a tap script into the Waccon shared buffer, stop everything, write `runs/<ts>/`.
 //!
-//! `run_experiment --script <taps.json> [--ffmpeg <path>] [--keep-game] [--no-video] [--settle-s 30]
-//!  [--lead-ms 1000] [--tail-ms 2000] [--out-dir runs] [--game-dir C:\Games\WACCA\bin]`
+//! `run_experiment --script <taps.json> [--nav <nav.json>] [--nav <nav.json>] [--ffmpeg <path>] [--keep-game] [--no-video]
+//!  [--settle-s 30] [--lead-ms 1000] [--tail-ms 2000] [--out-dir runs] [--game-dir C:\Games\WACCA\bin]`
+//!
+//! `--nav` runs a navigation script ([`wacca_realgame::nav`], e.g. `scripts/nav-input-test.nav.json`) before
+//! recording: operator buttons through the shared buffer, screen checks on grabbed frames (saved as
+//! `nav-<step>-<name>.png`); a failed check aborts the run.
 //!
 //! Input is only written to the live buffer when `WACCA_INJECT_OK=1`; otherwise the script is a dry run (same
 //! timing, nothing written) so recording can be tested safely. `RUST_LOG=debug` shows FFmpeg's output.
@@ -35,6 +39,7 @@ mod imp {
     use wacca_realgame::experiment;
     use wacca_realgame::game::{self, GameConfig, GameError, Launched};
     use wacca_realgame::inject::{self, Record};
+    use wacca_realgame::nav::{self, NavScript, Step};
     use wacca_realgame::record::Epoch;
     use wacca_realgame::record::audio::{AudioError, AudioRecorder};
     use wacca_realgame::record::meta::{AudioMeta, InjectMeta, Meta, VideoMeta};
@@ -46,7 +51,7 @@ mod imp {
     #[derive(Debug, Error)]
     pub enum Error {
         #[error(
-            "{0}\nusage: run_experiment --script <taps.json> [--ffmpeg <path>] [--keep-game] [--no-video] [--settle-s N] [--lead-ms N] [--tail-ms N] [--out-dir DIR] [--game-dir DIR]"
+            "{0}\nusage: run_experiment --script <taps.json> [--nav <nav.json>] [--ffmpeg <path>] [--keep-game] [--no-video] [--settle-s N] [--lead-ms N] [--tail-ms N] [--out-dir DIR] [--game-dir DIR]"
         )]
         Args(String),
         #[error("{}: {source}", path.display())]
@@ -67,11 +72,14 @@ mod imp {
         Audio(#[from] AudioError),
         #[error("shared buffer: {0}")]
         Shm(String),
+        #[error("navigation: {0}")]
+        Nav(String),
     }
 
     #[derive(Debug)]
     struct Args {
         script: PathBuf,
+        nav: Option<PathBuf>,
         ffmpeg: Option<PathBuf>,
         keep_game: bool,
         no_video: bool,
@@ -85,6 +93,7 @@ mod imp {
     fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, Error> {
         let mut a = Args {
             script: PathBuf::new(),
+            nav: None,
             ffmpeg: None,
             keep_game: false,
             no_video: false,
@@ -106,6 +115,7 @@ mod imp {
         while let Some(flag) = it.next() {
             match flag.as_str() {
                 "--script" => a.script = path(&flag, it.next())?,
+                "--nav" => a.nav = Some(path(&flag, it.next())?),
                 "--ffmpeg" => a.ffmpeg = Some(path(&flag, it.next())?),
                 "--keep-game" => a.keep_game = true,
                 "--no-video" => a.no_video = true,
@@ -218,6 +228,65 @@ mod imp {
         Ok((records, clock_start_ms))
     }
 
+    /// Runs `script`'s steps against the live buffer; screen checks grab frames into `dir`.
+    fn navigate(
+        script: &NavScript,
+        buf: &shm::SharedBuffer,
+        ffmpeg: &Path,
+        window: &game::GameWindow,
+        dir: &Path,
+    ) -> Result<(), Error> {
+        let view = buf.view();
+        let grabber = video::choose_grabber(ffmpeg, window.rect);
+        for (i, step) in script.steps.iter().enumerate() {
+            match step {
+                Step::Press {
+                    buttons,
+                    hold_ms,
+                    wait_ms,
+                } => {
+                    log::info!("nav {i}: press {buttons:?} {hold_ms} ms");
+                    let plan = nav::press_plan(buttons, *hold_ms);
+                    let clock = inject::RealClock::start();
+                    inject::play(
+                        &view,
+                        &plan,
+                        0.0,
+                        &clock,
+                        &AtomicBool::new(false),
+                        &mut |_| Ok(()),
+                    )
+                    .map_err(|e| Error::Nav(e.to_string()))?;
+                    std::thread::sleep(Duration::from_secs_f64(wait_ms / 1000.0));
+                }
+                Step::Expect {
+                    name,
+                    all,
+                    timeout_ms,
+                } => {
+                    let png = dir.join(format!("nav-{i:02}-{name}.png"));
+                    let deadline = Instant::now() + Duration::from_secs_f64(timeout_ms / 1000.0);
+                    loop {
+                        let frame = video::grab_frame(ffmpeg, grabber, window.rect, &png)?;
+                        let fracs: Vec<f64> = all.iter().map(|r| r.fraction(&frame)).collect();
+                        if all.iter().all(|r| r.passes(&frame)) {
+                            log::info!("nav {i}: {name} ok {fracs:.3?}");
+                            break;
+                        }
+                        if Instant::now() >= deadline {
+                            return Err(Error::Nav(format!(
+                                "screen {name:?} not reached (rule fractions {fracs:.3?}, see {})",
+                                png.display()
+                            )));
+                        }
+                        std::thread::sleep(Duration::from_millis(250));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn run(argv: impl Iterator<Item = String>) -> Result<(), Error> {
         let args = parse_args(argv)?;
         let json = std::fs::read_to_string(&args.script).map_err(io_err(&args.script))?;
@@ -226,7 +295,17 @@ mod imp {
             source,
         })?;
         let plan = inject::schedule(&timeline::expand(&script.taps));
-        let ffmpeg = if args.no_video {
+        let nav_script = match &args.nav {
+            Some(p) => {
+                let json = std::fs::read_to_string(p).map_err(io_err(p))?;
+                Some(nav::parse(&json).map_err(|source| Error::Script {
+                    path: p.clone(),
+                    source,
+                })?)
+            }
+            None => None,
+        };
+        let ffmpeg = if args.no_video && nav_script.is_none() {
             None
         } else {
             let path_var = std::env::var_os("PATH");
@@ -271,8 +350,14 @@ mod imp {
         };
         game::make_topmost(&window);
         let live = open_live()?;
+        if let Some(ns) = &nav_script {
+            let (Some(buf), Some(ff)) = (live.as_ref(), ffmpeg.as_deref()) else {
+                return Err(Error::Nav(format!("--nav needs {INJECT_ENV}=1")));
+            };
+            navigate(ns, buf, ff, &window, &dir)?;
+        }
 
-        let video = match &ffmpeg {
+        let video = match ffmpeg.as_deref().filter(|_| !args.no_video) {
             Some(ff) => {
                 let grabber = video::choose_grabber(ff, window.rect);
                 let out = dir.join("video.mkv");
@@ -336,9 +421,12 @@ mod imp {
 
         #[test]
         fn parses_flags() {
-            let a = args("--script s.json --ffmpeg f.exe --keep-game --settle-s 5 --tail-ms 0")
-                .unwrap();
+            let a = args(
+                "--script s.json --nav n.json --ffmpeg f.exe --keep-game --settle-s 5 --tail-ms 0",
+            )
+            .unwrap();
             assert_eq!(a.script, PathBuf::from("s.json"));
+            assert_eq!(a.nav, Some(PathBuf::from("n.json")));
             assert_eq!(a.ffmpeg, Some(PathBuf::from("f.exe")));
             assert!(a.keep_game && !a.no_video);
             assert_eq!((a.settle_s, a.lead_ms, a.tail_ms), (5.0, 1000.0, 0.0));

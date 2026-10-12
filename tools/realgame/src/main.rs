@@ -383,6 +383,7 @@ mod tests {
             t_sched_ms: 1000.0,
             t_write_ms: 1000.25,
             t_ack_ms: Some(1001.25),
+            opbtn: 0,
             cells: "0".repeat(60),
         };
         let line = format_record(&r);

@@ -29,9 +29,15 @@ impl Default for GameConfig {
             launch_bat: "launch.bat".into(),
             window_class: "UnrealWindow".into(),
             window_title: "Mercury".into(),
-            processes: ["Mercury-Win64-Shipping.exe", "amdaemon.exe", "inject.exe"]
-                .map(String::from)
-                .to_vec(),
+            processes: [
+                "Mercury-Win64-Shipping.exe",
+                "amdaemon.exe",
+                "inject.exe",
+                "OverlayWebview.exe",
+                "Waccon.Server.exe",
+            ]
+            .map(String::from)
+            .to_vec(),
         }
     }
 }
@@ -142,7 +148,7 @@ pub fn stop(cfg: &GameConfig) -> Vec<String> {
             Err(e) => log::warn!("taskkill {name}: {e}"),
         }
     }
-    log::info!("stopped {killed:?}");
+    log::info!("stopped (killed): {killed:?}");
     killed
 }
 
@@ -290,6 +296,20 @@ pub fn find_window(cfg: &GameConfig) -> Result<Option<GameWindow>, GameError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stop_list_covers_every_harness_process() {
+        let p = GameConfig::default().processes;
+        for name in [
+            "Mercury-Win64-Shipping.exe",
+            "amdaemon.exe",
+            "inject.exe",
+            "OverlayWebview.exe",
+            "Waccon.Server.exe",
+        ] {
+            assert!(p.iter().any(|n| n == name), "{name}");
+        }
+    }
 
     #[test]
     fn game_window_matching() {
