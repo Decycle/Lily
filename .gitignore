@@ -6,3 +6,4 @@ __pycache__/
 /docs/research/samples/
 /docs/research/tables/
 /.claude/
+/runs/

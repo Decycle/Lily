@@ -1,0 +1,23 @@
+{"taps":[
+  {"at_ms":1000,"dur_ms":200,"lane":0,"width":1,"depths":15},
+  {"at_ms":1500,"dur_ms":200,"lane":1,"width":1,"depths":15},
+  {"at_ms":2000,"dur_ms":200,"lane":2,"width":1,"depths":15},
+  {"at_ms":2500,"dur_ms":200,"lane":3,"width":1,"depths":15},
+  {"at_ms":3000,"dur_ms":200,"lane":4,"width":1,"depths":15},
+  {"at_ms":3500,"dur_ms":200,"lane":5,"width":1,"depths":15},
+  {"at_ms":4000,"dur_ms":200,"lane":6,"width":1,"depths":15},
+  {"at_ms":4500,"dur_ms":200,"lane":7,"width":1,"depths":15},
+  {"at_ms":5000,"dur_ms":200,"lane":8,"width":1,"depths":15},
+  {"at_ms":5500,"dur_ms":200,"lane":9,"width":1,"depths":15},
+  {"at_ms":7000,"dur_ms":300,"lane":0,"width":1,"depths":1},
+  {"at_ms":7500,"dur_ms":300,"lane":0,"width":1,"depths":2},
+  {"at_ms":8000,"dur_ms":300,"lane":0,"width":1,"depths":4},
+  {"at_ms":8500,"dur_ms":300,"lane":0,"width":1,"depths":8},
+  {"at_ms":10000,"dur_ms":300,"lane":15,"width":1,"depths":15},
+  {"at_ms":10500,"dur_ms":300,"lane":30,"width":1,"depths":15},
+  {"at_ms":11000,"dur_ms":300,"lane":45,"width":1,"depths":15},
+  {"at_ms":12000,"dur_ms":17,"lane":20,"width":1,"depths":15},
+  {"at_ms":12500,"dur_ms":34,"lane":21,"width":1,"depths":15},
+  {"at_ms":13000,"dur_ms":50,"lane":22,"width":1,"depths":15},
+  {"at_ms":13500,"dur_ms":5,"lane":23,"width":1,"depths":15}
+]}
