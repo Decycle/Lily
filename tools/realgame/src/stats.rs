@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
 pub struct Stats {
     pub n: usize,
     pub mean: f64,

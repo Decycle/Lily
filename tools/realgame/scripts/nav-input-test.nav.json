@@ -1,0 +1,19 @@
+{"steps":[
+  {"do":"press","buttons":["test"],"wait_ms":2000},
+  {"do":"expect","name":"test-menu","all":[
+    {"region":[0.185,0.376,0.15,0.018],"color":[255,0,0],"tol":60,"min_frac":0.05}]},
+  {"do":"press","buttons":["service"],"wait_ms":400},
+  {"do":"press","buttons":["service"],"wait_ms":400},
+  {"do":"expect","name":"cursor-device-test-menu","all":[
+    {"region":[0.185,0.4175,0.15,0.018],"color":[255,0,0],"tol":60,"min_frac":0.05}]},
+  {"do":"press","buttons":["test"],"wait_ms":1500},
+  {"do":"expect","name":"device-test-menu","all":[
+    {"region":[0.185,0.3133,0.15,0.018],"color":[255,0,0],"tol":60,"min_frac":0.05}]},
+  {"do":"press","buttons":["service"],"wait_ms":400},
+  {"do":"expect","name":"cursor-input-test","all":[
+    {"region":[0.185,0.334,0.15,0.018],"color":[255,0,0],"tol":60,"min_frac":0.05}]},
+  {"do":"press","buttons":["test"],"wait_ms":1500},
+  {"do":"expect","name":"input-test","all":[
+    {"region":[0.81,0.50,0.14,0.08],"color":[255,255,255],"tol":60,"min_frac":0.02},
+    {"region":[0.185,0.30,0.15,0.06],"color":[255,0,0],"tol":60,"max_frac":0.0}]}
+]}

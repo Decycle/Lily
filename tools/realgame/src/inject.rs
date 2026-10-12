@@ -9,7 +9,7 @@ use crate::shm::ShmView;
 use crate::stats::{Stats, summarize};
 use crate::timeline::Tap;
 use crate::wcon::input_payload;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use wacca_game::input::InputFrame;
@@ -25,7 +25,7 @@ const SOURCE_ID: u32 = 0x4D4C_5357;
 /// Sleep until this close to a deadline, then spin.
 const SPIN_MS: f64 = 1.5;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
     Edge,
@@ -38,12 +38,14 @@ pub enum Kind {
 pub struct Publish {
     pub t_ms: f64,
     pub kind: Kind,
+    /// Operator buttons (`wcon::OPBTN_*`), used by test-menu navigation ([`crate::nav`]).
+    pub opbtn: u8,
     pub cells: [u8; CELLS],
 }
 
 /// One performed write (one `inject.jsonl` line). Times are ms since playback start; `t_ack_ms` is when we saw
 /// `io.input_sequence == seq`, `None` if the DLL never took this record.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Record {
     pub kind: Kind,
     pub seq: u32,
@@ -51,6 +53,8 @@ pub struct Record {
     pub t_sched_ms: f64,
     pub t_write_ms: f64,
     pub t_ack_ms: Option<f64>,
+    #[serde(default)]
+    pub opbtn: u8,
     /// 240 cells as 60 hex digits; digit `j` holds cells `4j..4j+4`, cell `4j` in bit 0.
     pub cells: String,
 }
@@ -78,6 +82,21 @@ pub fn cells_hex(cells: &[u8; CELLS]) -> String {
         .collect()
 }
 
+/// Inverse of [`cells_hex`]; `None` unless exactly 60 hex digits.
+pub fn cells_from_hex(hex: &str) -> Option<[u8; CELLS]> {
+    if hex.len() != CELLS / 4 {
+        return None;
+    }
+    let mut cells = [0; CELLS];
+    for (j, c) in hex.chars().enumerate() {
+        let nibble = c.to_digit(16)?;
+        for i in 0..4 {
+            cells[4 * j + i] = u8::from(nibble >> i & 1 == 1);
+        }
+    }
+    Some(cells)
+}
+
 /// Edge list -> publishes: one edge per frame plus lease renewals while any cell is held.
 pub fn schedule(frames: &[InputFrame]) -> Vec<Publish> {
     let mut out = Vec::new();
@@ -88,6 +107,7 @@ pub fn schedule(frames: &[InputFrame]) -> Vec<Publish> {
         out.push(Publish {
             t_ms: t,
             kind: Kind::Edge,
+            opbtn: 0,
             cells,
         });
         if f.sensors.is_empty() {
@@ -101,6 +121,7 @@ pub fn schedule(frames: &[InputFrame]) -> Vec<Publish> {
             out.push(Publish {
                 t_ms: r,
                 kind: Kind::Renew,
+                opbtn: 0,
                 cells,
             });
             r += RENEW_MS;
@@ -173,14 +194,14 @@ impl Drop for ClearOnDrop<'_> {
 fn write(
     view: &ShmView,
     clock: &impl Clock,
-    kind: Kind,
-    cells: &[u8; CELLS],
+    p: &Publish,
     t_script_ms: f64,
     t_sched_ms: f64,
 ) -> Record {
     let t_write_ms = clock.now_ms();
+    let (kind, cells) = (p.kind, &p.cells);
     let rec = input_payload(
-        0,
+        p.opbtn,
         0,
         cells,
         SOURCE_ID,
@@ -195,6 +216,7 @@ fn write(
         t_sched_ms,
         t_write_ms,
         t_ack_ms: None,
+        opbtn: p.opbtn,
         cells: cells_hex(cells),
     }
 }
@@ -260,7 +282,7 @@ pub fn play(
             }
             clock.pause(if waiting_ack { 0.0 } else { remaining });
         }
-        let rec = write(view, clock, p.kind, &p.cells, p.t_ms, t_sched);
+        let rec = write(view, clock, p, p.t_ms, t_sched);
         done.extend(pending.replace(rec));
     }
 
@@ -272,7 +294,13 @@ pub fn play(
     }
     result = result.and(flush(&mut done, sink));
     let now = clock.now_ms();
-    let mut clear = write(view, clock, Kind::Clear, &CLEAR, now - delay_ms, now);
+    let release = Publish {
+        t_ms: now - delay_ms,
+        kind: Kind::Clear,
+        opbtn: 0,
+        cells: CLEAR,
+    };
+    let mut clear = write(view, clock, &release, release.t_ms, now);
     guard.armed = false;
     await_ack(view, clock, &mut clear);
     result.and(sink(&clear))
@@ -384,6 +412,9 @@ mod tests {
         assert_eq!(h.len(), 60);
         assert_eq!(&h[..2], "12");
         assert_eq!(&h[59..], "8");
+        assert_eq!(cells_from_hex(&h), Some(cells));
+        assert_eq!(cells_from_hex("12"), None);
+        assert_eq!(cells_from_hex(&"g".repeat(60)), None);
     }
 
     #[test]
@@ -535,6 +566,7 @@ mod tests {
             t_sched_ms: t,
             t_write_ms: t + 1.0,
             t_ack_ms: None,
+            opbtn: 0,
             cells: String::new(),
         };
         let s = summary(&taps, &[rec(Kind::Edge, 0.0), rec(Kind::Clear, 5.0)]);

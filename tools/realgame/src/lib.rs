@@ -5,11 +5,15 @@
 //! `wacca-realgame inject` binary does so only when opted in) or calls [`game::launch`] (`run_experiment`).
 
 pub mod cells;
+pub mod e1;
 pub mod experiment;
+pub mod frame;
 pub mod game;
 pub mod inject;
+pub mod nav;
 pub mod record;
 pub mod shm;
 pub mod stats;
+pub mod testscreen;
 pub mod timeline;
 pub mod wcon;

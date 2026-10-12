@@ -230,6 +230,21 @@ first manual sessions (video + taught macro) rather than guessing.
 | Aging mode | `bAgingMode`, `AgingElapsedSeconds`, Elizabeth `bAutoAging=false`, `AutoAgingMode=random` [G2, G3] | Random burn-in input; not a chart reference. |
 | **Replay save** | `bReplaySave=false` in DefaultGameUserSettings.ini, `ReplayManager.cpp`, `UReplayData{InputDataArray, FrameNum}`, path `%sReplayData/%s/%02d/` [G2, G3] | If the user sets `bReplaySave=True` (in `appdata\SDFE\Saved\Config\WindowsNoEditor\GameUserSettings.ini`, section `[/Script/Mercury.MercuryGameUserSettings]`), the game may write per-frame input replays — **the exact frame the game assigned each injected edge to**. Format (UE SaveGame?) and whether it is active in shipping are UNVERIFIED. High value, low risk, user decision. |
 
+### 2.5 Live result: scripted test-menu navigation (2026-10-12)
+
+Measured on the live game: **operator buttons through the shared buffer work** (`opbtn` TEST/SERVICE, acked by
+waccon_io.dll within ~1–2 ms); the segatools F1/F2 keys are not used because `[mercuryio] path=waccon_io.dll`
+replaces segatools' keyboard IO. Test menu: TEST enters it from attract; SERVICE moves the cursor down, TEST
+decides; the selected entry is drawn **red**. Path to the touch grid: TEST → SERVICE ×2 (DEVICE TEST MENU) →
+TEST → SERVICE ×1 (TEST OF INPUT MACHINE) → TEST. That screen draws the 60 × 4 cells (white lines, a digit per
+cell) and fills touched cells light grey; it exits with TEST+SERVICE together.
+
+Encoded as `tools/realgame/scripts/nav-input-test.nav.json` (`run_experiment --nav`): press steps (button hold
+150 ms + wait) and expect steps that grab a frame and check colour fractions in regions given as fractions of
+the frame (red cursor row of the expected menu entry; white grid pixels on the input-test screen). Each check
+retries until its timeout and saves the frame as `nav-<step>-<name>.png` in the run directory; a failed check
+aborts the run. Regions were calibrated on 675×1200 captures (selected row: 0.19 of its pixels red; other rows 0).
+
 ---
 
 ## 3. Time synchronisation
@@ -295,6 +310,36 @@ Same viewport geometry as the game: 675×1200 portrait; the game's own split is 
   dependency is needed; FFmpeg's `ssim`/`psnr` filters [F1] are a cross-check once FFmpeg is approved.
 - Side by side: `ffmpeg -i real.mkv -i ours_%05d.png -filter_complex hstack` [F1] (needs FFmpeg), plus a diff
   panel (|real − ours| ×4). Without FFmpeg: write PNG strips of chosen frames and a CSV/HTML report.
+
+### 4.3 Live result: FFmpeg capture on this laptop (2026-10-12)
+
+Hybrid graphics: the AMD iGPU drives the 1920×1200 **120 Hz** panel, the game renders on the RTX 3050 Ti.
+`ddagrab` failed with "Selected output not supported" because DXGI ran FFmpeg on the NVIDIA adapter (adapter 0
+claims the output, `DuplicateOutput` returns UNSUPPORTED; adapter 1 = AMD enumerates no outputs). Fix without
+touching system settings: start FFmpeg with the per-process Optimus variable **`SHIM_MCCOMPAT=0x800000000`**
+(run on the integrated GPU); then ddagrab opens output 0 (1920×1200).
+
+10 s captures of the 675×1200 client rect while the game animated (attract), unique = frames whose MD5 differs
+from the previous frame:
+
+| Capture | Encoder | Frames/s written | Unique frames/s |
+|---|---|---|---|
+| gdigrab 60 | libx264 qp0 yuv444p (old default) | 48.8 (46 dropped by gdigrab) | 46.4 |
+| ddagrab 60 + hwdownload | libx264 qp0 yuv444p | 54.0 | 50.7 |
+| ddagrab 60 + hwdownload | libx264rgb qp0 | 56.2 | 48.5 |
+| ddagrab 60 → null (no download) | – | 59.6 | – |
+| **ddagrab 120, `dup_frames=0`, passthrough** | **libx264rgb ultrafast qp0** | 113.7 | **59.9** |
+| same + `-use_wallclock_as_timestamps 1` (default now) | libx264rgb ultrafast qp0 | 100.3 | 57.9 (scene-dependent) |
+| ddagrab | h264_amf / hevc_amf (cqp, any size) | fails: `SubmitInput() failed with error 18` | – |
+
+At 60 fps ddagrab misses game frames because its 60 Hz tick beats against the 120 Hz desktop; at 120 fps every
+game frame (~60/s, intervals mostly 16.7 ms, a few 8.3/25 ms from the game's own pacing) is kept, plus repeats
+from 120 Hz composition. Encoding stays at speed 1.0× (≈ 14–17 MB/s). NVENC was not needed (the bottleneck was
+capture pacing, not encoding). **Default now**: ddagrab 120 fps, `dup_frames=0`, wallclock timestamps,
+`-fps_mode passthrough`, libx264rgb lossless; automatic fallback to gdigrab (also libx264rgb, passthrough)
+when the 1-frame ddagrab probe fails. The input `start:` line gives the Unix time of the first frame for both
+grabbers, so `meta.json` `video.first_frame_ms` aligns the video with the injector clock (wallclock is stamped when
+FFmpeg reads the frame: a few ms after composition).
 
 ---
 
