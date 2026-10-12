@@ -29,6 +29,10 @@ fn autoplay_scores_max_on_every_chart() {
     let mut imperfect = Vec::new();
     for path in &files {
         let chart = wacca_chart::parse(&std::fs::read(path).unwrap()).unwrap();
+        if chart.notes.is_empty() {
+            // Placeholder charts of removed songs (e.g. S01-053_00) have no notes.
+            continue;
+        }
         let notes: Vec<_> = chart.notes.iter().map(|n| (class_of(n), n.bonus)).collect();
         let mut judge = Judge::new(&chart, JudgeTable::reverse());
         let mut tally = PlayTally::new(&notes, true);
