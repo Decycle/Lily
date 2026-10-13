@@ -17,6 +17,7 @@ use wacca_chart::{Bonus, HoldNode, LANES};
 
 use crate::particles::{
     EFFECT_RADIUS, EffectLibrary, FxBlend, FxVertex, KEY_BEAM, ParticleWorld, Placement,
+    R_NOTE_EFFECT,
 };
 
 use crate::layout::{
@@ -28,9 +29,6 @@ use crate::style::Rgba;
 /// Key of a persistent instance: key beams and held-hold glows.
 const KEY_BEAM_KEY: u64 = 1 << 32;
 const HOLD_KEY: u64 = 2 << 32;
-/// A released key beam fades out over this long. Measured on the E3 recordings (a 34 ms tap's
-/// beam is gone ~0.3 s later); UNVERIFIED how the game fades it (the particle lives 100 s).
-pub const KEY_BEAM_FADE_SECS: f32 = 0.3;
 
 /// Live hit effects: the game's particle systems when the library is attached, else the 2D
 /// [`Fallback`].
@@ -47,13 +45,19 @@ pub struct Effects {
     rim: [f32; LANES as usize],
 }
 
-/// The rim over a touched sensor (2D HUD, not a particle effect): a white edge and a grey band
-/// outside the judgement ring, shown while touched and [`RIM_HOLD_SECS`] after release, no fade
-/// (E3 recordings, `runs/e3/20261013-023731` 9.36–9.62 s: edge (244, 243, 245) at 314–317 px,
-/// band (125, 125, 125) at 320–328 px of the 291.8 px ring radius).
-pub const RIM_HOLD_SECS: f32 = 0.2;
-const RIM_EDGE: (f32, f32, Rgba) = (1.076, 1.09, [0.957, 0.953, 0.961, 1.0]);
-const RIM_BAND: (f32, f32, Rgba) = (1.09, 1.126, [0.49, 0.49, 0.49, 1.0]);
+/// The rim over a touched sensor (2D HUD, not a particle effect): white, grey and a thin white
+/// line outside the judgement ring, shown while touched and [`RIM_HOLD_SECS`] after release, no
+/// fade. The lane's key beam (its particle lives 100 s) goes out at the same frame, at once
+/// (E3 Fragile: a 25 ms tap at 9.38 s and a hold released at 68.97 s; both 0.175–0.185 s after
+/// the release, between 0.169 and 0.175 s at 60 fps). E3 Fragile (`runs/e3/20261013-034614`, 9.35–9.53 s and 67.6 s, per-pixel radial
+/// profiles): white (250) 314.7–322.3 px, grey (128) 322.3–328.8 px, white 328.8–330.3 px from
+/// the HUD centre ([`crate::style::HUD_RAISE_PX`] above the view's), ring radius 291.8 px.
+pub const RIM_HOLD_SECS: f32 = 0.17;
+const RIM_BANDS: [(f32, f32, Rgba); 3] = [
+    (314.7 / 291.8, 322.3 / 291.8, [0.98, 0.98, 0.98, 1.0]),
+    (322.3 / 291.8, 328.8 / 291.8, [0.502, 0.502, 0.502, 1.0]),
+    (328.8 / 291.8, 330.3 / 291.8, [1.0, 1.0, 1.0, 1.0]),
+];
 
 impl PartialEq for Effects {
     fn eq(&self, other: &Self) -> bool {
@@ -147,8 +151,13 @@ impl Effects {
                 self.world.spawn(sys, Placement::hit(f32::from(l)), None);
             }
         }
-        // Not drawn: the R-note effect (`vb_SnoteHit_00`, SNoteEffectTable ON): its placement
-        // is not captured and its tile material (`vMX_3_RankUp_000`) is not ported.
+        // R notes (SNoteEffectTable ON): one screen-centre system behind the lanes per hit.
+        if bonus == Bonus::R
+            && kind != JudgeSprite::Miss
+            && let Some(sys) = lib.system(R_NOTE_EFFECT)
+        {
+            self.world.spawn(sys, Placement::behind(), None);
+        }
     }
 
     /// Sensors pressed now (`lanes` bit per lane, any depth): their key beams light up.
@@ -178,7 +187,7 @@ impl Effects {
         }
         let mut wanted: HashSet<u64> = HashSet::new();
         if let Some(beam) = lib.system(KEY_BEAM) {
-            for lane in (0..LANES).filter(|l| self.touched >> l & 1 == 1) {
+            for lane in (0..LANES).filter(|&l| self.rim[usize::from(l)] > 0.0) {
                 let key = KEY_BEAM_KEY + u64::from(lane);
                 wanted.insert(key);
                 if !self.world.has(key) {
@@ -186,6 +195,7 @@ impl Effects {
                         lane: f32::from(lane),
                         radius: EFFECT_RADIUS,
                         scale: 1.0,
+                        behind: false,
                     };
                     self.world.spawn(beam, place, Some(key));
                 }
@@ -207,20 +217,23 @@ impl Effects {
         }
         let gone: Vec<u64> = self.world.keys().filter(|k| !wanted.contains(k)).collect();
         for key in gone {
-            if key < HOLD_KEY {
-                self.world.fade_out(key, KEY_BEAM_FADE_SECS);
-            } else {
-                // Hold glows let their particles finish.
-                self.world.stop(key, false);
-            }
+            // Key beams go out at once; hold glows let their particles finish.
+            self.world.stop(key, key < HOLD_KEY);
         }
         self.world.update(dt);
     }
 
-    /// The 3D effects (view-space triangles and their blend runs); nothing without the library.
-    pub fn build(&self, out: &mut Vec<FxVertex>, runs: &mut Vec<(FxBlend, u32, u32)>) {
+    /// The 3D effects (view-space triangles into `out`): the runs drawn before the guide lanes
+    /// (`behind`, the R-note hit) and the others; nothing without the library.
+    pub fn build(
+        &self,
+        out: &mut Vec<FxVertex>,
+        behind: &mut Vec<(FxBlend, u32, u32)>,
+        runs: &mut Vec<(FxBlend, u32, u32)>,
+    ) {
         if let Some(lib) = &self.lib {
-            self.world.build(lib, out, runs);
+            self.world.build_layer(lib, out, behind, true);
+            self.world.build_layer(lib, out, runs, false);
         }
     }
 
@@ -231,10 +244,15 @@ impl Effects {
             self.fallback.draw(out, sheet);
             return;
         }
+        let from = out.len();
         for (lane, _) in self.rim.iter().enumerate().filter(|(_, r)| **r > 0.0) {
-            for (r0, r1, c) in [RIM_EDGE, RIM_BAND] {
+            for (r0, r1, c) in RIM_BANDS {
                 push_sector(out, r0, r1, lane as f32, 1.0, c);
             }
+        }
+        let raise = crate::style::HUD_RAISE_PX / 291.8;
+        for v in &mut out[from..] {
+            v.pos[1] += raise;
         }
     }
 }
@@ -631,11 +649,29 @@ mod tests {
             vec![
                 ("pop".into(), system("pop", 0.3)),
                 (KEY_BEAM.into(), system("beam", 100.0)),
+                (R_NOTE_EFFECT.into(), system("r", 0.5)),
             ],
             vec![(m, "vM_1_Base_004".into())],
             vec![],
             &Default::default(),
         ))
+    }
+
+    #[test]
+    fn r_note_hits_add_one_centre_effect_behind_the_lanes() {
+        let mut fx = Effects::default();
+        fx.set_library(Some(library()));
+        fx.hit_note(10, 3, JudgeSprite::Marvelous, Bonus::R);
+        fx.hit_note(40, 3, JudgeSprite::Miss, Bonus::R);
+        fx.update(0.01);
+        let (mut v, mut behind, mut runs) = (Vec::new(), Vec::new(), Vec::new());
+        fx.build(&mut v, &mut behind, &mut runs);
+        // Three pops on the ring (plain pop for R notes), one R system behind (not for a Miss).
+        assert_eq!(behind.iter().map(|r| r.2 - r.1).sum::<u32>(), 6);
+        assert_eq!(runs.iter().map(|r| r.2 - r.1).sum::<u32>(), 3 * 6);
+        // At the screen centre, 800 cm deep (component Y −610, camera at +190).
+        let w = |i: usize| v[i].pos[2];
+        assert!((behind[0].1..behind[0].2).all(|i| (w(i as usize) - 800.0).abs() < 1.0));
     }
 
     #[test]
@@ -648,27 +684,33 @@ mod tests {
         fx.update(0.01);
         assert_eq!(fx.len(), 4, "one system per lane");
         let (mut v, mut runs) = (Vec::new(), Vec::new());
-        fx.build(&mut v, &mut runs);
+        fx.build(&mut v, &mut Vec::new(), &mut runs);
         assert_eq!(v.len(), 4 * 6);
         let mut flat = Vec::new();
         fx.draw(&mut flat, &SpriteSheet::default());
         assert!(flat.is_empty(), "no 2D fallback with the library");
         fx.update(0.3);
         assert!(fx.is_empty());
-        // Key beam: lit while touched, fading for KEY_BEAM_FADE_SECS after release.
+        // Key beam and rim: lit while touched and RIM_HOLD_SECS after release, then gone.
         fx.touch(1 << 3);
         fx.update(0.01);
         assert_eq!(fx.len(), 1);
         fx.draw(&mut flat, &SpriteSheet::default());
-        assert_eq!(flat.len(), 2 * 6, "rim edge and band");
+        assert_eq!(flat.len(), 3 * 6, "white, grey, white line");
+        let raise = crate::style::HUD_RAISE_PX / 291.8;
+        let r = |v: &Vertex| v.pos[0].hypot(v.pos[1] - raise);
+        assert!(flat.iter().all(|v| (1.07..1.14).contains(&r(v))));
         fx.touch(0);
-        fx.update(KEY_BEAM_FADE_SECS / 2.0);
+        fx.update(RIM_HOLD_SECS / 2.0);
         assert_eq!(fx.len(), 1);
         let (mut v, mut runs) = (Vec::new(), Vec::new());
-        fx.build(&mut v, &mut runs);
-        assert!(v.iter().all(|q| (q.color[3] - 0.5).abs() < 0.05));
-        fx.update(KEY_BEAM_FADE_SECS);
+        fx.build(&mut v, &mut Vec::new(), &mut runs);
+        assert!(v.iter().all(|q| q.color[3] > 0.99), "no fade");
+        fx.update(RIM_HOLD_SECS);
         assert!(fx.is_empty());
+        flat.clear();
+        fx.draw(&mut flat, &SpriteSheet::default());
+        assert!(flat.is_empty());
     }
 
     #[test]

@@ -47,6 +47,9 @@ pub struct LiveState<'a> {
     /// `judged[i]`: note `i` (index into `Chart::notes`) is decided and no longer drawn.
     /// Shorter than the note list = the rest are not judged.
     pub judged: &'a [bool],
+    /// Notes (indices into `Chart::notes`) of the holds being held: their ribbons use the held
+    /// material.
+    pub holding: &'a [usize],
     /// Hit effects, key beams and hold glows.
     pub effects: Option<&'a Effects>,
     /// Last judgement and its age in seconds (judgement word art).
@@ -188,7 +191,6 @@ pub fn build_scene_into(
         }
     }
 
-    push_rim(out);
     if let Some(rim) = &live.rim {
         push_rim_row(out, sheet, rim);
     }
@@ -196,20 +198,6 @@ pub fn build_scene_into(
         fx.draw(out, sheet);
     }
     push_hud_sprites(out, sheet, live);
-}
-
-/// The dark rim (UMG HUD) outside the judgement ring with its thin outer edge, black beyond it
-/// (E2: 315–331 px at a 291.8 px line). The ring itself is the guide-lane shader's.
-fn push_rim(out: &mut Vec<Vertex>) {
-    let band_out = 1.0 + style::JUDGE_BAND_WIDTH;
-    let rim_out = band_out + style::RIM_WIDTH;
-    let all = LANES as f32;
-    // Nothing shows outside the cabinet rim (the movie quad would, E2 frames are black there).
-    let corner = style::VIEW_EXTENT * std::f32::consts::SQRT_2;
-    push_sector(out, rim_out, corner, 0.0, all, style::OUTSIDE);
-    push_sector(out, band_out, rim_out, 0.0, all, style::RIM);
-    let e = style::RIM_EDGE_HALF_WIDTH;
-    push_sector(out, rim_out - e, rim_out + e, 0.0, all, style::RIM_EDGE);
 }
 
 /// Lane at `deg` degrees clockwise from 12 o'clock.
@@ -228,14 +216,10 @@ fn push_bent(out: &mut Vec<Vertex>, uv: UvRect, lane: f32, r: f32, size: [f32; 2
     paint_sector(out, top, bottom, lane - lanes / 2.0, lanes, &paint);
 }
 
-/// Song progress on the dark rim, the score row ("SCORE", seven SHINBI digits), the
-/// difficulty/level and the song title along the top of the band (layout in `style`).
+/// The score row ("SCORE", seven SHINBI digits), the difficulty/level and the song title along
+/// the top of the band (layout in `style`). The rim itself and the song progress are drawn by
+/// the stage composition (`style::GAUGE_RADIUS_PX`).
 fn push_rim_row(out: &mut Vec<Vertex>, sheet: &SpriteSheet, rim: &RimState) {
-    let (r0, r1) = style::PROGRESS_RADII;
-    let progress = rim.progress.clamp(0.0, 1.0) * LANES as f32;
-    if progress > 0.0 {
-        push_sector(out, r0, r1, LANES as f32 / 4.0, progress, style::PROGRESS);
-    }
     let texts = [
         (
             TextSprite::ScoreLabel,
@@ -308,23 +292,73 @@ fn push_touch_guide(out: &mut Vec<Vertex>, pressed: &[u64; style::SENSOR_DEPTHS]
 /// Clear gauge bar above the combo: dark track, pink fill from the left with a light core,
 /// diamond end marks and a mark at the norma line.
 fn push_gauge(out: &mut Vec<Vertex>, (fill, norma): (f32, f32)) {
-    let (hw, hh, y) = (style::GAUGE_HALF_W, style::GAUGE_HALF_H, style::GAUGE_Y);
-    push_rect(out, [0.0, y], [hw, hh], &Paint::flat(style::GAUGE_TRACK));
-    let f = fill.clamp(0.0, 1.0) * hw;
+    let (hw, hh, ih, y) = (
+        style::GAUGE_HALF_W,
+        style::GAUGE_HALF_H,
+        style::GAUGE_INNER_HALF_H,
+        style::GAUGE_Y,
+    );
+    // Horizontal span `x0..x1` of the bar, full height (border colour) and interior.
+    let span =
+        |out: &mut Vec<Vertex>, x0: f32, x1: f32, border: style::Rgba, inner: style::Rgba| {
+            let (c, w) = ([(x0 + x1) / 2.0, y], (x1 - x0) / 2.0);
+            push_rect(out, c, [w, hh], &Paint::flat(border));
+            push_rect(out, c, [w, ih], &Paint::flat(inner));
+        };
+    span(out, -hw, hw, style::GAUGE_BORDER, style::GAUGE_TRACK);
+    let x_norma = (norma.clamp(0.0, 1.0) * 2.0 - 1.0) * hw;
+    // The norma mark and its fade towards the track (in steps).
+    let (fade, len) = style::GAUGE_NORMA_FADE;
+    const STEPS: usize = 6;
+    let x0 = x_norma + style::GAUGE_MARK_W;
+    for k in 0..STEPS {
+        let t = (k as f32 + 0.5) / STEPS as f32;
+        let c: style::Rgba =
+            std::array::from_fn(|i| fade[i] + (style::GAUGE_TRACK[i] - fade[i]) * t);
+        let a = x0 + len * k as f32 / STEPS as f32;
+        let b = (x0 + len * (k + 1) as f32 / STEPS as f32).min(hw);
+        if a < b {
+            push_rect(
+                out,
+                [(a + b) / 2.0, y],
+                [(b - a) / 2.0, ih],
+                &Paint::flat(c),
+            );
+        }
+    }
+    let f = fill.clamp(0.0, 1.0) * 2.0 * hw;
     if f > 0.0 {
-        push_rect(out, [f - hw, y], [f, hh], &Paint::flat(style::GAUGE_FILL));
-        push_rect(
+        span(
             out,
-            [f - hw, y],
-            [f, hh * 0.3],
-            &Paint::flat(style::GAUGE_CORE),
+            -hw,
+            f - hw,
+            style::GAUGE_FILL_BORDER,
+            style::GAUGE_FILL,
         );
     }
-    let m = style::GAUGE_MARK_HALF;
-    let x_norma = (norma.clamp(0.0, 1.0) * 2.0 - 1.0) * hw;
-    for x in [-hw, hw, x_norma] {
-        let paint = Paint::flat(style::GAUGE_MARK);
-        push_oriented_rect(out, [x, y], [m, m], [1.0, 1.0], &paint);
+    let m = style::GAUGE_MARK_W / 2.0;
+    push_rect(
+        out,
+        [x_norma + m, y],
+        [m, ih],
+        &Paint::flat(style::GAUGE_MARK),
+    );
+    // Slanted end caps (parallelograms leaning right).
+    let (cap, w) = style::GAUGE_CAP;
+    for (x, dir) in [(-hw, 1.0), (hw, -1.0)] {
+        let paint = Paint::flat(cap);
+        let lean = 0.6 * w;
+        crate::layout::push_quad(
+            out,
+            [
+                [x, y - hh],
+                [x + dir * w, y - hh],
+                [x + dir * w + lean, y + hh],
+                [x + lean, y + hh],
+            ],
+            [[0.0; 2]; 4],
+            &paint,
+        );
     }
 }
 
@@ -641,7 +675,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_chart_has_only_the_rim() {
+    fn empty_chart_draws_nothing() {
         let none = SpriteSheet::default();
         let v = build_scene(
             &chart(vec![]),
@@ -650,12 +684,11 @@ mod tests {
             &LiveState::default(),
             &none,
         );
-        // Lanes and the judgement ring are 3D (stage); the dark rim goes all the way round.
-        assert_eq!(count(&v, style::RIM), 60 * 6);
-        assert_eq!(count(&v, style::OUTSIDE), 60 * 6);
-        assert_eq!(v.len(), 3 * 60 * 6, "outside, rim, rim edge");
-        // Into a reused buffer: cleared first, same triangles, no reallocation.
+        // Lanes, the judgement ring and the rim are drawn by the stage.
+        assert!(v.is_empty());
+        // Into a reused buffer: cleared first, no reallocation.
         let mut reused = v.clone();
+        reused.reserve(64);
         let capacity = reused.capacity();
         build_scene_into(
             &mut reused,
@@ -669,7 +702,7 @@ mod tests {
     }
 
     #[test]
-    fn rim_row_progress_and_gauge() {
+    fn rim_row_and_gauge() {
         let mut sheet = full_sheet();
         for t in [
             TextSprite::ScoreLabel,
@@ -694,10 +727,6 @@ mod tests {
             &live(0.25),
             &sheet,
         );
-        // Progress: a quarter of the ring from 12 o'clock counter-clockwise (to 9 o'clock).
-        let lit: Vec<_> = v.iter().filter(|p| p.color == style::PROGRESS).collect();
-        assert_eq!(lit.len(), 15 * 6);
-        assert!(lit.iter().all(|p| p.pos[0] <= 1e-4 && p.pos[1] >= -1e-4));
         // Seven score digits "0082759", all at the top, orange.
         let digits: Vec<_> = v.iter().filter(|p| p.color == style::SCORE_COLOR).collect();
         assert!(digits.len() >= 7 * 6);
@@ -719,20 +748,21 @@ mod tests {
         assert!(cx(style::SCORE_LABEL_COLOR) < 0.0);
         assert!(cx([0.1, 0.4, 1.0, 1.0]) > 0.0);
         assert!(cx(style::TITLE_COLOR) > cx([0.1, 0.4, 1.0, 1.0]));
-        // Gauge: track, half fill (and its core), three marks.
+        // Gauge: track, half fill from the left, the norma mark at 70 %, two end caps.
         assert_eq!(count(&v, style::GAUGE_TRACK), 6);
         let fill: Vec<_> = v.iter().filter(|p| p.color == style::GAUGE_FILL).collect();
         assert_eq!(fill.len(), 6);
         assert!(fill.iter().all(|p| p.pos[0] <= 1e-5));
-        assert_eq!(count(&v, style::GAUGE_MARK), 3 * 6);
-        let none = build_scene(
-            &chart(vec![]),
-            0.0,
-            &SceneOptions::default(),
-            &live(0.0),
-            &sheet,
+        let mark: Vec<_> = v.iter().filter(|p| p.color == style::GAUGE_MARK).collect();
+        assert_eq!(mark.len(), 6);
+        let x = 0.4 * style::GAUGE_HALF_W;
+        assert!(
+            mark.iter()
+                .all(|p| (p.pos[0] - x).abs() <= style::GAUGE_MARK_W + 1e-5)
         );
-        assert_eq!(count(&none, style::PROGRESS), 0);
+        assert_eq!(count(&v, style::GAUGE_CAP.0), 2 * 6);
+        let y = |p: &&Vertex| (p.pos[1] - style::GAUGE_Y).abs() <= style::GAUGE_HALF_H + 1e-5;
+        assert!(fill.iter().chain(&mark).all(y));
     }
 
     #[test]

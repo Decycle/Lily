@@ -10,6 +10,10 @@ use crate::layout::Rect;
 use crate::notes3d::MeshVertex;
 use crate::sprites::{self, Image};
 use crate::stage::Stage;
+use crate::style;
+
+/// Side of the game's play view (px) that the HUD measurements in `style` refer to.
+const VIEW_PX: f32 = 675.0;
 
 /// Linear scene colour (the game's main view is R16G16B16A16F).
 pub(crate) const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -59,6 +63,8 @@ pub(crate) fn primitive() -> wgpu::PrimitiveState {
 struct ViewUniform {
     viewport: [f32; 4],
     params: [f32; 4],
+    /// HUD rim (composition): played fraction (< 0: no time gauge).
+    hud: [f32; 4],
 }
 
 #[derive(Debug)]
@@ -195,19 +201,37 @@ impl StageLayer {
 
         let compose_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("stage compose"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
         });
         let compose_module = device.create_shader_module(wgpu::include_wgsl!("compose.wgsl"));
-        let constants = [("SRGB_TARGET", if format.is_srgb() { 1.0 } else { 0.0 })];
+        let constants = [
+            ("SRGB_TARGET", if format.is_srgb() { 1.0 } else { 0.0 }),
+            ("HUD_RAISE", f64::from(style::HUD_RAISE_PX / VIEW_PX)),
+            ("HUD_EDGE", f64::from(style::HUD_EDGE_PX / VIEW_PX)),
+            ("GAUGE_RADIUS", f64::from(style::GAUGE_RADIUS_PX / VIEW_PX)),
+            ("GAUGE_SHADE", f64::from(style::GAUGE_SHADE)),
+        ];
         let options = wgpu::PipelineCompilationOptions {
             constants: &constants,
             ..Default::default()
@@ -307,6 +331,7 @@ impl StageLayer {
         let uniform = ViewUniform {
             viewport: [vp.x, vp.y, 1.0 / vp.w, 1.0 / vp.h],
             params: [stage.time, stage.pulse, alpha, gradation],
+            hud: [stage.progress.unwrap_or(-1.0), 0.0, 0.0, 0.0],
         };
         queue.write_buffer(&self.view, 0, bytemuck::bytes_of(&uniform));
         let mut at = 0;
@@ -425,10 +450,16 @@ impl StageLayer {
         let compose = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("stage compose"),
             layout: &self.compose_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&resolved),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&resolved),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.view.as_entire_binding(),
+                },
+            ],
         });
         Targets {
             size: [width, height],

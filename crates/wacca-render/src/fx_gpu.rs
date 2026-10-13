@@ -32,6 +32,8 @@ fn shader_index(s: FxShader) -> u32 {
         FxShader::Scroll => 5,
         FxShader::Dissolve => 6,
         FxShader::Miss => 7,
+        FxShader::Base003 => 9,
+        FxShader::RankUp => 10,
         FxShader::Other => 8,
     }
 }
@@ -91,6 +93,8 @@ pub(crate) struct FxLayer {
     bind: Option<wgpu::BindGroup>,
     vertices: wgpu::Buffer,
     runs: Vec<(FxBlend, u32, u32)>,
+    /// Runs drawn before the guide lanes.
+    behind: Vec<(FxBlend, u32, u32)>,
     library: Option<Arc<EffectLibrary>>,
 }
 
@@ -145,7 +149,8 @@ impl FxLayer {
             push_constant_ranges: &[],
         });
         let attributes = wgpu::vertex_attr_array![
-            0 => Float32x3, 1 => Float32x2, 2 => Float32x4, 3 => Float32x4, 4 => Uint32
+            0 => Float32x3, 1 => Float32x2, 2 => Float32x4, 3 => Float32x4, 4 => Float32x4,
+            5 => Uint32
         ];
         let pipeline = |entry: &str, blend, write| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -228,6 +233,7 @@ impl FxLayer {
             bind: None,
             vertices: vertex_buffer(device, MIN_BUFFER_BYTES),
             runs: Vec::new(),
+            behind: Vec::new(),
             library: None,
         }
     }
@@ -354,6 +360,7 @@ impl FxLayer {
     /// Uploads the effect vertices of `stage`.
     pub(crate) fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, stage: &Stage) {
         self.runs.clear();
+        self.behind.clear();
         if self.bind.is_none() || stage.effects.is_empty() {
             return;
         }
@@ -368,11 +375,13 @@ impl FxLayer {
         }
         queue.write_buffer(&self.vertices, 0, bytes);
         self.runs.clone_from(&stage.effect_runs);
+        self.behind.clone_from(&stage.behind_runs);
     }
 
-    fn draw(&self, pass: &mut wgpu::RenderPass, masked: bool) {
+    fn draw(&self, pass: &mut wgpu::RenderPass, masked: bool, behind: bool) {
         let Some(bind) = &self.bind else { return };
-        for &(blend, start, end) in &self.runs {
+        let runs = if behind { &self.behind } else { &self.runs };
+        for &(blend, start, end) in runs {
             let pipeline = match (blend, masked) {
                 (FxBlend::Masked, true) => &self.masked,
                 (FxBlend::Additive, false) => &self.additive,
@@ -388,12 +397,18 @@ impl FxLayer {
 
     /// Masked effects (the Miss shards), with the opaque elements.
     pub(crate) fn draw_masked(&self, pass: &mut wgpu::RenderPass) {
-        self.draw(pass, true);
+        self.draw(pass, true, false);
+        self.draw(pass, true, true);
+    }
+
+    /// Translucent effects before the guide lanes (the R-note hit).
+    pub(crate) fn draw_behind(&self, pass: &mut wgpu::RenderPass) {
+        self.draw(pass, false, true);
     }
 
     /// Additive and translucent effects, last in the translucency.
     pub(crate) fn draw_translucent(&self, pass: &mut wgpu::RenderPass) {
-        self.draw(pass, false);
+        self.draw(pass, false, false);
     }
 }
 

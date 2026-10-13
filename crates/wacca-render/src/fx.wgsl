@@ -32,6 +32,8 @@ const SHADER_BASE005: u32 = 4u;
 const SHADER_SCROLL: u32 = 5u;
 const SHADER_DISSOLVE: u32 = 6u;
 const SHADER_MISS: u32 = 7u;
+const SHADER_BASE003: u32 = 9u;
+const SHADER_RANKUP: u32 = 10u;
 
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
@@ -39,6 +41,7 @@ struct VsOut {
     @location(1) color: vec4<f32>,
     @location(2) extra: vec4<f32>,
     @location(3) @interpolate(flat) material: u32,
+    @location(4) dynamic: vec4<f32>,
 };
 
 // View-space `[X, Z, w]` (camera.rs), as the stage: NDC = (X, Z) / w, reversed-Z depth near / w.
@@ -48,13 +51,15 @@ fn vs_main(
     @location(1) uv: vec2<f32>,
     @location(2) color: vec4<f32>,
     @location(3) extra: vec4<f32>,
-    @location(4) material: u32,
+    @location(4) dynamic: vec4<f32>,
+    @location(5) material: u32,
 ) -> VsOut {
     var out: VsOut;
     out.pos = vec4<f32>(pos.x, pos.y, 10.0, pos.z);
     out.uv = uv;
     out.color = color;
     out.extra = extra;
+    out.dynamic = dynamic;
     out.material = material;
     return out;
 }
@@ -98,7 +103,9 @@ fn tap(m: Material, uv: vec2<f32>, vc: vec4<f32>) -> vec4<f32> {
     let w = mix(uv.y, uv.y * cm, p1.x);
     let a = (powp(w * 0.5, p1.y) + powp(w, p1.z)) * vc.a;
     let s = sin(TAU * (uv.y * 0.5 + p1.w));
-    let k = min(round(smooth01((s - (h - 0.1)) / 0.1)), 1.0);
+    // `round_pi` (ceil) in the DXBC: the whole band where the sine passes h − 0.1 is cut (the
+    // key beam's gap over the judgement ring).
+    let k = min(ceil(smooth01((s - (h - 0.1)) / 0.1)), 1.0);
     let alpha = clamp(a - m.params[2].x * a * k, 0.0, 1.0);
     return vec4<f32>(max(col, vec3<f32>(0.0)), alpha);
 }
@@ -118,11 +125,12 @@ fn hold(m: Material, uv: vec2<f32>) -> vec4<f32> {
     let lv = uv.y + p[2].x;
     let line = smooth01((2.0 * lv * (1.0 - lv) - p[2].y) / (p[2].z - p[2].y));
     var a = core + line * p[2].w;
-    // Side mask: CustomRotator(UV + (U_pos, 0), Rotate) — UNVERIFIED uniform values.
+    // Side mask: CustomRotator(UV + (U_pos, 0), Rotate) (KING frame 9103: U_pos 0.46, axis (1, 0)).
     let r = p[3].y * TAU;
     let d = dot(uv + vec2<f32>(p[3].x, 0.0) - 0.5, vec2<f32>(cos(r), -sin(r))) + 0.5;
     a = a * clamp(floor(2.0 * d), 0.0, 1.0);
-    let flick = sin(TAU * fx.time.x * p[3].z) * (p[3].w - p[4].w) + p[4].w;
+    // FlickStrength_Max + (Min − Max)·sin (KING frame 9103 eid 4008: cb4[15] = (10, Min 0.4, Max 0.6)).
+    let flick = sin(TAU * fx.time.x * p[3].z) * (p[4].w - p[3].w) + p[3].w;
     return vec4<f32>(max(col, vec3<f32>(0.0)), clamp(a * flick, 0.0, 1.0));
 }
 
@@ -159,6 +167,39 @@ fn miss(m: Material, uv: vec2<f32>, vc: vec4<f32>, rnd: f32) -> vec4<f32> {
         * clamp((1.0 - 2.0 * abs(uv2.y - 0.5)) * 1e5, 0.0, 1.0);
     let cut = 1.0 - tex(m, 1u, uv2, true).r * edge;
     return vec4<f32>(max(col, vec3<f32>(0.0)), ring * cut);
+}
+
+// --- vMX_3_RankUp_000 (TUS_Snote000, the R-note hit; runs/shaders/vfx/vMX_3_RankUp_000_TUS_Snote000/
+// 08_ps_*FParticleSprite*.asm): a grid of squares that grow inside a ring wave ---
+// p0 = BG_Mask_0, ColorTex_ONOFF, cos/sin(Rotate); p1 = 1_UV_Tiling, WaveInside_Density,
+// SmoothStep_Min, _Max; p2 = Shape_Min, Shape_Max. DynamicParameter: x / z outer / inner wave
+// radius, w colour texture turn.
+fn rankup(m: Material, uv: vec2<f32>, vc: vec4<f32>, dynp: vec4<f32>) -> vec4<f32> {
+    let p0 = m.params[0];
+    let p1 = m.params[1];
+    let p2 = m.params[2];
+    let base = p0.x * vc.rgb;
+    let p = uv - 0.5;
+    let a = dynp.w * TAU;
+    let sa = sin(a);
+    let ca = cos(a);
+    let r = vec2<f32>(p.x * ca - p.y * sa, p.y * ca + p.x * sa) + 0.5;
+    let ct = tex(m, 0u, r, true).rgb;
+    let col = mix(base, ct * base, p0.y);
+    let q = vec2<f32>(dot(p, vec2<f32>(p0.z, -p0.w)), dot(p, vec2<f32>(p0.w, p0.z))) + 0.5;
+    let g = q * p1.x;
+    let fr = fract(g);
+    let d = length((floor(g) + 0.5) / p1.x - 0.5);
+    let e = 1.0 - vec2<f32>(d / dynp.z, d / dynp.x);
+    let w = 1.0 - exp(-(e * p1.y) * (e * p1.y));
+    let outside = select(1.0, 1.0 - w.x, e.x >= 0.0 && abs(e.x) > 1e-5);
+    let inside = select(0.0, w.y, e.y >= 0.0 && abs(e.y) > 1e-5);
+    let s = smooth01((outside * inside - p1.z) / (p1.w - p1.z));
+    let shape = mix(p2.x, p2.y, s);
+    let uv2 = (fr - shape) / (1.0 - 2.0 * shape);
+    let edge = clamp((1.0 - 2.0 * abs(uv2 - 0.5)) * 1e5, vec2<f32>(0.0), vec2<f32>(1.0));
+    let mask = tex(m, 1u, uv2, true).r * edge.x * edge.y;
+    return vec4<f32>(max(col, vec3<f32>(0.0)), clamp(mask * vc.a, 0.0, 1.0));
 }
 
 // (colour, opacity) of a fragment.
@@ -201,6 +242,17 @@ fn shade(in: VsOut) -> vec4<f32> {
         }
         case SHADER_MISS: {
             return miss(m, uv, vc, in.extra.x);
+        }
+        case SHADER_BASE003: {
+            // vM_1_Base_003 (Glow, Snote; 26_ps_*GPUSprite*.asm): BG_Mask_0 × colour texture
+            // × particle colour, mask texture green × particle alpha (MPC BG mask 0).
+            let p = m.params[0];
+            let c = tex(m, 0u, uv * p.xy, true).rgb * vc.rgb * m.params[1].x;
+            let a = clamp(tex(m, 1u, uv * p.zw, false).g * vc.a, 0.0, 1.0);
+            return vec4<f32>(max(c, vec3<f32>(0.0)), a);
+        }
+        case SHADER_RANKUP: {
+            return rankup(m, uv, vc, in.dynamic);
         }
         default: {
             // Not ported: drawn invisible.

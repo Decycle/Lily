@@ -19,7 +19,8 @@ pub use material::{MaterialParams, read_material};
 pub use mesh::{MeshSection, StaticMesh, read_static_mesh};
 pub use object::{Object, Objects, read_objects};
 pub use particle::{
-    Burst, Distribution, Emitter, GpuCurves, Module, ParticleSystem, read_particle_system,
+    Burst, Distribution, DynamicParam, Emitter, GpuCurves, Module, ParticleSystem,
+    read_particle_system,
 };
 pub use property::{Text, Value};
 pub use texture::{PixelFormat, Texture, read_texture2d};

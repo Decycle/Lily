@@ -1,5 +1,5 @@
 //! wgpu side of [`crate::notes3d`]: the note material pipelines (`notes.wgsl`; opaque/masked
-//! incl. the sync connector, and the additive aura), their textures and the per-frame vertex buffer. Without meshes or textures
+//! incl. the sync connector, and the translucent aura), their textures and the per-frame vertex buffer. Without meshes or textures
 //! nothing is drawn (2D notes instead).
 
 use std::path::Path;
@@ -52,7 +52,7 @@ fn gpu_materials() -> [GpuMaterial; MATERIALS.len()] {
 pub(crate) struct NoteLayer {
     /// Opaque/masked note bodies, hold ends and bar lines.
     pipeline: wgpu::RenderPipeline,
-    /// Additive aura (`BLEND_Additive`).
+    /// Translucent aura (SrcAlpha / InvSrcAlpha as captured).
     aura: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     materials: wgpu::Buffer,
@@ -140,23 +140,22 @@ impl NoteLayer {
                 cache: None,
             })
         };
-        let add = wgpu::BlendComponent {
-            src_factor: wgpu::BlendFactor::One,
-            dst_factor: wgpu::BlendFactor::One,
-            operation: wgpu::BlendOperation::Add,
-        };
-        let keep = wgpu::BlendComponent {
-            src_factor: wgpu::BlendFactor::Zero,
-            dst_factor: wgpu::BlendFactor::One,
-            operation: wgpu::BlendOperation::Add,
-        };
         // Masked materials: opaque where not discarded.
         let pipeline = make("fs_main", None, true);
+        // The aura blends SrcAlpha / InvSrcAlpha (RenderDoc KING frame 10405 eid 3835).
         let aura = make(
             "fs_aura",
             Some(wgpu::BlendState {
-                color: add,
-                alpha: keep,
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::SrcAlpha,
+                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::Zero,
+                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                    operation: wgpu::BlendOperation::Add,
+                },
             }),
             false,
         );
@@ -284,7 +283,7 @@ impl NoteLayer {
         pass.draw(aura..notes.len() as u32, 0..1);
     }
 
-    /// Draws the prepared `notes`' additive aura (separate translucency: depth-tested against the
+    /// Draws the prepared `notes`' translucent aura (separate translucency: depth-tested against the
     /// opaque scene, not written).
     pub(crate) fn draw_aura(&self, pass: &mut wgpu::RenderPass, notes: &[MeshVertex]) {
         let Some(bind) = &self.bind else { return };

@@ -278,14 +278,12 @@ pub fn bake(img: &Image, src: &Source) -> Image {
 
 /// Combo digits are rasterised at this font size (px).
 pub const DIGIT_PX: f32 = 96.0;
-/// Padding around a digit cell's cap height, as a fraction of the cap height (room for the
-/// outline). The scene subtracts it again when placing cells.
+/// Padding around a digit cell's cap height, as a fraction of the cap height. The scene
+/// subtracts it again when placing cells.
 pub const DIGIT_PAD: f32 = 0.12;
-/// Dark outline baked around the digits so they read over bright movies (straight RGB).
-const DIGIT_OUTLINE: [f32; 3] = [0.12, 0.06, 0.22];
-
 /// Digit `d` of `font` as a premultiplied cell: one advance wide and the cap height of `0`
-/// tall (all digits), plus [`DIGIT_PAD`] on every side; a white glyph inside a dark outline.
+/// tall (all digits), plus [`DIGIT_PAD`] on every side; a white glyph, no outline (the game's
+/// combo digits have none: E3 Fragile frames).
 pub fn bake_digit(font: &impl ab_glyph::Font, d: u8) -> Option<Image> {
     use ab_glyph::{PxScale, ScaleFont};
     let scaled = font.as_scaled(PxScale::from(DIGIT_PX));
@@ -315,30 +313,10 @@ pub fn bake_digit(font: &impl ab_glyph::Font, d: u8) -> Option<Image> {
             cov[(py as u32 * w + px as u32) as usize] = v;
         }
     });
-    let r = (pad * 0.7).max(1.0) as i64;
-    let at = |x: i64, y: i64| {
-        let inside = (0..i64::from(w)).contains(&x) && (0..i64::from(h)).contains(&y);
-        if inside {
-            cov[(y as u32 * w + x as u32) as usize]
-        } else {
-            0.0
-        }
-    };
     let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
     Some(Image::from_fn([w, h], |x, y| {
-        let (x, y) = (i64::from(x), i64::from(y));
-        let mut ring = 0.0f32;
-        for dy in -r..=r {
-            for dx in -r..=r {
-                if dx * dx + dy * dy <= r * r {
-                    ring = ring.max(at(x + dx, y + dy));
-                }
-            }
-        }
-        let fill = at(x, y);
-        let edge = ring * (1.0 - fill) * 0.85;
-        let rgb = DIGIT_OUTLINE.map(|o| byte(fill + edge * o));
-        [rgb[0], rgb[1], rgb[2], byte(fill + edge)]
+        let v = byte(cov[(y * w + x) as usize]);
+        [v, v, v, v]
     }))
 }
 

@@ -400,6 +400,7 @@ impl PlayState {
         };
         let live = LiveState {
             judged: self.session.judged(),
+            holding: &self.holding,
             effects: Some(&self.effects),
             judgement,
             combo: (self.session.combo(), (now - self.combo_at) as f32),
@@ -463,12 +464,16 @@ pub fn judge_sprite(j: Judgement) -> JudgeSprite {
     }
 }
 
-/// Arc where the hit effect for `e` shows: the note's arc. Holds have none: their head pops
-/// when it is pressed, and the E2 frames show nothing when a hold is judged at its end.
+/// Arc where the hit effect for `e` shows: the note's arc; for a hold (judged at its end, its
+/// head popped when pressed) the arc of its last node (E3 Fragile frames: a Marvelous hold
+/// end at 69.0 s and a Great one at 98.3 s pop over the end arc).
 pub fn hit_arc(chart: &Chart, e: &JudgeEvent) -> Option<LaneArc> {
-    match e.class {
-        JudgeClass::Hold | JudgeClass::HoldEnd => None,
-        _ => chart.notes.get(e.note).map(|n| n.arc),
+    let note = chart.notes.get(e.note)?;
+    match (&note.body, e.class) {
+        (NoteBody::Hold { nodes }, JudgeClass::Hold | JudgeClass::HoldEnd) => {
+            nodes.last().map(|n| n.arc)
+        }
+        _ => Some(note.arc),
     }
 }
 
@@ -515,9 +520,11 @@ mod tests {
             offset: None,
             time: 1.0,
         };
-        // Holds show nothing when judged (their head popped when pressed).
-        assert_eq!(hit_arc(&chart, &e(JudgeClass::Hold)), None);
-        assert_eq!(hit_arc(&chart, &e(JudgeClass::HoldEnd)), None);
+        // Holds pop over their end arc when judged (their head popped when pressed).
+        for class in [JudgeClass::Hold, JudgeClass::HoldEnd] {
+            let a = hit_arc(&chart, &e(class)).unwrap();
+            assert_eq!((a.lane, a.width), (20, 4));
+        }
         let a = hit_arc(&chart, &e(JudgeClass::Touch)).unwrap();
         assert_eq!((a.lane, a.width), (10, 4));
         // Unknown note index: no effect, not a panic.

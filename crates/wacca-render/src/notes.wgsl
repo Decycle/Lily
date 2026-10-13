@@ -187,6 +187,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_aura(in: VsOut) -> @location(0) vec4<f32> {
     let m = materials[in.material & 255u];
+    // vMX_2_NoteAura (KING frame 10405 eid 3835): colour × texture red, opacity sat(red),
+    // blended SrcAlpha / InvSrcAlpha.
     let t = textureSample(snote, wrap_samp, in.uv).r;
-    return vec4<f32>(output(m.color.rgb * t * clamp(t, 0.0, 1.0)), 0.0);
+    return vec4<f32>(output(m.color.rgb * t), clamp(t, 0.0, 1.0));
 }

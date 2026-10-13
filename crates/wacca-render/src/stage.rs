@@ -28,6 +28,18 @@ pub const HOLD_INSET_DEG: f32 = 4.0;
 /// UV0.u at the last column (the strip covers half the texture tile).
 pub const HOLD_U_SPAN: f32 = 0.5;
 
+/// Hold ribbon material, as [`MeshVertex::material`]. The game loads three body materials
+/// (`Mercury-Win64-Shipping.exe` strings, in this order): `vMX_2_Hold_001` (approaching),
+/// `vMX_2_Hold_004` (held: the tile colour screened with itself, brighter, cut off just
+/// before the line) and `vMX_2_Hold_002` (desaturated, dimmed; not used yet: taken as the
+/// dropped state, UNVERIFIED).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum HoldLook {
+    Normal,
+    Held,
+}
+
 /// Chevron material, as [`MeshVertex::material`] `kind | width << 8`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
@@ -72,6 +84,11 @@ pub struct Stage {
     /// Hit effects ([`crate::particles`]) and their runs of equal blend.
     pub effects: Vec<FxVertex>,
     pub effect_runs: Vec<(FxBlend, u32, u32)>,
+    /// Effect runs drawn before the guide lanes (the R-note hit).
+    pub behind_runs: Vec<(FxBlend, u32, u32)>,
+    /// Played fraction of the song for the HUD rim's time gauge (`None`: no HUD rim), drawn by
+    /// the composition (`style::GAUGE_RADIUS_PX`).
+    pub progress: Option<f32>,
 }
 
 impl Stage {
@@ -80,6 +97,7 @@ impl Stage {
             && self.holds.is_empty()
             && self.chevrons.is_empty()
             && self.effects.is_empty()
+            && self.progress.is_none()
     }
 
     /// Empties the stage, keeping the buffers.
@@ -89,9 +107,11 @@ impl Stage {
         self.chevrons.clear();
         self.effects.clear();
         self.effect_runs.clear();
+        self.behind_runs.clear();
         self.movie = false;
         self.time = 0.0;
         self.pulse = 0.0;
+        self.progress = None;
     }
 }
 
@@ -179,6 +199,7 @@ fn hold_row(s: f32, (lane, width): (f32, f32), v: f32) -> [([f32; 3], [f32; 2]);
 pub fn push_hold_ribbon(
     out: &mut Vec<MeshVertex>,
     nodes: &[HoldNode],
+    look: HoldLook,
     scale_at: impl Fn(f64) -> f64,
 ) {
     let (Some(first), Some(last)) = (nodes.first(), nodes.last()) else {
@@ -206,7 +227,7 @@ pub fn push_hold_ribbon(
             };
             let row = hold_row(s as f32, arc, ((t - first.time) / duration) as f32);
             if let Some(p) = &prev {
-                push_ribbon_quads(out, p, &row);
+                push_ribbon_quads(out, p, &row, look as u32);
             }
             prev = Some(row);
             done = s <= 0.0;
@@ -223,8 +244,9 @@ fn push_ribbon_quads(
     out: &mut Vec<MeshVertex>,
     a: &[([f32; 3], [f32; 2]); HOLD_COLUMNS],
     b: &[([f32; 3], [f32; 2]); HOLD_COLUMNS],
+    material: u32,
 ) {
-    let v = |(p, uv): ([f32; 3], [f32; 2])| vertex(p, uv, 0);
+    let v = |(p, uv): ([f32; 3], [f32; 2])| vertex(p, uv, material);
     for j in 0..HOLD_COLUMNS - 1 {
         out.extend([a[j + 1], b[j], a[j], b[j + 1], b[j], a[j + 1]].map(v));
     }
@@ -262,11 +284,16 @@ pub fn build_stage_into(
     stage.clear();
     stage.movie = opts.movie;
     stage.time = now as f32;
+    stage.progress = live.rim.map(|r| r.progress.clamp(0.0, 1.0));
     // UNVERIFIED: the MPC_BpmSignal pulse taken as the beat phase.
     stage.pulse = (chart.sec_to_tick(now) / BEAT_TICKS).rem_euclid(1.0) as f32;
 
     if let Some(fx) = live.effects {
-        fx.build(&mut stage.effects, &mut stage.effect_runs);
+        fx.build(
+            &mut stage.effects,
+            &mut stage.behind_runs,
+            &mut stage.effect_runs,
+        );
     }
 
     let mask = mask_state(&chart.masks, now);
@@ -284,7 +311,12 @@ pub fn build_stage_into(
         }
         match &note.body {
             NoteBody::Hold { nodes } => {
-                push_hold_ribbon(&mut stage.holds, nodes, |t| 1.0 - depth(t));
+                let look = if live.holding.contains(&i) {
+                    HoldLook::Held
+                } else {
+                    HoldLook::Normal
+                };
+                push_hold_ribbon(&mut stage.holds, nodes, look, |t| 1.0 - depth(t));
             }
             body => {
                 let (Some(meshes), Some((kind, chevron))) = (meshes, Chevron::of(body)) else {
@@ -394,7 +426,7 @@ mod tests {
         ];
         let mut out = Vec::new();
         let scale = |t: f64| s0 - t / HOLD_ROW_SECS * ds;
-        push_hold_ribbon(&mut out, &nodes, scale);
+        push_hold_ribbon(&mut out, &nodes, HoldLook::Normal, scale);
         let quads = out.len() / 6;
         assert_eq!(quads, 90 * (HOLD_COLUMNS - 1), "90 row pairs of 15 quads");
         // Row k column j is corner 2 of quad j of row pair k (and corner 1 of the last pair).
@@ -433,7 +465,7 @@ mod tests {
         let nodes = [node(0.0, 0.0, 4, true), node(1.0, 0.0, 4, true)];
         let mut out = Vec::new();
         // Head 0.2 s past the line, 1 s visible window.
-        push_hold_ribbon(&mut out, &nodes, |t| 1.2 - t);
+        push_hold_ribbon(&mut out, &nodes, HoldLook::Normal, |t| 1.2 - t);
         let max_w = out.iter().map(|v| v.pos[2]).fold(0.0, f32::max);
         let min_w = out.iter().map(|v| v.pos[2]).fold(f32::MAX, f32::min);
         assert!(
@@ -442,8 +474,54 @@ mod tests {
         );
         assert!(max_w < 790.0 - 100.0, "tail still visible");
         out.clear();
-        push_hold_ribbon(&mut out, &nodes, |t| 2.0 - t);
+        push_hold_ribbon(&mut out, &nodes, HoldLook::Normal, |t| 2.0 - t);
         assert!(out.is_empty(), "hold fully past");
+    }
+
+    #[test]
+    fn held_holds_use_the_held_material() {
+        let nodes = [node(0.0, 0.0, 4, true), node(1.0, 0.0, 4, true)];
+        let note = |body| wacca_chart::Note {
+            pos: BeatPos::default(),
+            time: 0.0,
+            arc: Arc { lane: 0, width: 4 },
+            bonus: wacca_chart::Bonus::None,
+            body,
+            file_index: 0,
+        };
+        let chart = Chart {
+            header: wacca_chart::ChartHeader::default(),
+            notes: vec![note(NoteBody::Hold {
+                nodes: nodes.to_vec(),
+            })],
+            masks: vec![],
+            tempo: vec![wacca_chart::TempoSegment {
+                start_tick: 0,
+                start_sec: 0.0,
+                bpm: 120.0,
+                num: 4,
+                den: 4,
+            }],
+            scroll: vec![],
+            reverses: vec![],
+            tutorial_tags: vec![],
+            end: BeatPos::default(),
+            end_time: 2.0,
+        };
+        let opts = SceneOptions {
+            note_speed: 1.5,
+            ..SceneOptions::default()
+        };
+        let mut stage = Stage::default();
+        for (holding, look) in [(&[][..], HoldLook::Normal), (&[0][..], HoldLook::Held)] {
+            let live = LiveState {
+                holding,
+                ..LiveState::default()
+            };
+            build_stage_into(&mut stage, &chart, 0.5, &opts, &live, None);
+            assert!(!stage.holds.is_empty());
+            assert!(stage.holds.iter().all(|v| v.material == look as u32));
+        }
     }
 
     #[test]

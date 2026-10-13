@@ -320,6 +320,7 @@ impl Renderer {
             self.notes.draw_opaque(&mut pass, notes);
             self.stage.draw_opaque(&mut pass);
             self.fx.draw_masked(&mut pass);
+            self.fx.draw_behind(&mut pass);
             self.stage.draw_translucent(&mut pass);
             self.notes.draw_aura(&mut pass, notes);
             self.fx.draw_translucent(&mut pass);
