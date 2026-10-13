@@ -8,8 +8,10 @@ mod atlas;
 mod fonts;
 mod gpu;
 pub mod layout;
+mod material;
 
 pub(crate) use atlas::Shelves;
 pub use fonts::{Face, Fonts, TextError};
 pub use gpu::TextRenderer;
 pub use layout::Align;
+pub use material::{Blend, PARAMS, TEXTURES, UiMaterial};

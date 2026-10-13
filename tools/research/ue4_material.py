@@ -167,8 +167,12 @@ def read_uexpr(p, r):
         r.u32()
         return "append(%s, %s)" % (a, b)
     if t == "TrigMath":
+        # 4.19 serializes X, Y (atan2's second operand; a copy of X otherwise), Op.
         x = read_uexpr(p, r)
+        y = read_uexpr(p, r)
         op = r.u8()
+        if op == 6:
+            return "atan2(%s, %s)" % (x, y)
         return "%s(%s)" % ({0: "sin", 1: "cos", 2: "tan", 3: "asin", 4: "acos", 5: "atan"}.get(op, "trig%d" % op), x)
     if t in ("Time", "RealTime"):
         return t

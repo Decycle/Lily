@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use super::atlas::Shelves;
 use super::fonts::{Face, Fonts};
 use super::layout::{Align, align_x, corners, fit, measure};
+use super::material::{self, PARAMS, TEXTURES, UiMaterial};
 use crate::layout::Rect;
 use crate::style::Rgba;
 
@@ -33,12 +34,44 @@ struct Placed {
 /// `(face, glyph id, pixel size)`.
 type GlyphKey = (usize, u16, u32);
 
-/// Consecutive vertices drawn with one texture (`None` = the glyph atlas).
+/// Consecutive vertices drawn with one texture (`None` = the glyph atlas), or one material quad.
 #[derive(Debug)]
 struct Batch {
     image: Option<String>,
+    material: Option<MaterialBatch>,
     start: u32,
     end: u32,
+}
+
+/// A material quad: its textures (bind group cache key) and uniform slot.
+#[derive(Debug)]
+struct MaterialBatch {
+    material: UiMaterial,
+    textures: Vec<String>,
+    slot: u32,
+}
+
+/// An uploaded image: the overlay's bind group and the view for material bind groups.
+#[derive(Debug)]
+struct Image {
+    group: wgpu::BindGroup,
+    view: wgpu::TextureView,
+}
+
+/// Pipelines and per-frame state of the [`UiMaterial`] ports.
+#[derive(Debug)]
+struct Materials {
+    pipelines: HashMap<UiMaterial, wgpu::RenderPipeline>,
+    uniform_layout: wgpu::BindGroupLayout,
+    texture_layout: wgpu::BindGroupLayout,
+    wrap: wgpu::Sampler,
+    clamp: wgpu::Sampler,
+    /// Bytes between uniform slots (>= the device's dynamic offset alignment).
+    stride: u64,
+    blocks: Vec<[[f32; 4]; PARAMS + 1]>,
+    buffer: wgpu::Buffer,
+    uniforms: wgpu::BindGroup,
+    textures: HashMap<Vec<String>, wgpu::BindGroup>,
 }
 
 /// Pixel `p` of a `size` target to clip space (y up).
@@ -63,7 +96,8 @@ pub struct TextRenderer {
     fonts: Fonts,
     /// `None`: glyph without pixels (space).
     glyphs: HashMap<GlyphKey, Option<Placed>>,
-    images: HashMap<String, wgpu::BindGroup>,
+    images: HashMap<String, Image>,
+    materials: Materials,
     vertices: Vec<OverlayVertex>,
     batches: Vec<Batch>,
     buffer: wgpu::Buffer,
@@ -160,6 +194,7 @@ impl TextRenderer {
             fonts,
             glyphs: HashMap::new(),
             images: HashMap::new(),
+            materials: Materials::new(device, format),
             vertices: Vec::new(),
             batches: Vec::new(),
             buffer: vertex_buffer(device, MIN_BUFFER_BYTES),
@@ -267,6 +302,7 @@ impl TextRenderer {
         self.size = [size[0].max(1) as f32, size[1].max(1) as f32];
         self.vertices.clear();
         self.batches.clear();
+        self.materials.blocks.clear();
     }
 
     fn quad(&mut self, image: Option<&str>, r: Rect, uv: [f32; 4], color: Rgba) {
@@ -274,6 +310,12 @@ impl TextRenderer {
     }
 
     fn quad_turned(&mut self, image: Option<&str>, r: Rect, angle: f32, uv: [f32; 4], color: Rgba) {
+        let start = self.vertices.len() as u32;
+        self.push_quad(r, angle, uv, color);
+        self.batch(image, start);
+    }
+
+    fn push_quad(&mut self, r: Rect, angle: f32, uv: [f32; 4], color: Rgba) {
         let [a, b, c, d] = corners([r.x, r.y, r.w, r.h], angle);
         let corners = [
             (a, [uv[0], uv[1]]),
@@ -281,7 +323,6 @@ impl TextRenderer {
             (c, [uv[2], uv[3]]),
             (d, [uv[0], uv[3]]),
         ];
-        let start = self.vertices.len() as u32;
         for i in [0, 1, 2, 0, 2, 3] {
             let (p, uv) = corners[i];
             self.vertices.push(OverlayVertex {
@@ -290,7 +331,6 @@ impl TextRenderer {
                 color,
             });
         }
-        self.batch(image, start);
     }
 
     /// Fill the convex polygon `points` (window pixels, either winding). `colors` holds one
@@ -319,9 +359,10 @@ impl TextRenderer {
             return;
         }
         match self.batches.last_mut() {
-            Some(b) if b.image.as_deref() == image => b.end = end,
+            Some(b) if b.material.is_none() && b.image.as_deref() == image => b.end = end,
             _ => self.batches.push(Batch {
                 image: image.map(str::to_string),
+                material: None,
                 start,
                 end,
             }),
@@ -438,7 +479,12 @@ impl TextRenderer {
             tex.size(),
         );
         let group = bind_group(&self.device, &self.bind_layout, &self.sampler, &tex);
-        self.images.insert(key.to_string(), group);
+        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        self.images.insert(key.to_string(), Image { group, view });
+        // Material bind groups holding a replaced texture are stale.
+        self.materials
+            .textures
+            .retain(|keys, _| !keys.iter().any(|k| k == key));
     }
 
     pub fn has_image(&self, key: &str) -> bool {
@@ -479,6 +525,54 @@ impl TextRenderer {
         self.batch(Some(key), start);
     }
 
+    /// Draw `material` over `rect` (region `uv` of its textures, turned by `angle` radians about
+    /// the rect's centre) with up to [`TEXTURES`] image `textures` (keys as for
+    /// [`TextRenderer::image`]), [`PARAMS`] float4 `params` and a linear `tint`. Nothing is drawn
+    /// until every texture is loaded.
+    #[allow(clippy::too_many_arguments)]
+    pub fn material(
+        &mut self,
+        material: UiMaterial,
+        rect: Rect,
+        angle: f32,
+        uv: [f32; 4],
+        textures: &[&str],
+        params: &[[f32; 4]],
+        tint: Rgba,
+    ) {
+        let Some(first) = textures.first() else {
+            return;
+        };
+        if textures.len() > TEXTURES || !textures.iter().all(|k| self.has_image(k)) {
+            return;
+        }
+        let keys: Vec<String> = (0..TEXTURES)
+            .map(|i| textures.get(i).unwrap_or(first).to_string())
+            .collect();
+        if !self.materials.textures.contains_key(&keys) {
+            let views: Vec<&wgpu::TextureView> =
+                keys.iter().map(|k| &self.images[k].view).collect();
+            let group = self.materials.texture_group(&self.device, &views);
+            self.materials.textures.insert(keys.clone(), group);
+        }
+        let slot = self.materials.blocks.len() as u32;
+        self.materials
+            .blocks
+            .push(material::uniform_block(tint, params));
+        let start = self.vertices.len() as u32;
+        self.push_quad(rect, angle, uv, tint);
+        self.batches.push(Batch {
+            image: None,
+            material: Some(MaterialBatch {
+                material,
+                textures: keys,
+                slot,
+            }),
+            start,
+            end: self.vertices.len() as u32,
+        });
+    }
+
     /// Draw everything queued since [`TextRenderer::begin`] onto `target` (kept, not cleared).
     pub fn render(&mut self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
         if self.vertices.is_empty() {
@@ -489,6 +583,7 @@ impl TextRenderer {
             self.buffer = vertex_buffer(&self.device, (bytes.len() as u64).next_power_of_two());
         }
         self.queue.write_buffer(&self.buffer, 0, bytes);
+        self.materials.upload(&self.device, &self.queue);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("overlay"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -502,20 +597,238 @@ impl TextRenderer {
             })],
             ..Default::default()
         });
-        pass.set_pipeline(&self.pipeline);
         pass.set_vertex_buffer(0, self.buffer.slice(..bytes.len() as u64));
+        // The pipeline bound last: `None` = the overlay's.
+        let mut bound: Option<Option<UiMaterial>> = None;
         for b in &self.batches {
+            if let Some(m) = &b.material {
+                let (Some(pipeline), Some(textures)) = (
+                    self.materials.pipelines.get(&m.material),
+                    self.materials.textures.get(&m.textures),
+                ) else {
+                    continue;
+                };
+                if bound != Some(Some(m.material)) {
+                    pass.set_pipeline(pipeline);
+                    bound = Some(Some(m.material));
+                }
+                let offset = (u64::from(m.slot) * self.materials.stride) as u32;
+                pass.set_bind_group(0, &self.materials.uniforms, &[offset]);
+                pass.set_bind_group(1, textures, &[]);
+                pass.draw(b.start..b.end, 0..1);
+                continue;
+            }
             let group = match &b.image {
                 None => &self.atlas_group,
                 Some(k) => match self.images.get(k) {
-                    Some(g) => g,
+                    Some(i) => &i.group,
                     None => continue,
                 },
             };
+            if bound != Some(None) {
+                pass.set_pipeline(&self.pipeline);
+                bound = Some(None);
+            }
             pass.set_bind_group(0, group, &[]);
             pass.draw(b.start..b.end, 0..1);
         }
     }
+}
+
+impl Materials {
+    fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+        let block = size_of::<[[f32; 4]; PARAMS + 1]>() as u64;
+        let align = u64::from(device.limits().min_uniform_buffer_offset_alignment);
+        let stride = block.div_ceil(align) * align;
+        let uniform_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ui material uniforms"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: wgpu::BufferSize::new(block),
+                },
+                count: None,
+            }],
+        });
+        let mut entries: Vec<wgpu::BindGroupLayoutEntry> = (0..TEXTURES as u32)
+            .map(|binding| wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            })
+            .collect();
+        for binding in [TEXTURES as u32, TEXTURES as u32 + 1] {
+            entries.push(wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            });
+        }
+        let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ui material textures"),
+            entries: &entries,
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("ui material"),
+            bind_group_layouts: &[&uniform_layout, &texture_layout],
+            push_constant_ranges: &[],
+        });
+        let constants = [("LINEARIZE", if format.is_srgb() { 1.0 } else { 0.0 })];
+        let attributes = wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4];
+        let pipelines = UiMaterial::ALL
+            .into_iter()
+            .map(|m| {
+                let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("ui material"),
+                    source: wgpu::ShaderSource::Wgsl(m.source().into()),
+                });
+                let options = wgpu::PipelineCompilationOptions {
+                    constants: &constants,
+                    ..Default::default()
+                };
+                let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("ui material"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &module,
+                        entry_point: Some("vs_main"),
+                        compilation_options: options.clone(),
+                        buffers: &[wgpu::VertexBufferLayout {
+                            array_stride: size_of::<OverlayVertex>() as u64,
+                            step_mode: wgpu::VertexStepMode::Vertex,
+                            attributes: &attributes,
+                        }],
+                    },
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: &module,
+                        entry_point: Some("fs_main"),
+                        compilation_options: options,
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format,
+                            blend: Some(m.blend_state()),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    multiview: None,
+                    cache: None,
+                });
+                (m, pipeline)
+            })
+            .collect();
+        let sampler = |label, mode| {
+            device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some(label),
+                address_mode_u: mode,
+                address_mode_v: mode,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            })
+        };
+        let buffer = uniform_buffer(device, stride * 16);
+        let uniforms = uniform_group(device, &uniform_layout, &buffer, block);
+        Self {
+            pipelines,
+            uniform_layout,
+            texture_layout,
+            wrap: sampler("ui material wrap", wgpu::AddressMode::Repeat),
+            clamp: sampler("ui material clamp", wgpu::AddressMode::ClampToEdge),
+            stride,
+            blocks: Vec::new(),
+            buffer,
+            uniforms,
+            textures: HashMap::new(),
+        }
+    }
+
+    fn texture_group(
+        &self,
+        device: &wgpu::Device,
+        views: &[&wgpu::TextureView],
+    ) -> wgpu::BindGroup {
+        let mut entries: Vec<wgpu::BindGroupEntry> = views
+            .iter()
+            .enumerate()
+            .map(|(i, v)| wgpu::BindGroupEntry {
+                binding: i as u32,
+                resource: wgpu::BindingResource::TextureView(v),
+            })
+            .collect();
+        entries.push(wgpu::BindGroupEntry {
+            binding: TEXTURES as u32,
+            resource: wgpu::BindingResource::Sampler(&self.wrap),
+        });
+        entries.push(wgpu::BindGroupEntry {
+            binding: TEXTURES as u32 + 1,
+            resource: wgpu::BindingResource::Sampler(&self.clamp),
+        });
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ui material textures"),
+            layout: &self.texture_layout,
+            entries: &entries,
+        })
+    }
+
+    /// Write this frame's uniform blocks, one per stride.
+    fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if self.blocks.is_empty() {
+            return;
+        }
+        let need = self.stride * self.blocks.len() as u64;
+        if need > self.buffer.size() {
+            self.buffer = uniform_buffer(device, need.next_power_of_two());
+            let block = size_of::<[[f32; 4]; PARAMS + 1]>() as u64;
+            self.uniforms = uniform_group(device, &self.uniform_layout, &self.buffer, block);
+        }
+        let mut bytes = vec![0u8; need as usize];
+        for (i, b) in self.blocks.iter().enumerate() {
+            let at = i * self.stride as usize;
+            let src: &[u8] = bytemuck::cast_slice(b);
+            bytes[at..at + src.len()].copy_from_slice(src);
+        }
+        queue.write_buffer(&self.buffer, 0, &bytes);
+    }
+}
+
+fn uniform_buffer(device: &wgpu::Device, size: u64) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("ui material uniforms"),
+        size,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+fn uniform_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    buffer: &wgpu::Buffer,
+    block: u64,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("ui material uniforms"),
+        layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer,
+                offset: 0,
+                size: wgpu::BufferSize::new(block),
+            }),
+        }],
+    })
 }
 
 fn texture(device: &wgpu::Device, label: &str, [width, height]: [u32; 2]) -> wgpu::Texture {

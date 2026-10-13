@@ -280,7 +280,7 @@ pub fn info_plate(p: &mut Painter, list: &SongList, save: &SaveData) {
 /// The song select screen. `shift` is the wheel's visual offset in songs (eases to 0).
 pub fn view(c: Canvas, list: &SongList, shift: f32, save: &SaveData, who: &chrome::Player) -> View {
     let mut p = Painter::new(c);
-    chrome::background(&mut p);
+    chrome::background(&mut p, chrome::SELECT_BACKDROP);
     // `plate01` (dark) and `plate00` (grey zigzag behind the jacket strip), the selected song's
     // frame, then the purple band and the dark strip holding the genre tabs over the frame's
     // top (E3 frames: purple -305..-269, dark -268..-213).

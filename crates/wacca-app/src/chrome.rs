@@ -61,9 +61,15 @@ pub fn icon(p: &mut Painter, icon: Icon, at: [f32; 2], side: f32, degrees: f32) 
     );
 }
 
-/// Backdrop of the select menus: the animated `uM_WCbg000` material (BP_Select01).
-pub fn background(p: &mut Painter) {
-    p.backdrop();
+/// Side of the `uM_WCbg000` backdrop in BP_Select01 (genre / song select, final check): its
+/// image is 1404 units (`umg_layout.py`), so the dot tiles are 1.3 x the mode screen's.
+pub const SELECT_BACKDROP: f32 = 1404.0;
+/// Side of the backdrop in BP_Select_level (mode select) and BP_Welcome.
+pub const MODE_BACKDROP: f32 = 1080.0;
+
+/// Backdrop of the select menus: the animated `uM_WCbg000` material on a `side` square.
+pub fn background(p: &mut Painter, side: f32) {
+    p.backdrop(side);
 }
 
 /// What the user plate shows (from the save: settings, play count, RP and rating).

@@ -102,14 +102,22 @@ pub fn demo(title: &str, artist: &str, jacket: &str, player: Player) -> Summary 
     }
 }
 
-// Entry animation, seconds after the screen appears (E2 recording).
-const INFO_AT: f32 = 0.4;
-const LIST_AT: f32 = 0.9;
-const SLIDE: f32 = 0.35;
-const COUNT_AT: f32 = 1.25;
-const COUNT_LEN: f32 = 1.35;
-const RANK_AT: f32 = 4.6;
-const FOOTER_AT: f32 = 5.0;
+// Entry animation, seconds after the screen appears (the user plate drops in), measured on
+// the 120 fps E3 recording (runs/e3/20261013-023731/video.mkv, plate at 161.8 s): song info
+// slides in at 0.9 s (~0.1 s), the judgement list at 1.37 s (~0.2 s), the score counts up
+// 1.83-2.83 s, the rank band shows at 4.8 s and its letters stamp 5.1-5.4 s, the rate / RP
+// footer slides up at 8.4 s and GO (with RETRY) appears at 11.0 s.
+const INFO_AT: f32 = 0.9;
+const INFO_SLIDE: f32 = 0.1;
+const LIST_AT: f32 = 1.37;
+const LIST_SLIDE: f32 = 0.2;
+const COUNT_AT: f32 = 1.83;
+const COUNT_LEN: f32 = 1.0;
+const RANK_AT: f32 = 4.8;
+const STAMP_AT: f32 = 5.1;
+const STAMP_LEN: f32 = 0.3;
+const FOOTER_AT: f32 = 8.4;
+pub const GO_AT: f32 = 11.0;
 
 const PANEL: Rgba = [0.95, 0.95, 0.94, 1.0];
 const PANEL_LOW: Rgba = [0.86, 0.86, 0.87, 1.0];
@@ -252,16 +260,19 @@ pub fn view(s: &Summary, menu: crate::canvas::Canvas, t: f32) -> View {
     let c = Canvas::new(menu);
     circle::background(&mut v, &c);
     ring(&mut v, &c);
-    let e = ease(t, INFO_AT, SLIDE);
+    if s.result.lamp == Lamp::Clear {
+        clear_stamp(&mut v, &c);
+    }
+    let e = ease(t, INFO_AT, INFO_SLIDE);
     info(&mut v, &c.moved([700.0 * (1.0 - e), 0.0], e), s);
-    let e = ease(t, LIST_AT, SLIDE);
+    let e = ease(t, LIST_AT, LIST_SLIDE);
     let d = 420.0 * (1.0 - e);
     list(&mut v, &c.moved([0.6 * d, 0.8 * d], e), s, t);
     rank(&mut v, &c, s.result.grade, t);
     footer(&mut v, &c.moved([0.0, 0.0], ease(t, FOOTER_AT, 0.3)), s);
     // The user plate stays on top, as on every menu.
     let mut p = Painter::new(menu);
-    if t >= FOOTER_AT {
+    if t >= GO_AT {
         chrome::retry_tab(&mut p);
         chrome::go(&mut p);
     }
@@ -272,16 +283,58 @@ pub fn view(s: &Summary, menu: crate::canvas::Canvas, t: f32) -> View {
     v
 }
 
-/// Bands of the ring art behind the panels (`uM_Ring01` / `BP_Circle_Text` in `BP_Result`):
+/// Bands of the ring art behind the panels (the rings of the play's end stamp, `Clear02/ring`):
 /// (inner, outer radius in canvas units, colour), measured on the E3 result frames along the
 /// rim left of GO: a dark band (behind the ring letters), the teal ring, a dark purple rim.
-// UNVERIFIED: the ring's letters (grey with a pink outline, mostly hidden by the panels) are
-// left out, and the colours are the B-grade frame's (the ring may follow the grade).
+// UNVERIFIED: the colours are the B-grade frame's (the ring may follow the grade); the letters
+// on it are the play's end stamp ([`clear_stamp`]).
 const RING: [(f32, f32, Rgba); 3] = [
     (260.0, 442.0, [0.086, 0.090, 0.133, 1.0]),
     (442.0, 502.0, [0.055, 0.608, 0.525, 1.0]),
     (502.0, 540.0, [0.239, 0.184, 0.282, 1.0]),
 ];
+
+/// The play's end stamp stays behind the results (BP_RhythmGame `BP_Result_clear02`,
+/// `Clear02/ROT00`): the gradient rim `uT_FTclear_906` (-475..505 x -245..245 design units)
+/// under the white letters `uT_FTclear_900..904` (280 units each, -130..150). The settled
+/// results keep it scaled and turned about the centre: the R's glyph (at 0.7 of its texture)
+/// lands at (370, -65) on the E3 result frames (overlay with our capture), i.e. x0.88, -11.3°.
+// UNVERIFIED: scale / turn from that one letter; the rim's and the letters' strength (rim ~0.6
+// on the R's outline, letters light grey); only the CLEAR stamp is drawn (Missless / Full
+// Combo / All Marvelous / Failed have their own).
+const STAMP_TURN: f32 = -11.3;
+const STAMP_SCALE: f32 = 0.88;
+const STAMP_LETTERS: [(&str, f32); 5] = [
+    ("uT_FTclear_900", -510.0),
+    ("uT_FTclear_901", -330.0),
+    ("uT_FTclear_902", -164.0),
+    ("uT_FTclear_903", 28.0),
+    ("uT_FTclear_904", 230.0),
+];
+
+fn clear_stamp(v: &mut View, c: &Canvas) {
+    let between = slab(607.0, 380.0, 738.0, 1100.0);
+    let (s, k) = STAMP_TURN.to_radians().sin_cos();
+    let (s, k) = (s * STAMP_SCALE, k * STAMP_SCALE);
+    let [cx, cy] = circle::CENTER;
+    let quad = |x0: f32, y0: f32, x1: f32, y1: f32| {
+        [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+            .map(|[x, y]| [cx + k * x - s * y, cy + s * x + k * y])
+    };
+    let font = |name: &str| format!("UI/Textures/FONT/{name}");
+    let rim = quad(-475.0, -245.0, 505.0, 245.0);
+    c.image_quad(
+        v,
+        font("uT_FTclear_906"),
+        rim,
+        &between,
+        [1.0, 1.0, 1.0, 0.6],
+    );
+    for (name, x) in STAMP_LETTERS {
+        let q = quad(x, -130.0, x + 280.0, 150.0);
+        c.image_quad(v, font(name), q, &between, [0.8, 0.8, 0.84, 1.0]);
+    }
+}
 
 /// The ring art, only between the two pink stripes of [`circle::background`].
 fn ring(v: &mut View, c: &Canvas) {
@@ -546,7 +599,7 @@ fn rank(v: &mut View, c: &Canvas, g: Grade, t: f32) {
             }
         }
     }
-    let stamp = ease(t, RANK_AT + 0.1, 0.4);
+    let stamp = ease(t, STAMP_AT, STAMP_LEN);
     let letters = rank_art(g);
     let (size, pitch) = if g == Grade::Master {
         (82.0, 72.0)
@@ -724,7 +777,7 @@ mod tests {
 
     #[test]
     fn settled_screen_shows_counts_score_rank_and_record() {
-        let v = view(&summary(true), area(), 10.0);
+        let v = view(&summary(true), area(), 12.0);
         let text = joined(&v);
         for want in [
             "Song", "Artist", "PLAYER", "EXPERT", "12+", "0090", "0005", "0002", "0003", "090.0%",
@@ -760,7 +813,7 @@ mod tests {
     #[test]
     fn counters_use_the_numeral_face() {
         use wacca_render::text::Face;
-        let v = view(&summary(false), area(), 10.0);
+        let v = view(&summary(false), area(), 12.0);
         let face = |want: &str| {
             v.items.iter().find_map(|i| match i {
                 Item::Text { text, face, .. } if text == want => Some(*face),
@@ -772,11 +825,24 @@ mod tests {
     }
 
     #[test]
+    fn clear_stamp_stays_behind_a_cleared_result_only() {
+        let stamp = |lamp: Lamp| {
+            let mut s = summary(false);
+            s.result.lamp = lamp;
+            images(&view(&s, area(), 12.0))
+                .iter()
+                .any(|k| k.ends_with("uT_FTclear_904"))
+        };
+        assert!(stamp(Lamp::Clear));
+        assert!(!stamp(Lamp::Failed));
+    }
+
+    #[test]
     fn bands_follow_the_grade_family() {
         let keys = |g: Grade| {
             let mut s = summary(false);
             s.result.grade = g;
-            images(&view(&s, area(), 10.0))
+            images(&view(&s, area(), 12.0))
                 .into_iter()
                 .filter(|k| k.contains("RTrate") && k.contains("BG"))
                 .map(str::to_string)
@@ -796,7 +862,7 @@ mod tests {
         assert!(!images(&early).iter().any(|k| k.contains("BG00")));
         assert!(joined(&early).contains("0000000"));
         assert!(!images(&early).iter().any(|k| k.contains("newrecord")));
-        let late = view(&s, area(), 10.0);
+        let late = view(&s, area(), 12.0);
         assert!(images(&late).iter().any(|k| k.contains("uT_FTrateST00")));
     }
 
@@ -810,7 +876,7 @@ mod tests {
             before: 3.0,
             after: 3.0,
         };
-        let v = view(&s, area(), 10.0);
+        let v = view(&s, area(), 12.0);
         let t = v.texts();
         assert!(t.contains(&"GIVEN UP") && t.contains(&"AUTOPLAY: NOT SAVED"));
         assert!(images(&v).contains(&"UI/Textures/FONT/uT_FTclear_095"));

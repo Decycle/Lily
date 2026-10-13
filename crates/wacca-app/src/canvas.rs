@@ -13,7 +13,7 @@ use std::f32::consts::PI;
 
 use wacca_render::layout::{PORTRAIT_FRAME, PORTRAIT_RING_CENTER, Rect, ring};
 use wacca_render::style::Rgba;
-use wacca_render::text::{Align, Face};
+use wacca_render::text::{Align, Face, UiMaterial};
 
 use crate::circle;
 use crate::ui::{Action, Item, View};
@@ -205,9 +205,9 @@ impl Painter {
         }
     }
 
-    /// The select menus' animated backdrop (`uM_WCbg000`) on the 1080 square around the circle.
-    pub fn backdrop(&mut self) {
-        self.v.backdrop = Some(self.c.rect([0.0, 0.0], [DESIGN, DESIGN], MID));
+    /// The select menus' animated backdrop (`uM_WCbg000`) on a `side` square around the circle.
+    pub fn backdrop(&mut self, side: f32) {
+        self.v.backdrop = Some(self.c.rect([0.0, 0.0], [side, side], MID));
     }
 
     /// Texture `name` (under [`TEX`]) centred at `at`.
@@ -248,6 +248,37 @@ impl Painter {
             rect,
             uv,
             angle: degrees * PI / 180.0,
+            tint,
+        });
+    }
+
+    /// A ported UI material centred at `at` (see [`Item::Material`]); `textures` are names
+    /// under [`TEX`], or `Vfx/Textures/...` keys.
+    pub fn material(
+        &mut self,
+        material: UiMaterial,
+        (at, size): ([f32; 2], [f32; 2]),
+        textures: &[&str],
+        params: &[[f32; 4]],
+        tint: Rgba,
+    ) {
+        let rect = self.c.rect(at, size, MID);
+        self.layer(at).items.push(Item::Material {
+            material,
+            rect,
+            uv: FULL,
+            angle: 0.0,
+            textures: textures
+                .iter()
+                .map(|t| {
+                    if t.starts_with("Vfx/") {
+                        t.to_string()
+                    } else {
+                        format!("{TEX}{t}")
+                    }
+                })
+                .collect(),
+            params: params.to_vec(),
             tint,
         });
     }

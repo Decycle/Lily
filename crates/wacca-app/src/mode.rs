@@ -4,11 +4,11 @@
 //! locked and greyed as the original shows them for a guest, and cannot be selected (the arrows do
 //! nothing). Positions are measured on the real frame
 //! (`runs/e2/20261012-233738/nav-08-mode-select.png`, 0.625 px per unit, centre (337.5, 563)).
-// UNVERIFIED: "USE ITEM" and the mode-art material (`uM_AD_6`) are left out (the countdown is
+// UNVERIFIED: "USE ITEM" is left out (the countdown is
 // drawn by the shell with the `menu_timers` setting);
-// the art ring uses `uT_RGclear03`, which matches its look.
+// the art ring is the ported `uM_CMcircle001` (`uM_AD_6` belongs to the collapsed BP_Popup00).
 
-use wacca_render::text::Align;
+use wacca_render::text::{Align, UiMaterial};
 
 use crate::canvas::{Canvas, FULL, MID, Painter, hex};
 use crate::chrome::{self, Icon, PINK, WHITE};
@@ -30,9 +30,9 @@ const DECIDE_BTN: u32 = 0xe50485;
 /// The mode select screen `t` seconds after it appeared.
 pub fn view(c: Canvas, t: f32, who: &chrome::Player) -> View {
     let mut p = Painter::new(c);
-    chrome::background(&mut p);
+    chrome::background(&mut p, chrome::MODE_BACKDROP);
     // The mode art in a ring around the dial.
-    disc_image(&mut p, "uT_RGclear03", DIAL, 620.0);
+    art_ring(&mut p, t);
     discs(&mut p);
     dial(&mut p, t);
     pills(&mut p, t);
@@ -45,28 +45,19 @@ pub fn view(c: Canvas, t: f32, who: &chrome::Player) -> View {
     p.finish()
 }
 
-/// Rows a round image is cut into.
-const DISC_ROWS: usize = 48;
-
-/// Texture `name` cut to a disc of `diameter` at `at`, as horizontal strips (the overlay
-/// renderer has no masks).
-fn disc_image(p: &mut Painter, name: &str, at: [f32; 2], diameter: f32) {
-    let r = diameter / 2.0;
-    for (y0, y1, half) in disc_rows(DISC_ROWS) {
-        let [u0, u1] = [0.5 - half / 2.0, 0.5 + half / 2.0];
-        let size = [diameter * half, diameter * (y1 - y0)];
-        let centre = [at[0], at[1] - r + diameter * (y0 + y1) / 2.0];
-        p.tex_ex(name, centre, size, MID, [u0, y0, u1, y1], 0.0, WHITE);
-    }
-}
-
-/// `n` rows of a unit disc: (top, bottom, width), all as fractions of the diameter.
-fn disc_rows(n: usize) -> impl Iterator<Item = (f32, f32, f32)> {
-    (0..n).map(move |i| {
-        let (y0, y1) = (i as f32 / n as f32, (i + 1) as f32 / n as f32);
-        let y = (y0 + y1) / 2.0 - 0.5;
-        (y0, y1, 2.0 * (0.25 - y * y).sqrt())
-    })
+/// The art ring around the dial, `uM_CMcircle001` (`ring10` of `BP_Select_level`): uT_RGclear03
+/// turning at 0.05 turns/s and swirled (Radius_1 0.5, Hardness 0), material time `t`.
+// UNVERIFIED: the widget's slot is 496 units with the material's ring mask (uT_TTIogo04,
+// radii 0.4-0.5); the E3 frame shows the swirled art from the dial out to r ~310, so it is
+// drawn as a 620-unit disc (the "in" animation's scale was not evaluated).
+fn art_ring(p: &mut Painter, t: f32) {
+    p.material(
+        UiMaterial::CircleSwirl,
+        (DIAL, [620.0, 620.0]),
+        &["uT_RGclear03", "uT_TTIogo04"],
+        &[[t, 0.05, 1.0 / 0.5, 1.0], [1.0, 0.0, 0.0, 0.0]],
+        [1.0; 4],
+    );
 }
 
 fn discs(p: &mut Painter) {
@@ -176,13 +167,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn disc_rows_follow_the_circle() {
-        let rows: Vec<_> = disc_rows(4).collect();
-        assert_eq!(rows.len(), 4);
-        assert_eq!((rows[0].0, rows[3].1), (0.0, 1.0));
-        // Symmetric, widest in the middle.
-        assert!((rows[0].2 - rows[3].2).abs() < 1e-6);
-        assert!(rows[1].2 > rows[0].2 && rows[1].2 < 1.0);
+    fn art_ring_is_the_swirl_material_on_the_dial() {
+        let v = view(Canvas::fit(1080.0, 1920.0), 3.0, &chrome::Player::default());
+        let ring = v.items.iter().find_map(|i| match i {
+            crate::ui::Item::Material {
+                material: UiMaterial::CircleSwirl,
+                textures,
+                params,
+                ..
+            } => Some((textures.clone(), params[0][0])),
+            _ => None,
+        });
+        let (textures, time) = ring.expect("uM_CMcircle001");
+        assert!(textures[0].ends_with("uT_RGclear03"));
+        assert_eq!(time, 3.0);
     }
 
     #[test]
