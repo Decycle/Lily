@@ -127,13 +127,7 @@ impl Player {
         log::info!("audio output: {config:?}");
 
         let (mut player, ends) = Player::detached(OUTPUT_RATE, config.channels());
-        let mut stream_config = config.config();
-        if let Some(n) = std::env::var("WACCA_AUDIO_FRAMES")
-            .ok()
-            .and_then(|v| v.parse().ok())
-        {
-            stream_config.buffer_size = cpal::BufferSize::Fixed(n);
-        }
+        let stream_config = config.config();
         let (output, shared) = (ends.output, &player.shared);
         let stream = match config.sample_format() {
             SampleFormat::F32 => build::<f32>(&device, stream_config, output, shared),

@@ -5,6 +5,11 @@
 //! or mouse wheel to scroll, S sort, F filter.
 //! Play: Esc give up, Space pause, Up/Down note speed. F11 / Alt+Enter toggles fullscreen.
 //! `RUST_LOG=wacca_app=debug` logs every judgement.
+//!
+//! Performance: F3 shows frame/latency stats (`perf`), also logged every 2 s with
+//! `RUST_LOG=wacca_app::perf=debug`. wgpu's `WGPU_BACKEND` / `WGPU_POWER_PREF` choose the GPU;
+//! `WACCA_PRESENT=immediate` presents without vsync (tearing, uncapped frame rate);
+//! `WACCA_PACE=0` turns off vsync frame pacing (`pacer`).
 #![cfg_attr(test, allow(clippy::unwrap_used))] // tests may unwrap (CONTRIBUTING)
 
 mod args;

@@ -80,6 +80,7 @@ pub struct Setup {
 }
 
 pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
+    let data = setup.data.clone();
     let mut app = App {
         s: setup,
         fonts: Some(fonts),
@@ -98,8 +99,7 @@ pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
         cursor: None,
         mouse_down: false,
         alt: false,
-        jackets_tried: HashSet::new(),
-        ui_tried: HashSet::new(),
+        images: Images::new(data),
         wheel: 0.0,
         last_frame: None,
         error: None,
@@ -109,6 +109,7 @@ pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
         input_at: None,
         first_frame: false,
         pacer: Pacer::new(std::time::Duration::ZERO),
+        scene: Vec::new(),
     };
     EventLoop::new()?.run_app(&mut app)?;
     app.error.map_or(Ok(()), Err)
@@ -157,17 +158,15 @@ impl Gfx {
             .ok_or_else(|| gfx_err("surface not supported by adapter"))?;
         let caps = surface.get_capabilities(&adapter);
         log::info!("present modes: {:?}", caps.present_modes);
-        config.present_mode = match std::env::var("WACCA_PRESENT").as_deref() {
-            Ok("mailbox") => wgpu::PresentMode::Mailbox,
-            Ok("immediate") => wgpu::PresentMode::Immediate,
-            _ => wgpu::PresentMode::AutoVsync,
-        };
-        if let Some(n) = std::env::var("WACCA_FRAME_LATENCY")
-            .ok()
-            .and_then(|v| v.parse().ok())
+        // Vsync by default (paced, see `pacer`). Immediate trades tearing and an uncapped GPU
+        // (~400 fps measured) for frames that never wait for the display.
+        config.present_mode = if std::env::var("WACCA_PRESENT").as_deref() == Ok("immediate")
+            && caps.present_modes.contains(&wgpu::PresentMode::Immediate)
         {
-            config.desired_maximum_frame_latency = n;
-        }
+            wgpu::PresentMode::Immediate
+        } else {
+            wgpu::PresentMode::AutoVsync
+        };
         surface.configure(&device, &config);
         let mode = format!(
             "{:?}, latency {}",
@@ -228,10 +227,10 @@ impl Gfx {
         frame: wgpu::SurfaceTexture,
         scene: &[Vertex],
         view: &View,
-        jackets: &mut Images,
-        ui: &mut Images,
+        images: &mut Images,
     ) -> DrawTimes {
         let t1 = Instant::now();
+        images.receive(&mut self.text);
         let target = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -272,11 +271,11 @@ impl Gfx {
                     angle,
                     tint,
                 } => {
-                    ui.ensure(&mut self.text, key);
+                    images.ensure(key, Folder::Ui);
                     self.text.image_region(key, *rect, *uv, *angle, *tint);
                 }
                 Item::Jacket { rect, key } => {
-                    jackets.ensure(&mut self.text, key);
+                    images.ensure(key, Folder::Jackets);
                     if self.text.has_image(key) {
                         self.text.image(key, *rect, WHITE);
                     } else {
@@ -290,7 +289,7 @@ impl Gfx {
                     uvs,
                     tint,
                 } => {
-                    ui.ensure(&mut self.text, key);
+                    images.ensure(key, Folder::Ui);
                     self.text.image_poly(key, points, uvs, *tint);
                 }
             }
@@ -307,37 +306,59 @@ impl Gfx {
     }
 }
 
-/// Loads each image (`<dir>/<key>.png`) once, on first use. Jacket keys (`S03/uT_J_S03_30`)
-/// and UI texture keys (`UI/Textures/...`) never collide.
-struct Images<'a> {
-    dir: PathBuf,
-    tried: &'a mut HashSet<String>,
-    /// Files loaded this frame and the time spent.
+/// Where an image key lives under `data/`.
+#[derive(Clone, Copy, Debug)]
+enum Folder {
+    Jackets,
+    Ui,
+}
+
+/// Loads each image (`data/<folder>/<key>.png`) once, on first use, in the background; until it
+/// arrives jackets show their placeholder and UI textures nothing. Jacket keys
+/// (`S03/uT_J_S03_30`) and UI texture keys (`UI/Textures/...`) never collide.
+#[derive(Debug)]
+struct Images {
+    data: PathBuf,
+    tried: HashSet<String>,
+    loader: jacket::Loader,
+    /// Images uploaded so far and the UI-thread time that took.
     loads: u64,
     spent: std::time::Duration,
 }
 
-impl<'a> Images<'a> {
-    fn new(dir: PathBuf, tried: &'a mut HashSet<String>) -> Self {
+impl Images {
+    fn new(data: PathBuf) -> Self {
         Self {
-            dir,
-            tried,
+            data,
+            tried: HashSet::new(),
+            loader: jacket::Loader::spawn(),
             loads: 0,
             spent: std::time::Duration::ZERO,
         }
     }
 
-    fn ensure(&mut self, text: &mut TextRenderer, key: &str) {
+    fn ensure(&mut self, key: &str, folder: Folder) {
         if key.is_empty() || !self.tried.insert(key.to_string()) {
             return;
         }
+        let dir = match folder {
+            Folder::Jackets => "jackets",
+            Folder::Ui => "ui",
+        };
+        let path = self.data.join(dir).join(format!("{key}.png"));
+        self.loader.request(key, path);
+    }
+
+    /// Upload the images decoded since the last frame.
+    fn receive(&mut self, text: &mut TextRenderer) {
         let t = Instant::now();
-        let path = self.dir.join(format!("{key}.png"));
-        match jacket::load(&path) {
-            Some((size, rgba)) => text.set_image(key, size, &rgba),
-            None => log::debug!("no image {}", path.display()),
+        for (key, image) in self.loader.finished() {
+            match image {
+                Some((size, rgba)) => text.set_image(&key, size, &rgba),
+                None => log::debug!("no image {key}"),
+            }
+            self.loads += 1;
         }
-        self.loads += 1;
         self.spent += t.elapsed();
     }
 }
@@ -473,8 +494,7 @@ struct App {
     cursor: Option<[f32; 2]>,
     mouse_down: bool,
     alt: bool,
-    jackets_tried: HashSet<String>,
-    ui_tried: HashSet<String>,
+    images: Images,
     /// Visual offset of the category / song wheel in panels; eases to 0 after a move.
     wheel: f32,
     last_frame: Option<Instant>,
@@ -488,6 +508,8 @@ struct App {
     /// The first frame was presented (startup time logged).
     first_frame: bool,
     pacer: Pacer,
+    /// Playfield triangles, reused every frame.
+    scene: Vec<Vertex>,
 }
 
 impl App {
@@ -850,7 +872,8 @@ impl App {
         let acquired = Instant::now();
         self.pacer.acquired(start, acquired);
         self.perf.acquire.push(ms(acquired - start));
-        let mut scene = Vec::new();
+        let mut scene = std::mem::take(&mut self.scene);
+        scene.clear();
         match self.screen {
             Screen::Play => {
                 let over = self.play.as_mut().and_then(PlayState::frame);
@@ -868,11 +891,11 @@ impl App {
                     }
                     let empty = SpriteSheet::default();
                     let sprites = self.gfx.as_ref().map_or(&empty, |g| g.renderer.sprites());
-                    scene = p.scene(sprites);
+                    p.scene(sprites, &mut scene);
                     if p.paused {
                         self.drift.reset();
                     } else {
-                        let wall = (start - self.s.started).as_secs_f64();
+                        let wall = (acquired - self.s.started).as_secs_f64();
                         let (drift, step) = self.drift.sample(wall, p.now());
                         self.perf.drift = drift;
                         self.perf.jitter.push(step.abs());
@@ -916,13 +939,11 @@ impl App {
             view.items.extend(self.perf.view(window).items);
         }
         self.perf.build.push(ms(acquired.elapsed()));
-        let mut jackets = Images::new(self.s.data.join("jackets"), &mut self.jackets_tried);
-        let mut ui = Images::new(self.s.data.join("ui"), &mut self.ui_tried);
         let Some(gfx) = &mut self.gfx else { return };
-        let t = gfx.draw(target, &scene, &view, &mut jackets, &mut ui);
+        let t = gfx.draw(target, &scene, &view, &mut self.images);
+        self.scene = scene;
         let p = &mut self.perf;
-        p.image_loads += jackets.loads + ui.loads;
-        p.image_ms += ms(jackets.spent + ui.spent);
+        (p.image_loads, p.image_ms) = (self.images.loads, ms(self.images.spent));
         p.submit.push(ms(t.submit));
         p.present.push(ms(t.present));
         if let Some(at) = self.input_at.take() {
@@ -934,7 +955,7 @@ impl App {
             .player
             .output_stats()
             .map(|(frames, latency)| (frames, ms(latency)));
-        if p.frames % 240 == 0 {
+        if p.frames.is_multiple_of(240) {
             p.log();
         }
         if !self.first_frame {

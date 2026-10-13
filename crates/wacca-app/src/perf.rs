@@ -139,7 +139,7 @@ pub struct Perf {
     pub drift: f32,
     pub frames: u64,
     pub missed: u64,
-    /// Image files decoded and uploaded on the UI thread (jackets, UI textures).
+    /// Images (jackets, UI textures) uploaded, and the UI-thread time spent on them.
     pub image_loads: u64,
     pub image_ms: f32,
     /// Seconds per display refresh (0 = unknown).
@@ -184,7 +184,7 @@ impl Perf {
                 self.jitter.percentile(0.99)
             ),
             format!(
-                "images {} loaded on UI thread, {:.0} ms",
+                "images {} uploaded, {:.0} ms on UI thread",
                 self.image_loads, self.image_ms
             ),
         ];
