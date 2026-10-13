@@ -49,6 +49,18 @@ pub enum Item {
         rect: Rect,
         key: String,
     },
+    /// Convex polygon; one colour per point (gradient) or a single flat colour.
+    Poly {
+        points: Vec<[f32; 2]>,
+        colors: Vec<Rgba>,
+    },
+    /// Exported UI texture `data/ui/<key>.png` (e.g. `UI/Textures/FONT/uT_FTcombo00`), tinted;
+    /// nothing is drawn if it is missing.
+    Image {
+        rect: Rect,
+        key: String,
+        tint: Rgba,
+    },
 }
 
 /// Draw list (back to front) plus tappable areas.
@@ -86,6 +98,18 @@ impl View {
         });
     }
 
+    pub fn poly(&mut self, points: Vec<[f32; 2]>, colors: Vec<Rgba>) {
+        self.items.push(Item::Poly { points, colors });
+    }
+
+    pub fn image(&mut self, key: impl Into<String>, rect: Rect, tint: Rgba) {
+        self.items.push(Item::Image {
+            rect,
+            key: key.into(),
+            tint,
+        });
+    }
+
     pub fn button(&mut self, rect: Rect, action: Action) {
         self.buttons.push((rect, action));
     }
@@ -114,6 +138,19 @@ impl View {
 
 pub fn contains(r: Rect, p: [f32; 2]) -> bool {
     p[0] >= r.x && p[0] < r.x + r.w && p[1] >= r.y && p[1] < r.y + r.h
+}
+
+/// The original UI is a 1080 × 1920 portrait canvas around the round screen.
+pub const CANVAS: [f32; 2] = [1080.0, 1920.0];
+
+/// Canvas point → window pixels: the canvas scaled to the height of the 9:16 menu `area` and
+/// centred in it.
+pub fn canvas(area: Rect, [x, y]: [f32; 2]) -> [f32; 2] {
+    let s = area.h / CANVAS[1];
+    [
+        area.x + area.w / 2.0 + (x - CANVAS[0] / 2.0) * s,
+        area.y + y * s,
+    ]
 }
 
 /// `n`-th horizontal band of height `h` starting at `top` inside `area` (full width, inset).
@@ -155,6 +192,19 @@ mod tests {
         assert_eq!(v.hit([50.0, 60.0]), Some(Action::Confirm));
         assert_eq!(v.hit([110.0, 60.0]), None);
         assert_eq!(v.hit([0.0, 0.0]), None);
+    }
+
+    #[test]
+    fn canvas_scales_to_height_and_centres() {
+        let area = Rect {
+            x: 100.0,
+            y: 0.0,
+            w: 540.0,
+            h: 960.0,
+        };
+        assert_eq!(canvas(area, [540.0, 0.0]), [370.0, 0.0]);
+        assert_eq!(canvas(area, [0.0, 1920.0]), [100.0, 960.0]);
+        assert_eq!(canvas(area, [1080.0, 960.0]), [640.0, 480.0]);
     }
 
     #[test]
