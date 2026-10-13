@@ -194,6 +194,33 @@ pub fn spawn_decoder(ffmpeg: &Path, video: &Path, pix_fmt: &str) -> Result<Child
         .map_err(VideoError::Spawn)
 }
 
+/// [`decode_args`] for only the `[x, y, width, height]` part of each frame.
+pub fn crop_decode_args(video: &Path, pix_fmt: &str, [x, y, w, h]: [usize; 4]) -> Vec<String> {
+    decode_args(video, pix_fmt)
+        .into_iter()
+        .map(|a| match a.as_str() {
+            "showinfo" => format!("crop={w}:{h}:{x}:{y},showinfo"),
+            _ => a,
+        })
+        .collect()
+}
+
+/// [`spawn_decoder`] for a crop (see [`crop_decode_args`]).
+pub fn spawn_crop_decoder(
+    ffmpeg: &Path,
+    video: &Path,
+    pix_fmt: &str,
+    crop: [usize; 4],
+) -> Result<Child, VideoError> {
+    ffmpeg_command(ffmpeg)
+        .args(crop_decode_args(video, pix_fmt, crop))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(VideoError::Spawn)
+}
+
 /// `[Parsed_showinfo_0 @ 0x..] n:   3 pts:     25 pts_time:0.025   duration:..` -> 0.025.
 pub fn parse_showinfo_pts(line: &str) -> Option<f64> {
     if !line.contains("Parsed_showinfo") {
@@ -461,6 +488,8 @@ mod tests {
             d,
             "-hide_banner -nostats -i v.mkv -fps_mode passthrough -vf showinfo -f rawvideo -pix_fmt gray pipe:1"
         );
+        let c = crop_decode_args(Path::new("v.mkv"), "rgb24", [1, 2, 30, 40]).join(" ");
+        assert!(c.contains("-vf crop=30:40:1:2,showinfo -f"), "{c}");
     }
 
     #[test]
