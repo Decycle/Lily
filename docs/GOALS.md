@@ -15,7 +15,7 @@ Priority: **1) play area — fully faithful visual + control port**, 2) menus, 3
 - [x] Extract + disassemble the game's compiled shaders (d3dcompiler_47 `D3DDisassemble`), map shader → element (doc 11 §1)
 - [x] RenderDoc capture of a real gameplay frame (draw order, blend states, constants, meshes) — 16 captures, exact camera/transforms, port spec (doc 11 §2–3)
 - [x] Real note meshes in our renderer (601 meshes; real camera; ported note shader; bar lines) — ring/lanes in progress
-- [~] Port key shaders to WGSL — done: notes (all types, R aura, sync band), hold ribbons + end caps, chevrons, snap arrows, guide lanes + ring, movie, colour pipeline (1–3/255 vs RenderDoc frames); in progress: hit effects, sync connector
+- [~] Port key shaders to WGSL — done: notes (all types, R aura, sync band), hold ribbons + end caps, chevrons, snap arrows, guide lanes + ring, movie, colour pipeline (1–3/255 vs RenderDoc frames); sync connector (opaque, from assets + KING frames); in progress: hit effects
 - [ ] Side-by-side audit vs real frames: every difference fixed or listed
 
 ## 1. Play area: controls
