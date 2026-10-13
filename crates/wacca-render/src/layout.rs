@@ -12,9 +12,11 @@ use wacca_chart::{Chart, HoldNode, LANES, MaskDir, MaskEvent};
 
 use crate::style::{SENSOR_DEPTHS, SENSOR_INNER, SENSOR_OUTER};
 
-/// Seconds a note is visible at note speed 1.0.
-// UNVERIFIED: community values are 3.2667 s and 3.3333 s (04 §2.2).
-pub const APPROACH_SECS: f64 = 3.3;
+/// Seconds a note is visible at note speed 1.0. Measured on the real game: 3.276–3.29 s (09 §E2).
+pub const APPROACH_SECS: f64 = 3.28;
+/// Perspective constant `k` of [`depth_to_radius`]. Measured on the real game: 0.750 (09 §E2);
+/// the community formula `3.325x / (13.825 − 10.5x)` is the same curve with k = 0.7595.
+pub const PERSPECTIVE_K: f32 = 0.750;
 /// Mask sweep: one lane per `1000/60/2` ms (01 §4).
 pub const MASK_SECS_PER_LANE: f64 = 1.0 / 120.0;
 /// Hold bodies are sampled at this time step between nodes (bounded by [`HOLD_MAX_SAMPLES`]).
@@ -135,10 +137,11 @@ pub struct Rect {
     pub h: f32,
 }
 
-/// Perspective radius for a depth (04 §2.2): `r(x) = 3.325x / (13.825 − 10.5x)` with `x = 1 − depth`.
+/// Perspective radius for a depth: `r(x) = x(1 − k) / (1 − kx)` with `x = 1 − depth`, so the
+/// centre is 0 and the judgement line is 1 ([`PERSPECTIVE_K`]).
 pub fn depth_to_radius(depth: f32) -> f32 {
     let x = 1.0 - depth.clamp(0.0, 1.0);
-    3.325 * x / (13.825 - 10.5 * x)
+    x * (1.0 - PERSPECTIVE_K) / (1.0 - PERSPECTIVE_K * x)
 }
 
 /// Unclamped depth of chart time `t` when the scroll position is `now_dist` (= `chart.dist_at(view now)`).
@@ -455,6 +458,8 @@ mod tests {
         assert!(rs.windows(2).all(|w| w[1] < w[0]));
         // Perspective: halfway in depth is much closer to the centre than halfway in radius.
         assert!(depth_to_radius(0.5) < 0.25);
+        // Measured k = 0.75: halfway in depth sits at radius 0.5·0.25/0.625 = 0.2.
+        assert!(close(depth_to_radius(0.5), 0.2));
     }
 
     #[test]
