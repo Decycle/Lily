@@ -12,7 +12,7 @@ checkout** (gitignored). Every input went only through `Local\WACCON_SHARED_BUFF
 | Touch windows (JudgeParameterTable 3/5/6 f) | **Confirmed.** 50 % edges from the window centre: Marvelous −2.97/+3.04 f, Great −4.94/+4.81 f, Good −5.73/+5.86 f (n 567, 7 runs). Widths 6.0 / 9.7 / 11.6 f. | same (3/5/6) |
 | Frame-quantised or continuous? | Widths match **continuous** `|offset| ≤ n frames` (6/10/12 f); integer-frame-index judging (`|k| ≤ n`) would give 7/11/13 f — rejected. Great/Good are ~0.15–0.2 f narrower per side than the table, within the method's resolution. | continuous ✔ |
 | Hold start | Like touch: Marvelous −3.2/+3.5 f, Great −5.5/+5.5 f (n 47). A start outside its windows whose body is held still gives **Good** (seen from −10 to +8.5 f). | same ✔ |
-| Chain window, AdjustRate front = 20 | Marvelous when the 25 ms contact starts −3.96…+4.0 f from the centre, Miss outside (n 38); the early edge is ≈ 3.5–4 f even after allowing for the contact length — **AdjustRate 20 does not shrink the early window** (to 0.8 f). Chains never showed Great/Good. | 4/4 f, AdjustRate ignored ✔ |
+| Chain window, AdjustRate front = 20 | Marvelous when the 25 ms contact starts −3.96…+4.0 f from the centre, Miss outside (n 38); the early edge is ≈ 3.5–4 f even after allowing for the contact length — **AdjustRate 20 does not shrink the early window** (to 0.8 f). Chains never showed Great/Good. **E5 (§9):** any touch of the arc while the ±4 f window is open hits — a finger resting since long before, or landing early and staying, is Marvelous; no fresh press is needed. | 4/4 f on any touch, AdjustRate ignored ✔ |
 | Slide windows (table 5/7, 8/10, 10/10) | Consistent: Marvelous −4.2…+7.2 f, Great at −4.5…−7.5 f, Miss at ≤ −10.5 and ≥ +9.5 f; a missed slide is shown ≈ 10.3 f after a centred hit (late close ≈ 10 f). n 19 — edges ±1 f. Community −5/+5 Marvelous is **not** supported (Marvelous seen at +4…+5 f twice). | table ✔ |
 | Snap windows | Only 5 timed snaps (all snap-in): Marvelous at +0.5, +6.5 f, Great +7.5, Miss +10.5, +13.5; miss shown +11 f. Consistent with SnapUp 5/7, 8/10, 10/10 but not a measurement. | table |
 | Hold drop allowance (Saturn 215 ms) | **Between 167 and 183 ms (10–11 frames).** A mid-hold release of ≤ 167 ms keeps the start judgement (n 10), ≥ 183 ms gives Good (n 9). | 215 ms ✘ |
@@ -238,12 +238,12 @@ stored joint" of `hold_arc_at`; with `HoldNode.control` this is a small change i
 
 ### 8.4 Recommended changes to `wacca-game/src/judge` (not applied here)
 
-1. **Chain early edge (tentative):** ≈ 4 f on the contact *start* in the game, ≈ 5.5 f in ours. Two rules fit:
+1. **Chain early edge (tentative; settled by E5, §9: keep the current rule):** ≈ 4 f on the contact *start* in the game, ≈ 5.5 f in ours. Two rules fit:
    (a) a chain needs a sensor turning on inside its ±4 f window, or (b) touched-while-open with the early window
    shrunk by `AdjustRateFront` 20 % as a factor (4 × 0.8 = 3.2 f; + 1.5 f contact ≈ 4.7 f). They differ for a finger
    already resting on the lane when the window opens: probe that (chains under contacts held −10…+2 f and −10…−3 f)
    before choosing. Until then keep the current rule; the effect is ≤ 1.5 f on early chain touches only.
-2. **Hold arc:** straight path between control points (§8.3), once `HoldNode.control` exists.
+2. **Hold arc:** straight path between control points (§8.3), once `HoldNode.control` exists (done, §9.4).
 3. No change to the touch/hold/slide/snap windows, the 175 ms drop, the HoldEnd free window or missed + dropped =
    Miss: every note > 1 f from an edge agrees.
 4. Harness (done): `e3::predict` fed only edge frames, so a lane touched before a chain's window and a hold body held
@@ -258,3 +258,104 @@ judge_parity runs\e3\20261013-023731 runs\e3\20261013-030310 runs\e3\20261013-03
   runs\e3\20261013-040029 runs\e3\20261013-042301 runs\e3\20261013-042834 --report parity.md --table parity.csv
 ```
 (from the checkout root, after `analyze_e2` and `analyze_e3`; read-only on the run directories.)
+
+## 9. E5: chains under held and resting fingers (live, 2026-10-13)
+
+Question (§8.4.1): does a chain need a touch-down inside its window (onset rule), is its early window 3.2 f
+(`AdjustRateFront` 20 % as a factor), or does any touch while the window is open count?
+
+### 9.1 Probe and runs
+
+New probe `press {from_ms, to_ms}` (`e3::Probe::Press`; spec `ProbeSpec::Press { frames: [[from, to], …] }`): the
+chain's scripted contact is replaced by one finger on ring 0 of every lane of its arc from `from` to `to` (relative
+to the note); everything else is the perfect script. Specs `scripts/e5-chain.spec.json` (touch-downs −7…−3 f held to
++8 f, resting −18 f → +8 f, −18 → −2, −10 → −3/−2, late touch-downs +2…+6 f held to +15 f) and
+`e5-chain-edges.spec.json` (25 ms contacts starting −5.5…−4 f, long contacts −10 f → −5…−3.5 f, late touch-downs
++3…+4.5 f, resting −14 f → +8 f), each with a ½-frame touch sweep −6…+6 f for the run's touch centre. Chart:
+メルト Normal (its 21 isolated chains are one stream at 77.6–85.4 s, 0.35 s apart). Runs `runs/e5/<run>` of the main
+checkout; validation as §1.3/§1.4 (`analyze_e2 --timing-block 8`, `analyze_e3`; chain table "Chain presses (E5)").
+
+| Run | Spec | Write err p95 / max ms | Touch centre ms | Used |
+|---|---|---|---|---|
+| 20261013-052909 | e5-chain (seed 51) | 0.01 / 1.0 | 7.6 | ✔ |
+| 20261013-053427 | e5-chain (52) | 0.02 / 0.4 | 16.0 | ✔ |
+| 20261013-053912 | e5-chain (53) | 0.06 / 6.3 | 107.0 | ✘ chain stream inside a clock-jump block (no timing) |
+| 20261013-055132 | e5-chain-edges (61) | 0.01 / 0.8 | 19.7 | ✔ |
+| 20261013-055616 | e5-chain-edges (62) | 0.00 / 2.6 | 70.2 | ✘ for edges: 4 clock jumps, run-wide touch centre not valid for the chain block |
+| 20261013-060103 | e5-chain-edges (63) | 0.02 / 5.6 (1 late edge, its tests dropped) | 17.7 | ✔ |
+
+Two late-touch-down chains (+5.2/+5.4 f, real M) are left out: the next chain's −18 f contact started 3 f after
+them on overlapping lanes (the −18 f probes were replaced by −14 f in the second spec).
+
+### 9.2 Results (frames from the run's touch centre on the judge clock, drift-corrected)
+
+- **Resting / landing early and staying: always hit.** Fingers down from −2.7 to −19 f and held to ≥ +5.8 f: 26 / 26
+  Marvelous (7 of them resting since −14…−19 f). Resting from −18 f and lifted at −2.6/−2.8 f: Marvelous. → the
+  **onset rule is rejected**; no fresh press is needed.
+- **Early side: the last touch counts, not the touch-down.** Contacts lifted before the note (M = hit, x = Miss):
+
+  | Run | Long (down from −10 f) lifted at | 25 ms contact lifted at |
+  |---|---|---|
+  | 052909 | −3.56 M, −2.56 M ×3 | – |
+  | 053427 | −3.79 M, −2.79 M ×2 | – |
+  | 055132 | −5.28 … −3.78 x (7) | −4.28 x, −3.78 x ×2, −3.28 M/x, −2.78 M |
+  | 060103 | −6.14 … −4.24 x (7) | −5.14 x, −4.64 x ×2, −4.14 M/x, −3.64 M |
+
+  Long and short contacts lifted at the same time get the same verdict, so the hit depends on whether the lane is
+  touched on a frame inside the window, not on when the touch began.
+- **Late side: touch-downs** +1.2…+3.4 f: 16 / 17 Marvelous (one Miss at +3.2); +3.7, +3.7, +4.2 f M (055132);
+  +4.2, +4.4 f Miss. 50 % ≈ +3.5…+4.2 f.
+- **Window width, independent of the touch-centre calibration:** within each run the early 50 % point (on the lift)
+  and the late one (on the touch-down) are ≥ 7.0–7.5 f apart (052909 ≥ 7.5, 053427 ≈ 7.0, 055132 ≥ 7.5, 060103
+  ≥ 7.5). With the game sampling once per 60 Hz frame, a window `[a, b]` has its 50 % points at `a + ½` and `b − ½`,
+  so `b − a` ≥ 8.0–8.5 f: **±4 f**. A 3.2 f early window would give ≈ 6.2 f between the 50 % points — **rejected**.
+- The absolute early edge moves between runs (≈ −3.3 f in 055132, ≈ −4.1 f in 060103, < −3.8 f in 052909/053427)
+  together with the late edge: the per-block clock correction is good to ±½–1 f in a chain stream. That also
+  explains E4's four chain disagreements (§8.2: all one-sided at −4.4…−4.9 f, all in the メルト chain stream of two
+  E3 runs).
+
+**Rule:** a chain is hit (Marvelous, no timing) if any sensor of its arc is on at any judge frame while its ±4 f
+window is open — a resting finger, a finger landing early and staying, or a contact lifted inside the window. This
+is the rule `wacca-game` already had; no change, now with a test per measured case (`judge/tests.rs`:
+`chain_finger_resting_long_before_hits`, `chain_finger_landing_early_and_staying_hits`,
+`chain_early_edge_is_on_the_last_touch`, `chain_late_touch_down`).
+
+### 9.3 Parity (`judge_parity`, before = main a3f2cfb, after = this branch)
+
+7 valid E3 runs + 4 valid E5 runs (052909, 053427, 055132, 060103), 1,267 notes:
+
+| Class | > 1 f from every edge | Disagreements: noise / rule? |
+|---|---|---|
+| Touch | 398 / 399 | 128 / 1 (the §8.2 stray) |
+| Hold | 78 / 78 | 20 / 0 |
+| Chain | **84 / 84** | 9 / 0 |
+| Slide | 28 / 28 | 2 / 0 |
+| Snap | 7 / 7 | 0 / 0 |
+
+Before and after are identical (the chain rule did not change and the hold path changes no verdict on these
+charts). Chain disagreements away from the edges: **0** (E3 alone: 38 / 38 as in §8.1; E5 alone: 46 / 46). The nine
+edge cases: the four E3 ones of §8.2 and five E5 ones within 0.1–0.8 f of an edge, in both directions (real Miss /
+ours M at a −10 → −3.5 f lift, a 25 ms contact lifted at −3.3 f and a +3.2 f touch-down; real M / ours Miss at a
++4.2 f touch-down and a 25 ms contact lifted at −4.1 f). Run 055616 alone: chains 21 / 21. E5 notes in all: 190 / 190 agree > 1 f from an edge.
+
+### 9.4 Hold path = straight between control points
+
+`judge::hold_path_at`: a hold body is judged on the lane span at `t` interpolated linearly (unwrapped lane and
+width) between the authored control points (`HoldNode.control`; the first and last node always count), rounded to
+whole lanes; generated joints (`control = false`) are ignored — as the game draws it (doc 11 §3.4, §8.3 here). The
+autoplay finger follows the same path (sampled every ¼ frame, moving only when the path leaves it). Tests:
+`hold_path_is_straight_between_control_points`, `hold_body_judged_on_the_control_path`,
+`autoplay_follows_the_control_path`. Autoplay corpus (1,247 charts, normal and mirrored): all perfect.
+
+### 9.5 Reproduce
+
+```
+e3_script --chart <assets>\MusicData\S03-048\S03-048_00.mer --spec tools\realgame\scripts\e5-chain.spec.json ^
+  --out tools\realgame\scripts\e5-melt-51.taps.json --seed 51          (e5-chain-edges.spec.json: seeds 61–63)
+run_experiment … (as §7, nav e3-guest-melt.nav.json; needs data\nav\cat-vocaloid.png and the jacket)
+analyze_e2 <run> --compare 0 --timing-block 8 ; analyze_e3 <runs>… --report report.md
+judge_parity <7 E3 runs> runs\e5\20261013-052909 runs\e5\20261013-053427 runs\e5\20261013-055132 ^
+  runs\e5\20261013-060103 --report parity.md --table parity.csv
+```
+`data\nav\cat-vocaloid.png` (not committed) is the crop `[0.28, 0.36, 0.44, 0.2]` of
+`runs\e3\20261013-042834\nav-11-category-vocaloid.png`.

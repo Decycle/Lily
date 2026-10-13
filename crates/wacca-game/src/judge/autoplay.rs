@@ -94,26 +94,33 @@ fn contacts(chart: &Chart) -> Vec<Contact> {
     out
 }
 
-/// Where the resting hold finger is from each time on. It only moves when the path leaves it,
-/// since entering new sensors counts as a fresh press; a move into the arc of a tap note whose
-/// window is open waits for that note's time (well within the hold's release allowance).
+/// Where the resting hold finger is from each time on. It follows the judged path (straight
+/// between control points, sampled every `STEP`) and only moves when the path leaves it, since
+/// entering new sensors counts as a fresh press; a move into the arc of a tap note whose window
+/// is open waits for that note's time (well within the hold's release allowance).
 fn hold_finger(start: Arc, nodes: &[HoldNode], taps: &[(f64, Arc)]) -> Vec<(f64, Arc)> {
     let mut finger = lane(start, start.width / 2);
-    let mut moves = vec![(nodes.first().map_or(0.0, |n| n.time), finger)];
-    for node in nodes.iter().skip(1) {
-        if node.arc.contains(finger.lane) {
+    let (Some(first), Some(last)) = (nodes.first(), nodes.last()) else {
+        return Vec::new();
+    };
+    let mut moves = vec![(first.time, finger)];
+    let steps = ((last.time - first.time) / STEP).ceil().max(0.0) as usize;
+    for k in 1..=steps {
+        let time = (first.time + k as f64 * STEP).min(last.time);
+        let Some(arc) = super::hold_path_at(nodes, time) else {
+            break;
+        };
+        if arc.contains(finger.lane) {
             continue;
         }
-        finger = lane(node.arc, node.arc.width / 2);
+        finger = lane(arc, arc.width / 2);
         // Arriving together with the earliest such note hits it on time and uses up its lanes.
         let at = taps
             .iter()
-            .filter(|(t, a)| {
-                a.contains(finger.lane) && node.time >= t - TAP_EARLY && node.time < *t
-            })
+            .filter(|(t, a)| a.contains(finger.lane) && time >= t - TAP_EARLY && time < *t)
             .map(|&(t, _)| t)
             .reduce(f64::min)
-            .unwrap_or(node.time);
+            .unwrap_or(time);
         let prev = moves.last().map_or(at, |m| m.0);
         moves.push((at.max(prev), finger));
     }
