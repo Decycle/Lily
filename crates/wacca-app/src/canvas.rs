@@ -13,7 +13,7 @@ use std::f32::consts::PI;
 
 use wacca_render::layout::{PORTRAIT_FRAME, PORTRAIT_RING_CENTER, Rect, ring};
 use wacca_render::style::Rgba;
-use wacca_render::text::Align;
+use wacca_render::text::{Align, Face};
 
 use crate::circle;
 use crate::ui::{Action, Item, View};
@@ -180,6 +180,10 @@ pub struct Painter {
     side: View,
 }
 
+/// Top of a text line above its vertical centre, in pixel heights: the UI face
+/// (`TT_RODINNTLG-EB`, ascent 0.88, cap height ~0.73) centres its capitals there.
+const TEXT_MID: f32 = 0.52;
+
 /// Centre alignment.
 pub const MID: [f32; 2] = [0.5, 0.5];
 
@@ -199,6 +203,11 @@ impl Painter {
         } else {
             &mut self.side
         }
+    }
+
+    /// The select menus' animated backdrop (`uM_WCbg000`) on the 1080 square around the circle.
+    pub fn backdrop(&mut self) {
+        self.v.backdrop = Some(self.c.rect([0.0, 0.0], [DESIGN, DESIGN], MID));
     }
 
     /// Texture `name` (under [`TEX`]) centred at `at`.
@@ -296,7 +305,7 @@ impl Painter {
     ) {
         let px = font_px(size);
         let m = self.c.place(at);
-        let [x, y] = m.pt([at[0], at[1] - px * 0.62]);
+        let [x, y] = m.pt([at[0], at[1] - px * TEXT_MID]);
         let k = m.scale;
         self.layer(at)
             .text_in(s, [x, y], px * k, color, align, max_w.map(|w| w * k));
@@ -316,12 +325,49 @@ impl Painter {
         self.layer(at).numerals(s, p, px * m.scale, color, align);
     }
 
+    /// One line in `face` at UMG font `size`, vertically centred on `at[1]`.
+    pub fn text_face(
+        &mut self,
+        s: impl Into<String>,
+        at: [f32; 2],
+        size: f32,
+        color: Rgba,
+        (align, face): (Align, Face),
+    ) {
+        let px = font_px(size);
+        let m = self.c.place(at);
+        let p = m.pt([at[0], at[1] - px * TEXT_MID]);
+        self.layer(at)
+            .text_face(s, p, px * m.scale, color, align, face);
+    }
+
+    /// One line in the `Kakugo_kana` face at UMG font `size`, vertically centred on `at[1]`,
+    /// left-aligned, with `spacing` design units added after each character (UMG letter
+    /// spacing). Advances are estimated at 0.5 em (the condensed C60 Latin is about that).
+    pub fn kakugo(&mut self, s: &str, at: [f32; 2], size: f32, spacing: f32, color: Rgba) {
+        let px = font_px(size);
+        let m = self.c.place(at);
+        let mut x = at[0];
+        for ch in s.chars() {
+            let p = m.pt([x, at[1] - px * TEXT_MID]);
+            self.layer(at).text_face(
+                ch.to_string(),
+                p,
+                px * m.scale,
+                color,
+                Align::Left,
+                Face::Kakugo,
+            );
+            x += px * if ch.is_ascii() { 0.5 } else { 1.0 } + spacing;
+        }
+    }
+
     /// One line centred on `at`, turned by `degrees` (clockwise).
     pub fn text_turned(&mut self, s: &str, at: [f32; 2], size: f32, color: Rgba, degrees: f32) {
         let px = font_px(size);
         let a = degrees.to_radians();
         // Rotate the line's top-centre about `at`; the renderer turns the line about it.
-        let up = 0.62 * px;
+        let up = TEXT_MID * px;
         let m = self.c.place(at);
         let top = m.pt([at[0] + up * a.sin(), at[1] - up * a.cos()]);
         self.layer(at).items.push(Item::TurnedText {
@@ -543,7 +589,7 @@ mod tests {
                 crate::mode::view(c, 1.0, &who),
                 crate::category::view(c, &l, 0, 0.0, &save, &who),
                 crate::select_ui::view(c, &l, 0.0, &save, &who),
-                crate::options::view(&menus, &Settings::default(), false, "Song", c),
+                crate::options::view(c, &menus, (&Settings::default(), false), &l, &save, &who),
             ];
             // The circle is on screen and every tap area is centred on screen, except the
             // wheel's outer slots, which sit past the circle under the mask as on the cabinet.

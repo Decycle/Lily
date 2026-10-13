@@ -7,6 +7,7 @@ pub mod camera;
 pub mod effects;
 mod fx_gpu;
 pub mod layout;
+pub mod menu_bg;
 pub mod notes3d;
 mod notes_gpu;
 pub mod particles;

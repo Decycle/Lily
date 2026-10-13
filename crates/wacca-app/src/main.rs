@@ -49,7 +49,7 @@ use std::sync::Arc;
 use wacca_audio::{BgmBank, Player, SeBank};
 use wacca_game::catalog::Song;
 use wacca_game::save::{self, SaveData, Settings};
-use wacca_render::text::{Fonts, TextError};
+use wacca_render::text::{Face, Fonts, TextError};
 
 use crate::args::{Args, ArgsError};
 use crate::menu::Menu;
@@ -96,10 +96,20 @@ fn font_candidates(data: &Path, assets: &Path) -> Vec<Vec<PathBuf>> {
     let windows = PathBuf::from(std::env::var_os("WINDIR").unwrap_or_else(|| "C:\\Windows".into()))
         .join("Fonts");
     vec![
-        // The menus' UMG font (`DF-KaGei-W6_Font`).
+        // The menus' UMG font is the composite `DF-KaGei-W6_Font`: its default typeface is
+        // `TT_RODINNTLG-EB` (Latin and Japanese), `DF-KaGei-Kerning` only for ！ ゜ ¶, Hangul from
+        // `FTTK-YDHeadB`, fallback `NotoSansSC-Medium` (doc 14 §2).
+        vec![
+            fonts.join("TT_RODINNTLG-EB.ttf"),
+            ufont.join("TT_RODINNTLG-EB.ufont"),
+        ],
         vec![
             fonts.join("DF-KaGei-W6.ttc"),
             ufont.join("DF-KaGei-W6.ufont"),
+        ],
+        vec![
+            fonts.join("NotoSansSC-Medium.otf"),
+            ufont.join("NotoSansSC-Medium.ufont"),
         ],
         vec![
             fonts.join("FOT-UDKakugo_SmallPr6-B.otf"),
@@ -227,6 +237,21 @@ fn run(args: &Args, started: std::time::Instant) -> Result<(), Error> {
         Some(p) => fonts.with_numerals(p, NUMERAL_FACE),
         None => fonts,
     };
+    // `Kakugo_kana` (player name) and `SHINBI_Font` (menu countdown).
+    let mut fonts = fonts;
+    for (face, file) in [
+        (Face::Kakugo, "TT_UDKakugoC60-B.ttf"),
+        (Face::Shinbi, "SHINBI.otf"),
+    ] {
+        let ufont = Path::new(file).with_extension("ufont");
+        let paths = [
+            args.data.join("fonts").join(file),
+            args.assets.join("UI").join("Font").join(ufont),
+        ];
+        if let Some(p) = paths.iter().find(|p| p.exists()) {
+            fonts = fonts.with_face(face, p, 0);
+        }
+    }
     shell::run(
         Setup {
             assets: args.assets.clone(),
@@ -273,7 +298,7 @@ mod tests {
         assert!(c[0][0].starts_with("data") && c[0][1].starts_with("assets"));
         // Without the exported fonts the raw game fonts are used.
         let picked = pick_fonts(c, |p| !p.starts_with("data"));
-        assert_eq!(picked.len(), 4);
+        assert_eq!(picked.len(), 6);
         assert!(picked[0].starts_with("assets") && picked[1].starts_with("assets"));
         assert!(pick_fonts(vec![vec![PathBuf::from("x")]], |_| false).is_empty());
     }

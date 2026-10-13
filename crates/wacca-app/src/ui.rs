@@ -88,6 +88,8 @@ pub enum Item {
 /// Draw list (back to front) plus tappable areas.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct View {
+    /// Window rectangle of the animated `uM_WCbg000` backdrop, drawn under `items`.
+    pub backdrop: Option<Rect>,
     pub items: Vec<Item>,
     pub buttons: Vec<(Rect, Action)>,
 }
@@ -138,6 +140,28 @@ impl View {
             align,
             max_width: None,
             face: Face::Numerals,
+        });
+    }
+
+    /// One line in `face`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn text_face(
+        &mut self,
+        text: impl Into<String>,
+        at: [f32; 2],
+        px: f32,
+        color: Rgba,
+        align: Align,
+        face: Face,
+    ) {
+        self.items.push(Item::Text {
+            text: text.into(),
+            at,
+            px,
+            color,
+            align,
+            max_width: None,
+            face,
         });
     }
 
