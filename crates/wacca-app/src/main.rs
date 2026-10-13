@@ -1,12 +1,17 @@
-//! WACCA_slim. M5: song select → difficulty → options → play → results, with save data.
+//! WACCA_slim: category → song select (with difficulty) → options → play → results, with save data.
 //!
 //! `wacca-app --assets <dir> [--data data] [--autoplay] [--windowed] [--chart <mer>]` (see [`args::USAGE`]).
-//! Menus: arrows / Enter / Esc, tap, drag or wheel to scroll, S sort, F filter.
+//! Menus: Left/Right wheel, Up/Down or D difficulty, PageUp/PageDown genre, Enter / Esc, tap, drag
+//! or mouse wheel to scroll, S sort, F filter.
 //! Play: Esc give up, Space pause, Up/Down note speed. F11 / Alt+Enter toggles fullscreen.
 //! `RUST_LOG=wacca_app=debug` logs every judgement.
 #![cfg_attr(test, allow(clippy::unwrap_used))] // tests may unwrap (CONTRIBUTING)
 
 mod args;
+mod canvas;
+mod category;
+mod chrome;
+mod circle;
 mod gesture;
 mod hitsound;
 mod hud;
@@ -20,6 +25,7 @@ mod record;
 mod results;
 mod screen;
 mod select;
+mod select_ui;
 mod session;
 mod shell;
 mod touch_mapping;
@@ -78,6 +84,11 @@ fn font_candidates(data: &Path, assets: &Path) -> Vec<Vec<PathBuf>> {
     let windows = PathBuf::from(std::env::var_os("WINDIR").unwrap_or_else(|| "C:\\Windows".into()))
         .join("Fonts");
     vec![
+        // The menus' UMG font (`DF-KaGei-W6_Font`).
+        vec![
+            fonts.join("DF-KaGei-W6.ttc"),
+            ufont.join("DF-KaGei-W6.ufont"),
+        ],
         vec![
             fonts.join("FOT-UDKakugo_SmallPr6-B.otf"),
             ufont.join("FOT-UDKakugo_SmallPr6-B.ufont"),
@@ -163,6 +174,7 @@ fn run(args: &Args) -> Result<(), Error> {
     };
     let menu = Menu {
         list: SongList::new(songs),
+        category: 0,
         options: options::OptionsMenu::default(),
         settings: settings(&save.settings, args),
         autoplay: args.autoplay,
@@ -229,7 +241,7 @@ mod tests {
         assert!(c[0][0].starts_with("data") && c[0][1].starts_with("assets"));
         // Without the exported fonts the raw game fonts are used.
         let picked = pick_fonts(c, |p| !p.starts_with("data"));
-        assert_eq!(picked.len(), 3);
+        assert_eq!(picked.len(), 4);
         assert!(picked[0].starts_with("assets") && picked[1].starts_with("assets"));
         assert!(pick_fonts(vec![vec![PathBuf::from("x")]], |_| false).is_empty());
     }

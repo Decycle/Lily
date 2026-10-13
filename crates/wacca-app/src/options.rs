@@ -8,8 +8,8 @@ use wacca_game::save::Settings;
 use wacca_render::layout::Rect;
 use wacca_render::text::Align;
 
-use crate::select::buttons;
-use crate::ui::{Action, GREY, HIGHLIGHT, PANEL, View, WHITE, row};
+use crate::circle::{self, Canvas, NAVY, PINK, slab};
+use crate::ui::{Action, View, WHITE};
 
 pub const SPEED_RANGE: std::ops::RangeInclusive<f32> = 1.0..=6.0;
 // UNVERIFIED: step 0.5 (doc 05 §1.5).
@@ -106,65 +106,98 @@ pub fn value(row: Row, s: &Settings, autoplay: bool) -> String {
 
 fn label(row: Row) -> &'static str {
     match row {
-        Row::Speed => "NOTE SPEED",
-        Row::Offset => "JUDGE OFFSET",
+        Row::Speed => "SPEED",
+        Row::Offset => "TIMING",
         Row::Mirror => "MIRROR",
         Row::Autoplay => "AUTOPLAY",
-        Row::Video => "BACKGROUND VIDEO",
+        Row::Video => "BG MOVIE",
     }
 }
 
-/// Each row: label, `◀ value ▶` with tappable halves (left = −, right = +).
+/// Rows styled like the game's option panel (`nav-20-options` in E2): a navy label slab with
+/// pink text and a pink value slab with spaced navy text, stepping right down the list. The
+/// selected row is lit and flanked by arrows; tapping left / right of the value's centre steps
+/// it down / up. BACK and GO sit at the bottom of the circle.
 pub fn view(menu: &OptionsMenu, s: &Settings, autoplay: bool, title: &str, area: Rect) -> View {
-    let u = area.w / 100.0;
     let mut v = View::default();
-    let cx = area.x + area.w / 2.0;
-    v.text_in(
+    let c = Canvas::new(area);
+    circle::background(&mut v, &c);
+    c.panel(&mut v, &slab(350.0, 560.0, 420.0, 56.0), &[NAVY]);
+    c.text(
+        &mut v,
         "OPTIONS",
-        [cx, area.y + 4.0 * u],
-        7.0 * u,
+        [544.0, 566.0],
+        40.0,
         WHITE,
         Align::Center,
-        None,
     );
-    v.text_in(
-        title,
-        [cx, area.y + 14.0 * u],
-        4.5 * u,
-        GREY,
-        Align::Center,
-        Some(area.w - 6.0 * u),
+    c.panel(
+        &mut v,
+        &slab(320.0, 622.0, 420.0, 34.0),
+        &[[0.0, 0.0, 0.0, 0.4]],
     );
-    let top = area.y + 26.0 * u;
-    let h = 18.0 * u;
+    c.text_fit(&mut v, title, [520.0, 626.0], 24.0, PINK, 380.0);
+    let h = ROW_H;
     for (k, &r) in ROWS.iter().enumerate() {
-        let rect = row(area, top, h, k);
-        v.fill(rect, if k == menu.row { HIGHLIGHT } else { PANEL });
-        v.text(
-            label(r),
-            [rect.x + 3.0 * u, rect.y + 2.0 * u],
-            4.5 * u,
-            GREY,
-        );
-        v.text_in(
-            format!("◀  {}  ▶", value(r, s, autoplay)),
-            [cx, rect.y + 8.0 * u],
-            6.0 * u,
-            WHITE,
-            Align::Center,
-            None,
-        );
-        let half = |n: f32| Rect {
-            x: rect.x + n * rect.w / 2.0,
-            w: rect.w / 2.0,
-            ..rect
-        };
+        let sel = k == menu.row;
+        let (x, y) = row_origin(k);
+        let ym = y + h / 2.0;
+        let label_bg = if sel { [0.25, 0.18, 0.55, 1.0] } else { NAVY };
+        c.panel(&mut v, &slab(x, y, LABEL_W, h), &[label_bg]);
+        let lx = x + LABEL_W - h * circle::SLANT - 18.0;
+        c.text(&mut v, label(r), [lx, ym - 17.0], 28.0, PINK, Align::Right);
+        let vx = x + LABEL_W + 30.0;
+        let mut pink = PINK;
+        pink[3] = if sel { 1.0 } else { 0.8 };
+        c.panel(&mut v, &slab(vx, y, VALUE_W, h), &[pink]);
+        let text = value(r, s, autoplay);
+        let pitch = 26.0;
+        let vc = vx + VALUE_W / 2.0 - h * circle::SLANT / 2.0;
+        let start = vc - pitch * text.chars().count() as f32 / 2.0;
+        c.spaced(&mut v, &text, [start, ym - 20.0], 34.0, pitch, NAVY);
+        if sel {
+            let (l, r) = (vx - h * circle::SLANT / 2.0 - 22.0, vx + VALUE_W + 2.0);
+            c.panel(
+                &mut v,
+                &[[l, ym], [l + 20.0, ym - 16.0], [l + 20.0, ym + 16.0]],
+                &[WHITE],
+            );
+            c.panel(
+                &mut v,
+                &[[r + 20.0, ym], [r, ym + 16.0], [r, ym - 16.0]],
+                &[WHITE],
+            );
+        }
         // Pick(2k) = decrease row k, Pick(2k + 1) = increase.
-        v.button(half(0.0), Action::Pick(2 * k));
-        v.button(half(1.0), Action::Pick(2 * k + 1));
+        let x0 = x - h * circle::SLANT;
+        c.button(&mut v, [x0, y, vc - x0, h], Action::Pick(2 * k));
+        c.button(
+            &mut v,
+            [vc, y, vx + VALUE_W + 40.0 - vc, h],
+            Action::Pick(2 * k + 1),
+        );
     }
-    buttons(&mut v, area, "BACK", "START");
+    circle::side_tab(
+        &mut v,
+        &c,
+        "BACK",
+        300.0,
+        [0.55, 0.20, 0.80, 0.95],
+        Action::Back,
+    );
+    circle::go_button(&mut v, &c, Action::Confirm);
     v
+}
+
+const ROW_TOP: f32 = 690.0;
+const ROW_PITCH: f32 = 84.0;
+const ROW_H: f32 = 60.0;
+const LABEL_W: f32 = 290.0;
+const VALUE_W: f32 = 280.0;
+
+/// Top-left of row `k`'s label slab; rows step right like the game's panel.
+fn row_origin(k: usize) -> (f32, f32) {
+    (210.0 + 20.0 * k as f32, ROW_TOP + ROW_PITCH * k as f32)
 }
 
 /// Handle a tap on [`view`]'s `Pick(n)`: select row `n / 2` and step it down (even) or up (odd).
@@ -250,7 +283,25 @@ mod tests {
                 h: 1600.0,
             },
         );
-        assert!(v.texts().contains(&"◀  +0.1  ▶"));
+        let t = v.texts().concat();
+        assert!(t.contains("TIMING+0.1") && t.contains("Song"), "{t}");
         assert!(v.buttons.iter().any(|(_, a)| *a == Action::Confirm));
+        assert!(v.buttons.iter().any(|(_, a)| *a == Action::Back));
+        // Left of the value's centre steps down, right of it steps up.
+        let (down, _) = v
+            .buttons
+            .iter()
+            .find(|(_, a)| *a == Action::Pick(2))
+            .unwrap();
+        let (up, _) = v
+            .buttons
+            .iter()
+            .find(|(_, a)| *a == Action::Pick(3))
+            .unwrap();
+        assert!(down.x < up.x && (down.x + down.w - up.x).abs() < 0.01);
+        assert_eq!(
+            v.hit([up.x + 1.0, up.y + up.h / 2.0]),
+            Some(Action::Pick(3))
+        );
     }
 }

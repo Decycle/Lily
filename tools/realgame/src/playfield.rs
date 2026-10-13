@@ -266,7 +266,7 @@ pub fn best_delta(
     model: &Approach,
     deltas: &[f64],
 ) -> Option<(f64, usize)> {
-    deltas
+    let counts = deltas
         .iter()
         .map(|&delta| {
             let m = Approach { delta, ..*model };
@@ -280,8 +280,11 @@ pub fn best_delta(
                 .count();
             (delta, n)
         })
-        .filter(|&(_, n)| n > 0)
-        .max_by_key(|&(_, n)| n)
+        .collect::<Vec<_>>();
+    // The tolerance makes a plateau of equally good shifts: take its middle.
+    let best = counts.iter().map(|c| c.1).max().filter(|&n| n > 0)?;
+    let top: Vec<f64> = counts.iter().filter(|c| c.1 == best).map(|c| c.0).collect();
+    Some((top.iter().sum::<f64>() / top.len() as f64, best))
 }
 
 /// Indices `i` where `values[i + 1]` differs from `values[i]` by more than `limit`.

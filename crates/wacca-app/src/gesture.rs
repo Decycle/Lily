@@ -6,14 +6,14 @@ pub const TAP_SLOP: f32 = 12.0;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Gesture {
     Tap([f32; 2]),
-    /// Vertical movement since the previous drag event (px, down positive).
-    Drag(f32),
+    /// Movement since the previous drag event (px, right / down positive).
+    Drag([f32; 2]),
 }
 
 #[derive(Clone, Copy, Debug)]
 struct Press {
     start: [f32; 2],
-    last_y: f32,
+    last: [f32; 2],
     dragging: bool,
 }
 
@@ -27,7 +27,7 @@ impl Pointer {
     pub fn down(&mut self, p: [f32; 2]) {
         self.press = Some(Press {
             start: p,
-            last_y: p[1],
+            last: p,
             dragging: false,
         });
     }
@@ -39,9 +39,9 @@ impl Pointer {
         if !press.dragging {
             return None;
         }
-        let dy = p[1] - press.last_y;
-        press.last_y = p[1];
-        Some(Gesture::Drag(dy))
+        let d = [p[0] - press.last[0], p[1] - press.last[1]];
+        press.last = p;
+        Some(Gesture::Drag(d))
     }
 
     pub fn up(&mut self, p: [f32; 2]) -> Option<Gesture> {
@@ -51,7 +51,8 @@ impl Pointer {
     }
 }
 
-/// Turns drag distance into whole list steps of `step` px (dragging down scrolls up the list).
+/// Turns drag distance into whole list steps of `step` px (the list follows the finger, so
+/// dragging down / right steps back).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Scroller {
     acc: f32,
@@ -87,9 +88,9 @@ mod tests {
     fn large_movement_drags_and_never_taps() {
         let mut p = Pointer::default();
         p.down([10.0, 10.0]);
-        assert_eq!(p.moved([10.0, 30.0]), Some(Gesture::Drag(20.0)));
-        assert_eq!(p.moved([10.0, 25.0]), Some(Gesture::Drag(-5.0)));
-        assert_eq!(p.moved([10.0, 12.0]), Some(Gesture::Drag(-13.0)));
+        assert_eq!(p.moved([10.0, 30.0]), Some(Gesture::Drag([0.0, 20.0])));
+        assert_eq!(p.moved([13.0, 25.0]), Some(Gesture::Drag([3.0, -5.0])));
+        assert_eq!(p.moved([10.0, 12.0]), Some(Gesture::Drag([-3.0, -13.0])));
         assert_eq!(p.up([10.0, 10.0]), None);
     }
 

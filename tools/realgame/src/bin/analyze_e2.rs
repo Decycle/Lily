@@ -20,11 +20,11 @@ use std::process::ExitCode;
 use std::sync::mpsc;
 use wacca_chart::Chart;
 use wacca_realgame::frame::Rgb;
+use wacca_realgame::gpu::Offscreen;
+use wacca_realgame::ours;
 use wacca_realgame::playfield::{self, Approach, Candidate, Geometry};
 use wacca_realgame::record::{video, wav};
 use wacca_realgame::{raster, reference, sync};
-use wacca_realgame::gpu::Offscreen;
-use wacca_realgame::ours;
 use wacca_render::{SceneOptions, build_scene, layout};
 
 #[derive(Debug, thiserror::Error)]
@@ -280,17 +280,20 @@ struct Ours<'a> {
     size: (usize, usize),
     g: Geometry,
     rim: f64,
+    fx: ours::EffectClock,
 }
 
 impl Ours<'_> {
     fn frame(&mut self, t: f64) -> Result<Rgb, Error> {
-        let live = ours::live_at(
+        let live = ours::live_at(self.chart, &self.events, t);
+        self.fx.advance(self.chart, &self.events, t);
+        let scene = build_scene(
             self.chart,
-            &self.events,
             t,
-            f64::from(wacca_render::style::FLASH_SECS),
+            &self.opts,
+            &live.state(&self.fx.effects),
+            self.gpu.sprites(),
         );
-        let scene = build_scene(self.chart, t, &self.opts, &live.state(), self.gpu.sprites());
         let square = self
             .gpu
             .render(&scene)
@@ -545,10 +548,12 @@ fn run(a: &Args) -> Result<(), Error> {
                 opts: SceneOptions {
                     note_speed: a.speed,
                     movie: a.movie,
+                    bar_lines: false,
                 },
                 size: (w, h),
                 g,
                 rim: r,
+                fx: ours::EffectClock::default(),
             });
         }
         if let (Some((g, rim)), Some(view)) = (geo, our_view.as_mut()) {
@@ -651,7 +656,9 @@ fn run(a: &Args) -> Result<(), Error> {
         .collect();
     println!("visual timing per 20 notes (chart s, delta ms, matches): {timing:.0?}");
     if !timing_jumps.is_empty() {
-        println!("WARNING: visual-vs-audio offset jumps > 30 ms before chart times {timing_jumps:.1?}");
+        println!(
+            "WARNING: visual-vs-audio offset jumps > 30 ms before chart times {timing_jumps:.1?}"
+        );
     }
 
     let residuals: Vec<(f64, f64, f64)> = kept_real

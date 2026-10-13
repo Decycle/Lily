@@ -4,8 +4,8 @@
 //! path a synthetic chart is shown. Sprites are read from the ui dir (default `data/ui`).
 //! Keys: Up/Down note speed, Space pause, R restart. `RUST_LOG=info` for diagnostics.
 //!
-//! `WACCA_SHOT=<out.png>@<seconds>` renders that one moment (1024x1024, with a sample judgement,
-//! combo and hit flashes) to a PNG without opening a window.
+//! `WACCA_SHOT=<out.png>@<seconds>` renders that one moment (1024x1024, as after a perfect play
+//! up to it: hit effects, judgement, combo) to a PNG without opening a window.
 
 use std::error::Error;
 use std::sync::Arc as Shared;
@@ -15,7 +15,7 @@ use wacca_chart::{
     Arc, BeatPos, Bonus, Chart, ChartHeader, HoldNode, MaskDir, MaskEvent, Note, NoteBody,
     ScrollSegment, SlideDir, SnapDir,
 };
-use wacca_render::{Flash, JudgeSprite, LiveState, Renderer, SceneOptions, build_scene};
+use wacca_render::{Effects, JudgeSprite, LiveState, Renderer, SceneOptions, build_scene};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -273,28 +273,45 @@ fn snapshot(
     });
     let mut renderer = Renderer::new(&device, &queue, format);
     renderer.load_sprites(ui);
-    let flashes: Vec<Flash> = [
-        (0u8, JudgeSprite::Marvelous),
-        (20, JudgeSprite::Great),
-        (40, JudgeSprite::Good),
-    ]
-    .into_iter()
-    .map(|(lane, kind)| Flash {
-        lane,
-        width: 6,
-        kind,
-        age: 0.05,
-    })
-    .collect();
+    // Perfect play up to `at` (WACCA_SHOT_JUDGE=great|good for other judgements): every
+    // note judged on time, effects stepped at 120 Hz.
+    let kind = match std::env::var("WACCA_SHOT_JUDGE").as_deref() {
+        Ok("great") => JudgeSprite::Great,
+        Ok("good") => JudgeSprite::Good,
+        _ => JudgeSprite::Marvelous,
+    };
+    let done: Vec<&Note> = chart.notes.iter().filter(|n| n.time <= at).collect();
+    let mut fx = Effects::default();
+    let dt = 1.0 / 120.0;
+    let mut t = at - 0.5;
+    while t < at {
+        for n in done.iter().filter(|n| n.time > t - dt && n.time <= t) {
+            fx.hit(n.arc.lane, n.arc.width, kind);
+        }
+        let holds = chart.notes.iter().filter_map(|n| match &n.body {
+            NoteBody::Hold { nodes } if n.time <= t && nodes.last()?.time > t => {
+                wacca_render::effects::hold_arc_at(nodes, t)
+            }
+            _ => None,
+        });
+        fx.set_holds(holds.collect());
+        fx.update(dt as f32);
+        t += dt;
+    }
+    let last = done.last().map(|n| (at - n.time) as f32);
     let live = LiveState {
-        flashes: &flashes,
-        judgement: Some((JudgeSprite::Marvelous, 0.1)),
-        combo: 123,
+        effects: Some(&fx),
+        judgement: last.map(|age| (kind, age)),
+        combo: (done.len() as u32, last.unwrap_or(0.0)),
         ..LiveState::default()
     };
     let opts = SceneOptions {
-        note_speed: 2.0,
+        note_speed: std::env::var("WACCA_SHOT_SPEED")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(2.0),
         movie: false,
+        bar_lines: false,
     };
     let scene = build_scene(chart, at, &opts, &live, renderer.sprites());
     let mut encoder = device.create_command_encoder(&Default::default());

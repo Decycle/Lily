@@ -27,6 +27,16 @@ pub fn align_x(x: f32, width: f32, align: Align) -> f32 {
     }
 }
 
+/// Corners (top-left, top-right, bottom-right, bottom-left) of `[x, y, w, h]` turned by `angle`
+/// radians (clockwise on screen, y down) about its centre.
+pub fn corners([x, y, w, h]: [f32; 4], angle: f32) -> [[f32; 2]; 4] {
+    let (c, (sin, cos)) = ([x + w / 2.0, y + h / 2.0], angle.sin_cos());
+    [[-w, -h], [w, -h], [w, h], [-w, h]].map(|[dx, dy]| {
+        let (dx, dy) = (dx / 2.0, dy / 2.0);
+        [c[0] + dx * cos - dy * sin, c[1] + dx * sin + dy * cos]
+    })
+}
+
 /// `text` if it fits in `max`, else its longest prefix that fits followed by [`ELLIPSIS`].
 pub fn fit(text: &str, max: f32, advance: impl Fn(char) -> f32) -> Cow<'_, str> {
     if measure(text, &advance) <= max {
@@ -113,6 +123,21 @@ mod tests {
     /// Every character is 10 px wide.
     fn adv(_: char) -> f32 {
         10.0
+    }
+
+    #[test]
+    fn corners_turn_about_the_centre() {
+        let r = [10.0, 20.0, 4.0, 2.0];
+        assert_eq!(
+            corners(r, 0.0),
+            [[10.0, 20.0], [14.0, 20.0], [14.0, 22.0], [10.0, 22.0]]
+        );
+        // A quarter turn clockwise moves the top-left corner to the top-right.
+        let [tl, ..] = corners(r, std::f32::consts::FRAC_PI_2);
+        assert!(
+            (tl[0] - 13.0).abs() < 1e-4 && (tl[1] - 19.0).abs() < 1e-4,
+            "{tl:?}"
+        );
     }
 
     #[test]

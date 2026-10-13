@@ -8,8 +8,6 @@ use wacca_render::text::Align;
 
 pub const WHITE: Rgba = [1.0, 1.0, 1.0, 1.0];
 pub const GREY: Rgba = [0.65, 0.65, 0.72, 1.0];
-pub const PANEL: Rgba = [0.12, 0.12, 0.18, 1.0];
-pub const HIGHLIGHT: Rgba = [0.25, 0.30, 0.55, 1.0];
 
 /// User intent, from the keyboard or a tapped button.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,6 +24,10 @@ pub enum Action {
     Scroll(i32),
     NextSort,
     ToggleFilter,
+    /// The DIFFICULTY button: next existing difficulty, wrapping.
+    Difficulty,
+    /// Jump to the previous / next genre folder.
+    Genre(i32),
     Retry,
 }
 
@@ -44,10 +46,34 @@ pub enum Item {
         align: Align,
         max_width: Option<f32>,
     },
+    /// One line turned by `angle` radians (clockwise) about `at` (anchor x per `align`, top).
+    TurnedText {
+        text: String,
+        at: [f32; 2],
+        px: f32,
+        color: Rgba,
+        align: Align,
+        angle: f32,
+    },
     /// Song jacket by asset name (image if available, else a coloured square).
     Jacket {
         rect: Rect,
         key: String,
+    },
+    /// Convex polygon; one colour per point (gradient) or a single flat colour.
+    Poly {
+        points: Vec<[f32; 2]>,
+        colors: Vec<Rgba>,
+    },
+    /// Exported game texture `data/ui/<key>.png` (e.g. `UI/Textures/uT_STmenu_obj008`): region
+    /// `uv` (ends swapped = mirrored) times `tint`, turned by `angle` radians (clockwise) about
+    /// the centre of `rect`. Missing textures draw nothing.
+    Image {
+        key: String,
+        rect: Rect,
+        uv: [f32; 4],
+        angle: f32,
+        tint: Rgba,
     },
 }
 
@@ -86,6 +112,20 @@ impl View {
         });
     }
 
+    pub fn poly(&mut self, points: Vec<[f32; 2]>, colors: Vec<Rgba>) {
+        self.items.push(Item::Poly { points, colors });
+    }
+
+    pub fn image(&mut self, key: impl Into<String>, rect: Rect, tint: Rgba) {
+        self.items.push(Item::Image {
+            key: key.into(),
+            rect,
+            uv: [0.0, 0.0, 1.0, 1.0],
+            angle: 0.0,
+            tint,
+        });
+    }
+
     pub fn button(&mut self, rect: Rect, action: Action) {
         self.buttons.push((rect, action));
     }
@@ -105,7 +145,7 @@ impl View {
         self.items
             .iter()
             .filter_map(|i| match i {
-                Item::Text { text, .. } => Some(text.as_str()),
+                Item::Text { text, .. } | Item::TurnedText { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect()
@@ -116,15 +156,17 @@ pub fn contains(r: Rect, p: [f32; 2]) -> bool {
     p[0] >= r.x && p[0] < r.x + r.w && p[1] >= r.y && p[1] < r.y + r.h
 }
 
-/// `n`-th horizontal band of height `h` starting at `top` inside `area` (full width, inset).
-pub fn row(area: Rect, top: f32, h: f32, n: usize) -> Rect {
-    let inset = area.w * 0.03;
-    Rect {
-        x: area.x + inset,
-        y: top + h * n as f32,
-        w: area.w - 2.0 * inset,
-        h: h * 0.92,
-    }
+/// The original UI is a 1080 × 1920 portrait canvas around the round screen.
+pub const CANVAS: [f32; 2] = [1080.0, 1920.0];
+
+/// Canvas point → window pixels: the canvas scaled to the height of the 9:16 menu `area` and
+/// centred in it.
+pub fn canvas(area: Rect, [x, y]: [f32; 2]) -> [f32; 2] {
+    let s = area.h / CANVAS[1];
+    [
+        area.x + area.w / 2.0 + (x - CANVAS[0] / 2.0) * s,
+        area.y + y * s,
+    ]
 }
 
 #[cfg(test)]
@@ -158,10 +200,15 @@ mod tests {
     }
 
     #[test]
-    fn rows_stack_downwards() {
-        let a = row(R, 30.0, 10.0, 0);
-        let b = row(R, 30.0, 10.0, 2);
-        assert_eq!((a.y, b.y), (30.0, 50.0));
-        assert!(a.x > R.x && a.w < R.w);
+    fn canvas_scales_to_height_and_centres() {
+        let area = Rect {
+            x: 100.0,
+            y: 0.0,
+            w: 540.0,
+            h: 960.0,
+        };
+        assert_eq!(canvas(area, [540.0, 0.0]), [370.0, 0.0]);
+        assert_eq!(canvas(area, [0.0, 1920.0]), [100.0, 960.0]);
+        assert_eq!(canvas(area, [1080.0, 960.0]), [640.0, 480.0]);
     }
 }
