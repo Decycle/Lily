@@ -131,7 +131,10 @@ guest-reachable chart with all of them: **KING (3005) Normal Lv 2** (VOCALOID; 2
 after 46 left steps from TOUHOU) and `scripts/e2-king-normal.taps.json` is generated. Its first notes come before
 live sync can be ready (first note at BGM 1.44 s, sync ready 3.1 s), so ~38 early edges are skipped. The one
 capture (`runs/e2/20261013-005606`) was aborted on request while the machine was overloaded: its timing check shows
-offsets jumping by up to 600 ms and the game was killed mid-song, so its `reference/` frames are **not** usable.
+offsets jumping by up to 600 ms and the game was killed mid-song, so its `reference/` frames are **not** usable. A
+second attempt (`runs/e2/20261013-020813`, started after 60 s of idle) failed in navigation: KING was not centred
+within 60 left steps (other agents started compiling during the run; the seek may have skipped past it while
+the list scrolled). Next try: seek with a longer wait per step and both directions.
 
 ## 6. Recommended code changes
 
