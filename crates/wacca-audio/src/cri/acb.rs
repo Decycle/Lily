@@ -22,6 +22,9 @@ const NONE_U16: u64 = 0xFFFF;
 const MAX_DEPTH: u32 = 8;
 /// Bus of the speaker mix; the other track of each song goes to `BGM_HEADPHONE`.
 pub const SPEAKER_BUS: &str = "BGM_SPEAKER";
+/// [`Waveform::encode_type`] of ADX and HCA waveforms.
+pub const ENCODE_ADX: u8 = 0;
+pub const ENCODE_HCA: u8 = 2;
 
 /// Where a waveform's encoded bytes live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,7 +40,7 @@ pub enum Source {
 pub struct Waveform {
     pub index: u16,
     pub source: Source,
-    /// 2 = HCA, 0 = ADX.
+    /// [`ENCODE_HCA`] or [`ENCODE_ADX`].
     pub encode_type: u8,
     pub channels: u8,
     pub sample_rate: u32,
@@ -124,12 +127,8 @@ fn missing(name: &str) -> Error {
     }
 }
 
-fn required<'a>(t: Option<Table<'a>>, name: &str) -> Result<Table<'a>, Error> {
+fn required<T>(t: Option<T>, name: &str) -> Result<T, Error> {
     t.ok_or_else(|| missing(name))
-}
-
-fn need<'t, 'a>(t: &'t Option<Table<'a>>, name: &str) -> Result<&'t Table<'a>, Error> {
-    t.as_ref().ok_or_else(|| missing(name))
 }
 
 impl Tables<'_> {
@@ -149,15 +148,15 @@ impl Tables<'_> {
         match ref_type {
             REF_WAVEFORM => out.push((index, track)),
             REF_SYNTH => {
-                let synth = need(&self.synth, "SynthTable")?;
+                let synth = required(self.synth.as_ref(), "SynthTable")?;
                 for (t, i) in u16_pairs(synth.data(index, "ReferenceItems")?) {
                     self.walk(t, i, track, depth + 1, out)?;
                 }
             }
             REF_SEQUENCE => {
-                let seq = need(&self.sequence, "SequenceTable")?;
-                let tracks = need(&self.track, "TrackTable")?;
-                let events = need(&self.track_event, "TrackEventTable")?;
+                let seq = required(self.sequence.as_ref(), "SequenceTable")?;
+                let tracks = required(self.track.as_ref(), "TrackTable")?;
+                let events = required(self.track_event.as_ref(), "TrackEventTable")?;
                 for &t in seq.data(index, "TrackIndex")?.as_chunks::<2>().0 {
                     let t = usize::from(u16::from_be_bytes(t));
                     let ev = tracks.uint(t, "EventIndex")?;

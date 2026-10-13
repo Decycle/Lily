@@ -22,7 +22,7 @@ fn rate_tenths(j: Judgement) -> u64 {
 }
 
 /// Score weight of one judged note: R notes count double.
-pub fn weight(bonus: Bonus) -> u64 {
+fn weight(bonus: Bonus) -> u64 {
     if bonus == Bonus::R { 2 } else { 1 }
 }
 

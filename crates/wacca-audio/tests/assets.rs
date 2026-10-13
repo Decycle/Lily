@@ -15,7 +15,7 @@ fn se_bank() -> SeBank {
 }
 
 #[test]
-#[ignore]
+#[ignore = "needs WACCA_ASSETS"]
 fn every_se_cue_decodes() {
     let bank = se_bank();
     let names: Vec<_> = bank.acb().cue_names().map(str::to_string).collect();
@@ -58,7 +58,7 @@ fn every_se_cue_decodes() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "needs WACCA_ASSETS"]
 fn default_hit_sounds_resolve() {
     let hits = HitSounds::load(&se_bank(), &DEFAULT_SE_SET, 48000).unwrap();
     for one_shot in [
@@ -125,7 +125,7 @@ fn chart_cues() -> BTreeSet<String> {
 }
 
 #[test]
-#[ignore]
+#[ignore = "needs WACCA_ASSETS"]
 fn all_bgm_cues_resolve_to_hca_entries() {
     let bank = bank();
     let names: Vec<_> = bank.acb().cue_names().map(str::to_string).collect();
@@ -151,7 +151,7 @@ fn all_bgm_cues_resolve_to_hca_entries() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "needs WACCA_ASSETS"]
 fn songs_use_the_speaker_mix() {
     let bank = bank();
     let t = bank.acb().speaker_track("MER_BGM_S00_003").unwrap();
@@ -164,7 +164,7 @@ fn songs_use_the_speaker_mix() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "needs WACCA_ASSETS"]
 fn embedded_awb_headers_match_files() {
     let bank = bank();
     for awb in bank.acb().stream_awbs() {
@@ -175,7 +175,7 @@ fn embedded_awb_headers_match_files() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "needs WACCA_ASSETS"]
 fn reports_the_six_removed_chart_cues() {
     let bank = bank();
     let missing: Vec<_> = chart_cues()
@@ -196,7 +196,7 @@ fn reports_the_six_removed_chart_cues() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "needs WACCA_ASSETS"]
 fn decodes_two_seconds_of_s00_003() {
     let mut s = bank().open_cue("MER_BGM_S00_003").unwrap();
     assert_eq!((s.sample_rate(), s.channels()), (48000, 2));

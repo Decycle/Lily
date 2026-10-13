@@ -4,15 +4,13 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
-use crate::cri::acb::{Acb, Source, Waveform};
+use crate::cri::acb::{Acb, ENCODE_HCA, Source, Waveform};
 use crate::cri::afs2::{self, Entry};
 use crate::hca::Slice;
 use crate::{Error, HcaStream};
 
 /// UE4 asset that carries the BGM ACB.
 pub const ACB_FILE: &str = "MER_BGM.uexp";
-/// ACB `EncodeType` of HCA waveforms.
-const ENCODE_HCA: u8 = 2;
 
 /// Byte range of one cue's speaker-mix waveform.
 #[derive(Debug, Clone, PartialEq)]

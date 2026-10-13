@@ -4,7 +4,8 @@
 //! With lane 0 at 3 o'clock and lanes increasing counter-clockwise, the arc `[l, l + w)` reflects
 //! to `[30 − l − w, 30 − l)`. Slides swap CW ↔ CCW, mask sweeps swap Plus ↔ Minus, snaps are
 //! unchanged.
-// UNVERIFIED: the reflection axis and formula are derived (doc 04), not checked in the real game.
+// UNVERIFIED: the reflection axis and formula are derived (doc 04), not checked in the real game
+// (only the lane convention they rest on is measured, `docs/research/09-e2-results.md` §0).
 
 use crate::model::{Arc, Chart, HoldNode, LANES, MaskDir, NoteBody, SlideDir};
 

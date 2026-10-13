@@ -442,18 +442,16 @@ fn walk_hold(
                     && rows[j].pos >= row.pos
                     && matches!(rows[j].kind, RowKind::Note(m) if matches!(m.kind, HOLD_JOINT | HOLD_END))
             });
-        match next {
-            Some(j) => i = j,
-            None => {
-                log::warn!(
-                    "line {}: hold node {} has a missing or invalid link {:?}; truncating hold",
-                    row.line,
-                    n.index,
-                    n.extra
-                );
-                break;
-            }
-        }
+        let Some(j) = next else {
+            log::warn!(
+                "line {}: hold node {} has a missing or invalid link {:?}; truncating hold",
+                row.line,
+                n.index,
+                n.extra
+            );
+            break;
+        };
+        i = j;
     }
     nodes
 }
