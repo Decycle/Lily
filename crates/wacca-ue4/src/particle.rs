@@ -240,6 +240,11 @@ pub enum Module {
     },
     /// Initial rotation in turns.
     Rotation(Distribution),
+    /// Mesh particles: initial roll/pitch/yaw in turns (`ParticleModuleMeshRotation`), added to
+    /// the type data's `RollPitchYawRange`.
+    MeshRotation(Distribution),
+    /// Constant acceleration (vector, cm/s², `ParticleModuleAcceleration`).
+    Acceleration(Distribution),
     /// Rotation rate in turns per second.
     RotationRate(Distribution),
     /// Sprite pivot offset (added to the default −0.5, −0.5).
@@ -276,6 +281,9 @@ pub struct Emitter {
     /// `EParticleScreenAlignment` name (`PSA_Square`, `PSA_Velocity`, `PSA_Rectangle`, ...).
     pub alignment: String,
     pub local_space: bool,
+    /// `EmitterOrigin`: where particles spawn (component-local with `local_space`).
+    #[serde(default)]
+    pub origin: [f32; 3],
     pub duration: f32,
     pub delay: f32,
     /// 0 = loop forever.
@@ -295,6 +303,9 @@ pub struct Emitter {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ParticleSystem {
     pub name: String,
+    /// `WarmupTime`: seconds simulated at once when the system starts (the looping backgrounds).
+    #[serde(default)]
+    pub warmup: f32,
     pub emitters: Vec<Emitter>,
 }
 
@@ -311,6 +322,7 @@ pub fn read_particle_system(uasset: &[u8], uexp: &[u8]) -> Result<ParticleSystem
         .collect();
     Ok(ParticleSystem {
         name: sys.name.clone(),
+        warmup: float(sys, "WarmupTime", 0.0),
         emitters,
     })
 }
@@ -565,6 +577,12 @@ fn emitter(objs: &Objects, e: &Object) -> Option<Emitter> {
             .map(gpu_curves),
         alignment: enum_name(required, "ScreenAlignment", "PSA_Square"),
         local_space: flag(required, "bUseLocalSpace", false),
+        origin: match required.get("EmitterOrigin") {
+            Some(Value::Array(v)) => {
+                [0, 1, 2].map(|i| v.get(i).and_then(Value::as_f32).unwrap_or(0.0))
+            }
+            _ => [0.0; 3],
+        },
         duration: float(required, "EmitterDuration", 1.0),
         delay: float(required, "EmitterDelay", 0.0),
         loops: int(required, "EmitterLoops", 0) as i32,
@@ -627,6 +645,8 @@ fn module(objs: &Objects, m: &Object) -> Module {
         },
         "ParticleModuleRotation" => Module::Rotation(d("StartRotation", &[0.0])),
         "ParticleModuleRotationRate" => Module::RotationRate(d("StartRotationRate", &[0.0])),
+        "ParticleModuleMeshRotation" => Module::MeshRotation(d("StartRotation", &[0.0; 3])),
+        "ParticleModuleAcceleration" => Module::Acceleration(d("Acceleration", &[0.0; 3])),
         "ParticleModulePivotOffset" => {
             let p = match m.get("PivotOffset") {
                 Some(Value::Array(v)) => [0, 1].map(|i| v.get(i).and_then(Value::as_f32)),
@@ -796,6 +816,12 @@ mod tests {
             "ObjectProperty",
             &[1, 0, 0, 0, 2, 0, 0, 0],
         );
+        fx.tag(
+            &mut sys,
+            "WarmupTime",
+            "FloatProperty",
+            &8.0f32.to_le_bytes(),
+        );
         fx.none(&mut sys);
         let mut em = Vec::new();
         let name = fx.fname("Flare");
@@ -823,6 +849,11 @@ mod tests {
             &0.35f32.to_le_bytes(),
         );
         fx.bool_tag(&mut req, "bUseLocalSpace", true);
+        let origin: Vec<u8> = [0.0f32, 1000.0, -5.0]
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        fx.struct_tag(&mut req, "EmitterOrigin", "Vector", &origin);
         fx.none(&mut req);
         let mut life = Vec::new();
         raw_float(&mut fx, &mut life, "Lifetime", OP_RANDOM, &[0.2, 0.3]);
@@ -835,13 +866,14 @@ mod tests {
             fx.export(c, &format!("o{i}"), b.len());
         }
         let ps = read_particle_system(&fx.uasset(), &bodies.concat()).unwrap();
-        assert_eq!(ps.name, "o0");
+        assert_eq!((ps.name.as_str(), ps.warmup), ("o0", 8.0));
         let [e] = ps.emitters.as_slice() else {
             panic!("{ps:?}")
         };
         assert_eq!((e.name.as_str(), e.material.as_str()), ("Flare", "vM_Test"));
         assert!(e.local_space && (e.duration - 0.35).abs() < 1e-6 && e.loops == 0);
         assert_eq!(e.alignment, "PSA_Square");
+        assert_eq!(e.origin, [0.0, 1000.0, -5.0]);
         assert_eq!((e.mesh.as_ref(), e.gpu.as_ref()), (None, None));
         let Module::Lifetime(l) = &e.modules[0] else {
             panic!("{:?}", e.modules)

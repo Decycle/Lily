@@ -241,6 +241,7 @@ mod tests {
             gpu: None,
             alignment: String::new(),
             local_space: true,
+            origin: [0.0; 3],
             duration: 1.0,
             delay: 0.0,
             loops: 1,
@@ -254,6 +255,7 @@ mod tests {
         };
         let sys = ParticleSystem {
             name: "s".into(),
+            warmup: 0.0,
             emitters: vec![e("A", Some("M")), e("B", None), e("A", None)],
         };
         let (mats, meshes) = references(&[sys]);

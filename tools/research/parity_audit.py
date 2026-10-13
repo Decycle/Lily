@@ -2,6 +2,10 @@
 
 Usage: python -I parity_audit.py <run dir> <out dir> [--every N] [--match REGEX] [--title T] [--level L]
                                  [--env K=V]... [--no-movie] [--latency S] [--hit-latency S]
+                                 [--bg-good-at S]
+
+Without a movie the background scene is drawn in its Normal state; `--bg-good-at S` switches it to Good
+from chart time S on (the switch measured on the run's video; `--env WACCA_SHOT_BG=off` = no background).
 
 <run dir> is an E2/E3 run (`runs/e2|e3/<ts>`: meta.json or e2.json naming the chart, e2.json `visual_timing`,
 reference/frames.csv + PNGs, inject.jsonl, e3.json when present). For every reference frame (every Nth, or those
@@ -167,6 +171,7 @@ def main():
     args = sys.argv[1:]
     run, out = args[0], args[1]
     every, match, title, level, movie_on, latency, hit_latency = 1, None, "", "NORMAL/Lv.1", True, 0.025, 0.0
+    good_at = None
     env = dict(os.environ)
     i = 2
     while i < len(args):
@@ -187,6 +192,8 @@ def main():
             latency = float(args[i + 1]); i += 2
         elif a == "--no-movie":
             movie_on = False; i += 1
+        elif a == "--bg-good-at":
+            good_at = float(args[i + 1]); i += 2
         else:
             sys.exit("unknown argument " + a)
     os.makedirs(os.path.join(out, "sheets"), exist_ok=True)
@@ -214,6 +221,8 @@ def main():
         e = dict(env, WACCA_SHOT="%s@%.4f" % (ours, t))
         if f in planes:
             e["WACCA_SHOT_MOVIE"] = planes[f]
+        if good_at is not None and t >= good_at:
+            e["WACCA_SHOT_BG"] = "good"
         subprocess.run([os.path.join(EXAMPLES, "playfield.exe"), chart, os.path.join(ROOT, "data", "ui")],
                        env=e, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         bands = compare(os.path.join(run, "reference", f), ours, os.path.join(out, "sheets", f))

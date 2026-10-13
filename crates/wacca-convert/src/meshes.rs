@@ -16,8 +16,17 @@ pub const NOTES_DIR: &str = "Vfx/Mesh/Notes";
 pub fn to_obj(name: &str, mesh: &StaticMesh) -> String {
     let mut s =
         format!("# {name}: UE4 StaticMesh LOD0, raw UE coordinates (cm); vt = UV0 as stored\n");
-    for [x, y, z] in &mesh.positions {
-        let _ = writeln!(s, "v {x} {y} {z}");
+    for (i, [x, y, z]) in mesh.positions.iter().enumerate() {
+        match mesh.colors.get(i) {
+            // Vertex colour as the common `v x y z r g b` extension (0..1).
+            Some(c) => {
+                let [r, g, b] = [c[0], c[1], c[2]].map(|v| f32::from(v) / 255.0);
+                let _ = writeln!(s, "v {x} {y} {z} {r} {g} {b}");
+            }
+            None => {
+                let _ = writeln!(s, "v {x} {y} {z}");
+            }
+        }
     }
     for [u, v] in &mesh.uv0 {
         let _ = writeln!(s, "vt {u} {v}");
@@ -82,9 +91,15 @@ mod tests {
                 first_index: 0,
                 triangles: 1,
             }],
+            colors: vec![],
         };
         let obj = to_obj("m", &mesh);
         assert!(obj.contains("v 7 8 9.5\n"));
+        let coloured = StaticMesh {
+            colors: vec![[255, 0, 51, 255]; 3],
+            ..mesh
+        };
+        assert!(to_obj("m", &coloured).contains("v 1 2 3 1 0 0.2\n"));
         assert!(obj.contains("vt 0 0.25\n"));
         assert!(obj.contains("g section3\nf 1/1 2/2 3/3\n"));
     }

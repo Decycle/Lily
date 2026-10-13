@@ -5,6 +5,7 @@
 
 use std::path::Path;
 
+use crate::bg_gpu::BgLayer;
 use crate::fx_gpu::FxLayer;
 use crate::layout::{ATLAS_SIZE, Vertex, playfield_viewport};
 use crate::notes_gpu::NoteLayer;
@@ -42,6 +43,8 @@ pub struct Renderer {
     stage: StageLayer,
     /// Hit effects (off until the effect library loads).
     fx: FxLayer,
+    /// The no-movie background scene (off until its library loads).
+    bg: BgLayer,
 }
 
 impl Renderer {
@@ -168,6 +171,7 @@ impl Renderer {
             notes: NoteLayer::new(device, SAMPLE_COUNT),
             stage: StageLayer::new(device, queue, format, SAMPLE_COUNT),
             fx: FxLayer::new(device, SAMPLE_COUNT),
+            bg: BgLayer::new(device, SAMPLE_COUNT),
         };
         // The white block alone: flat colours work without any sprites.
         me.upload(sprites::pack(Vec::new()).1);
@@ -184,6 +188,7 @@ impl Renderer {
         self.stage.load(&self.device, &self.queue, ui_dir);
         if let Some(data) = ui_dir.parent() {
             self.fx.load(&self.device, &self.queue, data, ui_dir);
+            self.bg.load(&self.device, &self.queue, data);
         }
         self.notes.load(
             &self.device,
@@ -224,6 +229,18 @@ impl Renderer {
         let (sheet, placed) = sprites::pack(all);
         self.upload(placed);
         self.sheet = sheet;
+    }
+
+    /// The background scene's library, when loaded (give it to [`crate::Background::new`] and
+    /// pass the background in [`crate::LiveState`]; drawn when no movie plays).
+    pub fn background_library(&self) -> Option<std::sync::Arc<crate::BgLibrary>> {
+        self.bg.library()
+    }
+
+    /// The background capture target (`bg::CAPTURE_SIZE`², RGBA8, linear colour 0..1) as last
+    /// rendered by [`Renderer::render_with_notes`]: copy it out to inspect it.
+    pub fn background_capture(&self) -> &wgpu::Texture {
+        self.bg.capture()
     }
 
     /// Note meshes for [`build_mesh_notes`](crate::build_mesh_notes), when loaded (then build the
@@ -315,8 +332,16 @@ impl Renderer {
             self.notes.prepare(&self.device, &self.queue, notes);
             self.stage.prepare(&self.device, &self.queue, stage, vp);
             self.fx.prepare(&self.device, &self.queue, stage);
+            let background = stage.show_background && !self.video.shown();
+            if background {
+                self.bg
+                    .render(&self.device, &self.queue, encoder, &stage.background);
+            }
             let mut pass = self.stage.begin(&self.device, encoder, target_size, vp);
             self.video.draw(&mut pass);
+            if background {
+                self.bg.draw_quad(&mut pass);
+            }
             self.notes.draw_opaque(&mut pass, notes);
             self.stage.draw_opaque(&mut pass);
             self.fx.draw_masked(&mut pass);

@@ -23,7 +23,7 @@ const MIN_BUFFER_BYTES: u64 = 256 * 1024;
 /// Guide-lane fade `(PercentageAlpha, WidthGradation)` from `RhythmGameAppearanceTable`
 /// (`GuideLaneBrightnessParamAlpha*`): with a movie (captured in the material) and without.
 const LANE_FADE_MOVIE: [f32; 2] = [290.0, 6.0];
-// UNVERIFIED: the normal (no movie) values are the table's, not seen in a capture.
+// The normal (no movie) values: CONFIRMED by KING frame 11389 (guide lane eid 3314: 600, 3).
 const LANE_FADE_NORMAL: [f32; 2] = [600.0, 3.0];
 
 /// Stage textures under `data/ui/Vfx/Textures`: file stem and whether the texture is sRGB (the
@@ -534,7 +534,7 @@ fn vertex_buffer(device: &wgpu::Device, size: u64) -> wgpu::Buffer {
 }
 
 /// One-level texture (the captured stage textures have no mips).
-fn upload(
+pub(crate) fn upload(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     label: &str,

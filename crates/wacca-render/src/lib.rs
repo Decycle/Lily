@@ -3,6 +3,8 @@
 //! Split: [`layout`], [`scene`] and the baking/packing in [`sprites`] are pure (unit-tested);
 //! [`Renderer`] only uploads the sprite atlas and draws the resulting triangle list.
 
+pub mod bg;
+mod bg_gpu;
 pub mod camera;
 pub mod effects;
 mod fx_gpu;
@@ -21,6 +23,7 @@ pub mod sync;
 pub mod text;
 mod video;
 
+pub use bg::{Background, BgLibrary, BgState};
 pub use effects::Effects;
 pub use layout::{Paint, Vertex};
 pub use notes3d::{MeshVertex, NoteMeshes, build_mesh_notes};

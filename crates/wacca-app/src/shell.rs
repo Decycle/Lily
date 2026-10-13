@@ -737,7 +737,9 @@ impl App {
         }) {
             Ok(mut p) => {
                 log::info!("song loaded in {:.0} ms", ms(t.elapsed()));
-                p.set_effect_library(self.gfx.as_ref().and_then(|g| g.renderer.effect_library()));
+                let renderer = self.gfx.as_ref().map(|g| &g.renderer);
+                p.set_effect_library(renderer.and_then(|r| r.effect_library()));
+                p.set_background_library(renderer.and_then(|r| r.background_library()));
                 self.play = Some(p);
                 self.screen = Screen::Play;
             }

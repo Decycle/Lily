@@ -145,6 +145,7 @@ mod tests {
     #[test]
     fn connectors_are_placed_per_group() {
         let tri = NoteMesh {
+            colors: Vec::new(),
             corners: vec![([170.0, 0.0, 1.0], [0.5, 0.5], 0); 3],
         };
         let mut meshes = NoteMeshes::default();

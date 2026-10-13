@@ -7,6 +7,7 @@ use std::f32::consts::{PI, TAU};
 
 use wacca_chart::{BeatPos, Bonus, Chart, LANES, Note, NoteBody, SlideDir, SnapDir};
 
+use crate::bg::Background;
 use crate::effects::Effects;
 use crate::layout::{
     Paint, UvRect, Vertex, depth_to_radius, last_drawable_time, paint_sector, polar,
@@ -52,6 +53,8 @@ pub struct LiveState<'a> {
     pub holding: &'a [usize],
     /// Hit effects, key beams and hold glows.
     pub effects: Option<&'a Effects>,
+    /// The background scene, drawn behind the play view when no movie plays.
+    pub background: Option<&'a Background>,
     /// Last judgement and its age in seconds (judgement word art).
     pub judgement: Option<(JudgeSprite, f32)>,
     /// Current combo (counter and COMBO word show while it is non-zero) and seconds since it
