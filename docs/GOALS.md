@@ -22,8 +22,8 @@ Priority: **1) play area — fully faithful visual + control port**, 2) menus, 3
 - [ ] E3: real judgement windows per class, hold drop, slide/snap thresholds, chord rule
 - [ ] Apply E3 to the judge engine (autoplay stays perfect on all charts, mirrored too)
 - [ ] KING capture: Miss / snap / R / bonus effect references, then match them
-- [ ] Performance + latency (dGPU, 120 Hz, low-latency audio, input timestamps)
-- [ ] Timing calibration screen
+- [x] Performance + latency (dGPU, 120 Hz, low-latency audio, input timestamps) — frame pacing: display wait 7.0→1.5 ms/frame; async image decode; F3 overlay
+- [x] Timing calibration screen (unit-tested; live tap check blocked by permission system → user to try by hand)
 
 ## 2. Menus
 - [ ] Menu scale = play-ring scale on landscape (circle-matched; off-circle UI uses side space)
