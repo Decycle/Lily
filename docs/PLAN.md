@@ -1,4 +1,7 @@
-# WACCA_slim — Faithful core-loop rewrite plan
+# Faithful core-loop rewrite plan
+
+> The original design plan, kept for reference. Some details (crate split, FFmpeg as DLLs) changed during
+> implementation; the current state is in the [README](../README.md), open items in [ROADMAP.md](ROADMAP.md).
 
 Native Rust desktop reimplementation of WACCA Reverse (3.07.01) gameplay, built for one touchscreen laptop
 (1920×1200, Windows 10), using the original assets in `assets/`. Personal use only — assets never go into git.
