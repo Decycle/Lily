@@ -98,7 +98,9 @@ fn tap(m: Material, uv: vec2<f32>, vc: vec4<f32>) -> vec4<f32> {
     let w = mix(uv.y, uv.y * cm, p1.x);
     let a = (powp(w * 0.5, p1.y) + powp(w, p1.z)) * vc.a;
     let s = sin(TAU * (uv.y * 0.5 + p1.w));
-    let k = min(round(smooth01((s - (h - 0.1)) / 0.1)), 1.0);
+    // `round_pi` (ceil) in the DXBC: the whole band where the sine passes h − 0.1 is cut (the
+    // key beam's gap over the judgement ring).
+    let k = min(ceil(smooth01((s - (h - 0.1)) / 0.1)), 1.0);
     let alpha = clamp(a - m.params[2].x * a * k, 0.0, 1.0);
     return vec4<f32>(max(col, vec3<f32>(0.0)), alpha);
 }

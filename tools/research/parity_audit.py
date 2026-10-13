@@ -1,7 +1,7 @@
 """Systematic visual-parity audit: real-game reference frames vs our renders at the same chart times.
 
 Usage: python -I parity_audit.py <run dir> <out dir> [--every N] [--match REGEX] [--title T] [--level L]
-                                 [--env K=V]... [--no-movie]
+                                 [--env K=V]... [--no-movie] [--latency S] [--hit-latency S]
 
 <run dir> is an E2/E3 run (`runs/e2|e3/<ts>`: meta.json or e2.json naming the chart, e2.json `visual_timing`,
 reference/frames.csv + PNGs, inject.jsonl, e3.json when present). For every reference frame (every Nth, or those
@@ -9,7 +9,9 @@ whose label matches REGEX) it renders ours with the playfield example's `WACCA_S
 moved by the run's measured visual lead (`visual_timing`, interpolated), with
 * the play replayed: the injected touches (inject.jsonl edges) and, for E3 runs, the real per-note judgements
   (e3.json `real`, hit at note time + probe shift, judgement shown at note time + `shown`); notes without an
-  outcome are perfect (`WACCA_SHOT_REPLAY`),
+  outcome are perfect (`WACCA_SHOT_REPLAY`). Touches are moved by the game's input latency on the picture
+  clock (--latency, default 0.058 s: a touch's rim highlight shows 0.058 s after its script time); hit effects
+  by --hit-latency (default 0.033 s, best fit on the E3 Fragile hit frames),
 * the song's background movie frame behind (`WACCA_SHOT_MOVIE`, planes cut from assets/Movie/mv_<id>.usm),
 and compares with `stagecmp compare` (view square 0,228,675,675). Writes <out>/sheets/NNNN-<label>.png
 (real | ours | |diff|x4), <out>/audit.csv (mean |diff| per region and per 25 px band) and prints a summary.
@@ -62,14 +64,14 @@ def visual_lead(timing):
     return f
 
 
-def replay(run):
+def replay(run, latency, hit_latency):
     touches = []
     path = os.path.join(run, "inject.jsonl")
     if os.path.exists(path):
         for line in open(path):
             r = json.loads(line)
             if r.get("kind") == "edge":
-                touches.append([r["t_script_ms"] / 1000.0, lanes_of_cells(r["cells"])])
+                touches.append([r["t_script_ms"] / 1000.0 + latency, lanes_of_cells(r["cells"])])
     hits = []
     path = os.path.join(run, "e3.json")
     if os.path.exists(path):
@@ -77,7 +79,7 @@ def replay(run):
             probe = o.get("probe") or {}
             shift = probe.get("ms", 0.0) / 1000.0 if probe.get("probe") == "shift" else 0.0
             shown = o["time"] + o["shown"] if o.get("shown") is not None else o["end"]
-            hit = shown if o["real"] == "Miss" else o["time"] + shift
+            hit = shown if o["real"] == "Miss" else o["time"] + shift + hit_latency
             if o["class"] != "hold":
                 shown = hit
             hits.append({"note": o["note"], "kind": o["real"], "hit": hit, "shown": shown})
@@ -159,7 +161,7 @@ def regions(bands):
 def main():
     args = sys.argv[1:]
     run, out = args[0], args[1]
-    every, match, title, level, movie_on = 1, None, "", "NORMAL/Lv.1", True
+    every, match, title, level, movie_on, latency, hit_latency = 1, None, "", "NORMAL/Lv.1", True, 0.058, 0.033
     env = dict(os.environ)
     i = 2
     while i < len(args):
@@ -174,6 +176,10 @@ def main():
             level = args[i + 1]; i += 2
         elif a == "--env":
             k, v = args[i + 1].split("=", 1); env[k] = v; i += 2
+        elif a == "--hit-latency":
+            hit_latency = float(args[i + 1]); i += 2
+        elif a == "--latency":
+            latency = float(args[i + 1]); i += 2
         elif a == "--no-movie":
             movie_on = False; i += 1
         else:
@@ -184,7 +190,7 @@ def main():
     timing = json.load(open(os.path.join(run, "e2.json"))).get("visual_timing") or []
     lead = visual_lead(timing)
     rp = os.path.join(out, "replay.json")
-    json.dump(replay(run), open(rp, "w"))
+    json.dump(replay(run, latency, hit_latency), open(rp, "w"))
     refs = list(csv.DictReader(open(os.path.join(run, "reference", "frames.csv"))))
     refs = [r for k, r in enumerate(refs) if (match.search(r["label"]) if match else k % every == 0)]
     times = {r["file"]: float(r["chart_t"]) + lead(float(r["chart_t"])) for r in refs}

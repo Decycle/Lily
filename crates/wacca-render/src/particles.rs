@@ -526,8 +526,6 @@ struct Instance {
     emitters: Vec<EmitterState>,
     active: bool,
     key: Option<u64>,
-    /// Fading out: `(elapsed, duration)` (s); removed when elapsed reaches duration.
-    fade: Option<(f32, f32)>,
 }
 
 /// The live effects: system instances and their particles.
@@ -595,7 +593,6 @@ impl ParticleWorld {
             emitters,
             active: true,
             key,
-            fade: None,
         });
         // Bursts at time 0 fire on the next update.
     }
@@ -625,15 +622,6 @@ impl ParticleWorld {
         }
     }
 
-    /// Fades instance `key` out over `secs` (particle alpha → 0), then removes it.
-    pub fn fade_out(&mut self, key: u64, secs: f32) {
-        for i in self.instances.iter_mut().filter(|i| i.key == Some(key)) {
-            i.active = false;
-            i.key = None;
-            i.fade = Some((0.0, secs.max(1e-3)));
-        }
-    }
-
     /// Keys of the running persistent instances.
     pub fn keys(&self) -> impl Iterator<Item = u64> + '_ {
         self.instances.iter().filter_map(|i| i.key)
@@ -647,15 +635,11 @@ impl ParticleWorld {
             for (def, st) in inst.system.emitters.iter().zip(&mut inst.emitters) {
                 update_emitter(def, st, dt, inst.active, seed);
             }
-            if let Some((t, _)) = &mut inst.fade {
-                *t += dt;
-            }
         }
         self.instances.retain(|i| {
-            i.fade.is_none_or(|(t, d)| t < d)
-                && i.emitters
-                    .iter()
-                    .any(|e| !e.particles.is_empty() || (i.active && !e.done))
+            i.emitters
+                .iter()
+                .any(|e| !e.particles.is_empty() || (i.active && !e.done))
         });
     }
 
@@ -675,7 +659,6 @@ impl ParticleWorld {
                 };
                 let start = out.len() as u32;
                 let pivot = pivot(def);
-                let fade = inst.fade.map_or(1.0, |(t, d)| 1.0 - t / d);
                 for p in &st.particles {
                     match def.mesh.as_ref().and_then(|n| lib.meshes.get(n)) {
                         Some(mesh) => push_mesh_particle(out, &frame, p, mesh, material),
@@ -686,11 +669,6 @@ impl ParticleWorld {
                     }
                 }
                 let end = out.len() as u32;
-                if fade < 1.0 {
-                    for v in &mut out[start as usize..] {
-                        v.color[3] *= fade;
-                    }
-                }
                 if end == start {
                     continue;
                 }

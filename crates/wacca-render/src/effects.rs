@@ -28,9 +28,6 @@ use crate::style::Rgba;
 /// Key of a persistent instance: key beams and held-hold glows.
 const KEY_BEAM_KEY: u64 = 1 << 32;
 const HOLD_KEY: u64 = 2 << 32;
-/// A released key beam fades out over this long. Measured on the E3 recordings (a 34 ms tap's
-/// beam is gone ~0.3 s later); UNVERIFIED how the game fades it (the particle lives 100 s).
-pub const KEY_BEAM_FADE_SECS: f32 = 0.3;
 
 /// Live hit effects: the game's particle systems when the library is attached, else the 2D
 /// [`Fallback`].
@@ -47,13 +44,19 @@ pub struct Effects {
     rim: [f32; LANES as usize],
 }
 
-/// The rim over a touched sensor (2D HUD, not a particle effect): a white edge and a grey band
-/// outside the judgement ring, shown while touched and [`RIM_HOLD_SECS`] after release, no fade
-/// (E3 recordings, `runs/e3/20261013-023731` 9.36–9.62 s: edge (244, 243, 245) at 314–317 px,
-/// band (125, 125, 125) at 320–328 px of the 291.8 px ring radius).
-pub const RIM_HOLD_SECS: f32 = 0.2;
-const RIM_EDGE: (f32, f32, Rgba) = (1.076, 1.09, [0.957, 0.953, 0.961, 1.0]);
-const RIM_BAND: (f32, f32, Rgba) = (1.09, 1.126, [0.49, 0.49, 0.49, 1.0]);
+/// The rim over a touched sensor (2D HUD, not a particle effect): white, grey and a thin white
+/// line outside the judgement ring, shown while touched and [`RIM_HOLD_SECS`] after release, no
+/// fade. The lane's key beam (its particle lives 100 s) goes out at the same frame, at once
+/// (E3 Fragile: a 25 ms tap at 9.38 s and a hold released at 68.97 s; both 0.175–0.185 s after
+/// the release). E3 Fragile (`runs/e3/20261013-034614`, 9.35–9.53 s and 67.6 s, per-pixel radial
+/// profiles): white (250) 314.7–322.3 px, grey (128) 322.3–328.8 px, white 328.8–330.3 px from
+/// the HUD centre ([`crate::style::HUD_RAISE_PX`] above the view's), ring radius 291.8 px.
+pub const RIM_HOLD_SECS: f32 = 0.18;
+const RIM_BANDS: [(f32, f32, Rgba); 3] = [
+    (314.7 / 291.8, 322.3 / 291.8, [0.98, 0.98, 0.98, 1.0]),
+    (322.3 / 291.8, 328.8 / 291.8, [0.502, 0.502, 0.502, 1.0]),
+    (328.8 / 291.8, 330.3 / 291.8, [1.0, 1.0, 1.0, 1.0]),
+];
 
 impl PartialEq for Effects {
     fn eq(&self, other: &Self) -> bool {
@@ -178,7 +181,7 @@ impl Effects {
         }
         let mut wanted: HashSet<u64> = HashSet::new();
         if let Some(beam) = lib.system(KEY_BEAM) {
-            for lane in (0..LANES).filter(|l| self.touched >> l & 1 == 1) {
+            for lane in (0..LANES).filter(|&l| self.rim[usize::from(l)] > 0.0) {
                 let key = KEY_BEAM_KEY + u64::from(lane);
                 wanted.insert(key);
                 if !self.world.has(key) {
@@ -207,12 +210,8 @@ impl Effects {
         }
         let gone: Vec<u64> = self.world.keys().filter(|k| !wanted.contains(k)).collect();
         for key in gone {
-            if key < HOLD_KEY {
-                self.world.fade_out(key, KEY_BEAM_FADE_SECS);
-            } else {
-                // Hold glows let their particles finish.
-                self.world.stop(key, false);
-            }
+            // Key beams go out at once; hold glows let their particles finish.
+            self.world.stop(key, key < HOLD_KEY);
         }
         self.world.update(dt);
     }
@@ -231,10 +230,15 @@ impl Effects {
             self.fallback.draw(out, sheet);
             return;
         }
+        let from = out.len();
         for (lane, _) in self.rim.iter().enumerate().filter(|(_, r)| **r > 0.0) {
-            for (r0, r1, c) in [RIM_EDGE, RIM_BAND] {
+            for (r0, r1, c) in RIM_BANDS {
                 push_sector(out, r0, r1, lane as f32, 1.0, c);
             }
+        }
+        let raise = crate::style::HUD_RAISE_PX / 291.8;
+        for v in &mut out[from..] {
+            v.pos[1] += raise;
         }
     }
 }
@@ -655,20 +659,26 @@ mod tests {
         assert!(flat.is_empty(), "no 2D fallback with the library");
         fx.update(0.3);
         assert!(fx.is_empty());
-        // Key beam: lit while touched, fading for KEY_BEAM_FADE_SECS after release.
+        // Key beam and rim: lit while touched and RIM_HOLD_SECS after release, then gone.
         fx.touch(1 << 3);
         fx.update(0.01);
         assert_eq!(fx.len(), 1);
         fx.draw(&mut flat, &SpriteSheet::default());
-        assert_eq!(flat.len(), 2 * 6, "rim edge and band");
+        assert_eq!(flat.len(), 3 * 6, "white, grey, white line");
+        let raise = crate::style::HUD_RAISE_PX / 291.8;
+        let r = |v: &Vertex| v.pos[0].hypot(v.pos[1] - raise);
+        assert!(flat.iter().all(|v| (1.07..1.14).contains(&r(v))));
         fx.touch(0);
-        fx.update(KEY_BEAM_FADE_SECS / 2.0);
+        fx.update(RIM_HOLD_SECS / 2.0);
         assert_eq!(fx.len(), 1);
         let (mut v, mut runs) = (Vec::new(), Vec::new());
         fx.build(&mut v, &mut runs);
-        assert!(v.iter().all(|q| (q.color[3] - 0.5).abs() < 0.05));
-        fx.update(KEY_BEAM_FADE_SECS);
+        assert!(v.iter().all(|q| q.color[3] > 0.99), "no fade");
+        fx.update(RIM_HOLD_SECS);
         assert!(fx.is_empty());
+        flat.clear();
+        fx.draw(&mut flat, &SpriteSheet::default());
+        assert!(flat.is_empty());
     }
 
     #[test]
