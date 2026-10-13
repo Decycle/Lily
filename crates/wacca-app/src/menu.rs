@@ -38,7 +38,9 @@ impl Menu {
         let list = &mut self.list;
         match (screen, action) {
             (_, Back) => return Some(Event::Back),
-            (Screen::Results, Confirm) => return Some(Event::Confirm),
+            (Screen::Title | Screen::ModeSelect | Screen::Results, Confirm) => {
+                return Some(Event::Confirm);
+            }
             (Screen::Results, Retry) => return Some(Event::Retry),
             (Screen::Category, Confirm) => {
                 let empty = list.genres().is_empty();
@@ -192,6 +194,10 @@ mod tests {
             Some(Event::Confirm)
         );
         assert_eq!(m.act(Screen::Results, Action::Retry), Some(Event::Retry));
+        for screen in [Screen::Title, Screen::ModeSelect] {
+            assert_eq!(m.act(screen, Action::Confirm), Some(Event::Confirm));
+            assert_eq!(m.act(screen, Action::Right), None);
+        }
         assert_eq!(
             m.act(Screen::Results, Action::Confirm),
             Some(Event::Confirm)

@@ -1,8 +1,11 @@
 //! The core loop as a state machine, following the original:
-//! Category (genre folder) → SongSelect (song + difficulty) → Options → Play → Results → SongSelect.
+//! Title → ModeSelect → Category (genre folder) → SongSelect (song + difficulty) → Options → Play
+//! → Results → SongSelect.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
+    Title,
+    ModeSelect,
     Category,
     SongSelect,
     Options,
@@ -31,8 +34,12 @@ pub fn next(screen: Screen, event: Event) -> Next {
     use Event::*;
     use Screen::*;
     match (screen, event) {
+        (Title, Confirm) => Next::Go(ModeSelect),
+        (Title, Back) => Next::Quit,
+        (ModeSelect, Confirm) => Next::Go(Category),
+        (ModeSelect, Back) => Next::Go(Title),
         (Category, Confirm) => Next::Go(SongSelect),
-        (Category, Back) => Next::Quit,
+        (Category, Back) => Next::Go(ModeSelect),
         (SongSelect, Confirm) => Next::Go(Options),
         (SongSelect, Back) => Next::Go(Category),
         (Options, Confirm) => Next::Go(Play),
@@ -50,8 +57,10 @@ mod tests {
 
     #[test]
     fn full_loop() {
-        let mut s = Screen::Category;
+        let mut s = Screen::Title;
         for e in [
+            Event::Confirm,
+            Event::Confirm,
             Event::Confirm,
             Event::Confirm,
             Event::Confirm,
@@ -68,7 +77,7 @@ mod tests {
     }
 
     #[test]
-    fn back_walks_up_and_quits_from_the_category_screen() {
+    fn back_walks_up_and_quits_from_the_title() {
         assert_eq!(
             next(Screen::Options, Event::Back),
             Next::Go(Screen::SongSelect)
@@ -77,7 +86,15 @@ mod tests {
             next(Screen::SongSelect, Event::Back),
             Next::Go(Screen::Category)
         );
-        assert_eq!(next(Screen::Category, Event::Back), Next::Quit);
+        assert_eq!(
+            next(Screen::Category, Event::Back),
+            Next::Go(Screen::ModeSelect)
+        );
+        assert_eq!(
+            next(Screen::ModeSelect, Event::Back),
+            Next::Go(Screen::Title)
+        );
+        assert_eq!(next(Screen::Title, Event::Back), Next::Quit);
     }
 
     #[test]

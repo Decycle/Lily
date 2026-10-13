@@ -18,6 +18,7 @@ mod hud;
 mod jacket;
 mod labels;
 mod menu;
+mod mode;
 mod options;
 mod play;
 mod preview;
@@ -28,8 +29,10 @@ mod select;
 mod select_ui;
 mod session;
 mod shell;
+mod title;
 mod touch_mapping;
 mod ui;
+mod wipe;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
