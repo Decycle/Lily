@@ -100,8 +100,6 @@ pub const DEFAULT_TOUCH_EFFECT: &str = "312001";
 /// Key beam (`KeyBeamEffectTable` ON): one per touched lane. Captured: `vMX_2_Tap_000_TUS_m_00`
 /// (`LineLength_Change_ONOFF` 1) at radius 170 + 18, scale 1 (frame 12365).
 pub const KEY_BEAM: &str = "vo_ftap000_00";
-/// R-note hit (`SNoteEffectTable` ON). UNVERIFIED: which effect and where (not captured).
-pub const R_NOTE: &str = "vb_SnoteHit_00";
 
 impl TouchEffect {
     /// A row of `touch_effects.json` (`OFF` = none).
@@ -354,8 +352,8 @@ impl EffectLibrary {
         self.textures.len() as u32 - 1
     }
 
-    /// Loads `data_dir/effects` (systems of the default touch effect, key beam and R note, their
-    /// materials) and the meshes they use from `data_dir/meshes`.
+    /// Loads `data_dir/effects` (systems of the default touch effect and the key beam, their
+    /// materials; not the R-note effect, see `effects`) and the meshes they use from `data_dir/meshes`.
     pub fn load(data_dir: &Path) -> Result<Self, FxError> {
         let dir = data_dir.join("effects");
         let path = dir.join("touch_effects.json");
@@ -365,11 +363,7 @@ impl EffectLibrary {
             .map(TouchEffect::from_row)
             .ok_or_else(|| FxError::NoTouchRow(DEFAULT_TOUCH_EFFECT.into()))?;
         let mut systems = Vec::new();
-        let names: Vec<String> = touch
-            .all()
-            .chain([KEY_BEAM, R_NOTE])
-            .map(str::to_owned)
-            .collect();
+        let names: Vec<String> = touch.all().chain([KEY_BEAM]).map(str::to_owned).collect();
         for name in names {
             if systems.iter().any(|(n, _)| *n == name) {
                 continue;
