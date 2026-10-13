@@ -39,6 +39,48 @@ pub fn load(path: &Path) -> Option<([u32; 2], Vec<u8>)> {
     Some(([img.width(), img.height()], img.into_raw()))
 }
 
+/// A decoded image for `key` (`None`: missing or unreadable).
+pub type Loaded = (String, Option<([u32; 2], Vec<u8>)>);
+
+/// Decodes images with [`load`] on a background thread, so first use of a jacket or UI texture
+/// does not stall a frame (measured: ~9 ms per UI texture on the UI thread).
+#[derive(Debug)]
+pub struct Loader {
+    requests: std::sync::mpsc::Sender<(String, std::path::PathBuf)>,
+    done: std::sync::mpsc::Receiver<Loaded>,
+}
+
+impl Loader {
+    pub fn spawn() -> Self {
+        let (requests, rx) = std::sync::mpsc::channel::<(String, std::path::PathBuf)>();
+        let (tx, done) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("wacca-images".into())
+            .spawn(move || {
+                for (key, path) in rx {
+                    if tx.send((key, load(&path))).is_err() {
+                        break;
+                    }
+                }
+            });
+        if let Err(e) = spawned {
+            log::error!("image loader thread: {e}; images stay placeholders");
+        }
+        Self { requests, done }
+    }
+
+    /// Decode `path` for `key`; the result comes back from [`Loader::finished`].
+    pub fn request(&self, key: &str, path: std::path::PathBuf) {
+        // A dead thread was already logged; the image just never arrives.
+        let _ = self.requests.send((key.to_string(), path));
+    }
+
+    /// Images decoded since the last call.
+    pub fn finished(&self) -> impl Iterator<Item = Loaded> + '_ {
+        self.done.try_iter()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,6 +107,35 @@ mod tests {
             .unwrap();
         let (size, rgba) = load(&good).unwrap();
         assert_eq!((size, &rgba[..4]), ([2, 3], &[1u8, 2, 3, 4][..]));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn loader_decodes_in_the_background() {
+        let dir = std::env::temp_dir().join(format!("wacca-app-loader-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let good = dir.join("good.png");
+        image::RgbaImage::from_pixel(1, 1, image::Rgba([9, 8, 7, 6]))
+            .save(&good)
+            .unwrap();
+        let loader = Loader::spawn();
+        loader.request("good", good);
+        loader.request("missing", dir.join("missing.png"));
+        let mut got = Vec::new();
+        for _ in 0..500 {
+            got.extend(loader.finished());
+            if got.len() == 2 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(
+            got,
+            vec![
+                ("good".to_string(), Some(([1, 1], vec![9, 8, 7, 6]))),
+                ("missing".to_string(), None)
+            ]
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

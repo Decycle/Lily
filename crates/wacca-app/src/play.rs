@@ -17,7 +17,7 @@ use wacca_game::rules::{JudgeClass, JudgeEvent, Judgement};
 use wacca_render::effects::hold_arc_at;
 use wacca_render::layout::Rect;
 use wacca_render::{
-    Effects, JudgeSprite, LiveState, RimState, SceneOptions, SpriteSheet, Vertex, build_scene,
+    Effects, JudgeSprite, LiveState, RimState, SceneOptions, SpriteSheet, Vertex, build_scene_into,
 };
 use wacca_video::{Frame, VideoPlayer};
 
@@ -368,13 +368,15 @@ impl PlayState {
         self.player.pause();
     }
 
-    pub fn scene(&self, sprites: &SpriteSheet) -> Vec<Vertex> {
+    /// The playfield now, into `out` (reused across frames).
+    pub fn scene(&self, sprites: &SpriteSheet, out: &mut Vec<Vertex>) {
         let now = self.now();
         let judgement = self
             .session
             .last_event()
             .map(|e| (judge_sprite(e.judgement), (now - e.time) as f32));
-        build_scene(
+        build_scene_into(
+            out,
             &self.chart,
             now,
             &SceneOptions {

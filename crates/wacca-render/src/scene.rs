@@ -127,6 +127,20 @@ pub fn build_scene(
     sheet: &SpriteSheet,
 ) -> Vec<Vertex> {
     let mut out = Vec::new();
+    build_scene_into(&mut out, chart, now, opts, live, sheet);
+    out
+}
+
+/// [`build_scene`] into `out` (cleared first), so a caller can reuse one buffer every frame.
+pub fn build_scene_into(
+    out: &mut Vec<Vertex>,
+    chart: &Chart,
+    now: f64,
+    opts: &SceneOptions,
+    live: &LiveState,
+    sheet: &SpriteSheet,
+) {
+    out.clear();
     let lanes = LANES as usize;
 
     let mask = mask_state(&chart.masks, now);
@@ -142,9 +156,9 @@ pub fn build_scene(
         match guide {
             Some(uv) => {
                 let paint = Paint::image(tint, uv);
-                paint_sector(&mut out, 1.0, 0.0, lane as f32, 1.0, &paint);
+                paint_sector(out, 1.0, 0.0, lane as f32, 1.0, &paint);
             }
-            None => push_sector(&mut out, 0.0, 1.0, lane as f32, 1.0, flat),
+            None => push_sector(out, 0.0, 1.0, lane as f32, 1.0, flat),
         }
     }
     let line = if opts.movie {
@@ -154,10 +168,10 @@ pub fn build_scene(
     };
     for lane in (0..lanes).filter(|&l| mask[l] || mask[(l + lanes - 1) % lanes]) {
         let w = style::LANE_LINE_HALF_WIDTH;
-        push_radial_line(&mut out, lane as f32, 0.0, 1.0, w, line);
+        push_radial_line(out, lane as f32, 0.0, 1.0, w, line);
     }
     if opts.touch_guide {
-        push_touch_guide(&mut out, &live.pressed);
+        push_touch_guide(out, &live.pressed);
     }
 
     let last_time = last_drawable_time(chart, now);
@@ -182,11 +196,11 @@ pub fn build_scene(
     };
     for (_, note) in chart.notes.iter().enumerate().filter(drawable) {
         if let NoteBody::Hold { nodes } = &note.body {
-            push_hold_body(&mut out, nodes, depth_of, &hold_paint);
+            push_hold_body(out, nodes, depth_of, &hold_paint);
         }
     }
     if opts.bar_lines {
-        push_bar_lines(&mut out, chart, now, depth_of);
+        push_bar_lines(out, chart, now, depth_of);
     }
     let t = now as f32;
     // Far notes first so nearer ones are drawn on top.
@@ -200,7 +214,7 @@ pub fn build_scene(
                 body: None,
                 bonus: Bonus::None,
             };
-            push_note(&mut out, sheet, t, d, end.arc.lane, end.arc.width, &look);
+            push_note(out, sheet, t, d, end.arc.lane, end.arc.width, &look);
         }
         if let Some(d) = visible(note.time) {
             let look = NoteLook {
@@ -208,19 +222,18 @@ pub fn build_scene(
                 body: Some(&note.body),
                 bonus: note.bonus,
             };
-            push_note(&mut out, sheet, t, d, note.arc.lane, note.arc.width, &look);
+            push_note(out, sheet, t, d, note.arc.lane, note.arc.width, &look);
         }
     }
 
-    push_judge_ring(&mut out, sheet, &mask);
+    push_judge_ring(out, sheet, &mask);
     if let Some(rim) = &live.rim {
-        push_rim_row(&mut out, sheet, rim);
+        push_rim_row(out, sheet, rim);
     }
     if let Some(fx) = live.effects {
-        fx.draw(&mut out, sheet);
+        fx.draw(out, sheet);
     }
-    push_hud_sprites(&mut out, sheet, live);
-    out
+    push_hud_sprites(out, sheet, live);
 }
 
 /// Judgement ring colour at `lane`'s start edge: hot pink on the sides, turning purple towards
@@ -727,6 +740,18 @@ mod tests {
         assert_eq!(count(&v, style::GUIDE_LANE), 0);
         assert_eq!(count(&v, style::GUIDE_LANE_MOVIE_FLAT), 60 * 6);
         assert_eq!(count(&v, style::LANE_LINE_MOVIE), 60 * 6);
+        // Into a reused buffer: cleared first, same triangles, no reallocation.
+        let mut reused = v.clone();
+        let capacity = reused.capacity();
+        build_scene_into(
+            &mut reused,
+            &chart(vec![]),
+            0.0,
+            &movie,
+            &LiveState::default(),
+            &none,
+        );
+        assert_eq!((reused == v, reused.capacity()), (true, capacity));
         let v = build_scene(
             &chart(vec![]),
             0.0,

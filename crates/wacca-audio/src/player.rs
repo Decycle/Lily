@@ -61,6 +61,9 @@ struct Shared {
     volume: AtomicU32,
     /// Length of the current source in seconds (`f64` bits).
     duration: AtomicU64,
+    /// Frames of the last device callback and its reported output latency (µs).
+    callback_frames: AtomicU64,
+    latency_us: AtomicU64,
 }
 
 impl Shared {
@@ -149,6 +152,8 @@ impl Player {
             playing: AtomicBool::new(false),
             volume: AtomicU32::new(1.0f32.to_bits()),
             duration: AtomicU64::new(0f64.to_bits()),
+            callback_frames: AtomicU64::new(0),
+            latency_us: AtomicU64::new(0),
         });
         let (chunks, chunk_rx) = mpsc::sync_channel(QUEUE_CHUNKS);
         let (commands, command_rx) = mpsc::channel();
@@ -254,6 +259,14 @@ impl Player {
         f64::from_bits(self.shared.duration.load(Ordering::Acquire))
     }
 
+    /// Frames per device callback and the device's reported output latency (callback → first
+    /// frame audible), as of the last callback; `None` before the first one.
+    pub fn output_stats(&self) -> Option<(u64, Duration)> {
+        let frames = self.shared.callback_frames.load(Ordering::Relaxed);
+        let latency = Duration::from_micros(self.shared.latency_us.load(Ordering::Relaxed));
+        (frames > 0).then_some((frames, latency))
+    }
+
     /// Output rate; sources and sound effects must match it (see [`Sfx::resampled`]).
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
@@ -346,6 +359,13 @@ impl Output {
         let playing = shared.playing.load(Ordering::Acquire);
         let gain = f32::from_bits(shared.volume.load(Ordering::Acquire));
         let written = self.render(out, generation, playing, gain);
+        let frames = out.len() / self.channels.max(1);
+        shared
+            .callback_frames
+            .store(frames as u64, Ordering::Relaxed);
+        shared
+            .latency_us
+            .store(latency.as_micros() as u64, Ordering::Relaxed);
         shared
             .clock()
             .on_callback(generation, written, latency, now);
@@ -644,6 +664,21 @@ mod tests {
             }
         }
         got
+    }
+
+    #[test]
+    fn callbacks_report_their_size_and_latency() {
+        let (p, ends) = Player::detached(1000, 2);
+        let mut output = ends.output;
+        assert_eq!(p.output_stats(), None);
+        let mut out = [0.0f32; 2 * 48];
+        output.callback(
+            &mut out,
+            &p.shared,
+            Duration::from_millis(3),
+            Instant::now(),
+        );
+        assert_eq!(p.output_stats(), Some((48, Duration::from_millis(3))));
     }
 
     #[test]

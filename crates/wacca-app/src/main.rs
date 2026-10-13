@@ -5,6 +5,11 @@
 //! or mouse wheel to scroll, S sort, F filter.
 //! Play: Esc give up, Space pause, Up/Down note speed. F11 / Alt+Enter toggles fullscreen.
 //! `RUST_LOG=wacca_app=debug` logs every judgement.
+//!
+//! Performance: F3 shows frame/latency stats (`perf`), also logged every 2 s with
+//! `RUST_LOG=wacca_app::perf=debug`. wgpu's `WGPU_BACKEND` / `WGPU_POWER_PREF` choose the GPU;
+//! `WACCA_PRESENT=immediate` presents without vsync (tearing, uncapped frame rate);
+//! `WACCA_PACE=0` turns off vsync frame pacing (`pacer`).
 #![cfg_attr(test, allow(clippy::unwrap_used))] // tests may unwrap (CONTRIBUTING)
 
 mod args;
@@ -21,6 +26,8 @@ mod labels;
 mod menu;
 mod mode;
 mod options;
+mod pacer;
+mod perf;
 mod play;
 mod preview;
 mod record;
@@ -66,10 +73,11 @@ enum Error {
 }
 
 fn main() -> ExitCode {
+    let started = std::time::Instant::now();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     match args::parse(std::env::args().skip(1))
         .map_err(Error::from)
-        .and_then(|a| run(&a))
+        .and_then(|a| run(&a, started))
     {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -161,7 +169,7 @@ fn start_spec(args: &Args, chart: &Path, songs: &[Song]) -> Result<PlaySpec, Arg
     })
 }
 
-fn run(args: &Args) -> Result<(), Error> {
+fn run(args: &Args, started: std::time::Instant) -> Result<(), Error> {
     let songs = record::load_songs(&args.data.join("songs.json"))?.unwrap_or_else(|| {
         log::warn!(
             "{} missing; run wacca-convert (song select will be empty)",
@@ -232,6 +240,7 @@ fn run(args: &Args) -> Result<(), Error> {
             start,
             windowed: args.windowed,
             ffmpeg,
+            started,
         },
         fonts,
     )?;
