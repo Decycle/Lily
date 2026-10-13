@@ -244,7 +244,8 @@ Not persisted (derived on load from records + MusicParameterTable): chart rates,
 new/old split, totals (sum of best scores, lamp counts per level). Recompute so table or formula
 fixes apply retroactively.
 
-Don't store: unlock state (everything is unlocked), XP/level, WP, items, titles.
+Don't store: unlock state (everything is unlocked), XP/level, items, titles. Exception: the RP total
+(`reversePoints`, §4.1) is a running sum and cannot be derived.
 
 Optional extra: per-chart overrides (`noteSpeed` per chart) **only if wanted**. The real game has
 global options only (**UNVERIFIED**).
@@ -337,10 +338,36 @@ Shown after each play (including give-up):
 - Rate: chart rate for this play and the player Rate before → after. Only show it when it changes.
   The game's ResultMessage contains "Rate" and "R-Notes" strings.
 - Best-record comparison for this chart (best score, best lamp).
-- Out of scope: XP, WP, items, bingo, stage-up, navigator lines, "Track N" counter
+- Out of scope: items, bingo, stage-up, navigator lines, "Track N" counter
   (`<Number>曲目`; you could keep a session counter).
 - Actions: Retry (same chart and options), Back to song select. The save is written before the
   screen accepts input.
+
+### 4.1 Reverse Points, player level, countdowns (implemented)
+
+- **Reverse Points (RP)** ("Obtained Reverse Points" in the rating strip) = `WaccaPointTable`
+  [grade][`Level01`..`Level15`], keyed by the chart's whole level (clamped 1–15). RP is the game's
+  WACCA Point (WP) under its Reverse name; the attract screen advertises "Earn 3x RP". **Verified** on
+  the E3 real results: B on NORMAL 1 and NORMAL 3 → 210 (also when FAILED), AA on NORMAL 3 → 660.
+  Boost items / campaign multipliers are left out. The save keeps the running total
+  (`reversePoints`), shown as "RP" on the user plate (the real plate shows the guest's 210 after one
+  play). ARTEMiS only stores `wp`/`wp_total` that the client sends; it has no formula.
+- **Player level** ("Lv." on the plate): the client sends EXP as an item, ARTEMiS just adds it, so
+  the amount per play is unknown. We use `LevelUpTable` (50 EXP per level from level 1, 100 from 3,
+  200 from 5 … 1000 from 200) with a fixed **UNVERIFIED** 10 EXP per play (total play count over all
+  charts). Title line: `settings.playerTitle` (default empty; the guest's is ゲスト).
+- **Countdowns** (`LimitationTimeTable`): mode select 30 s, song select (incl. the genre wheel) 99 s,
+  final check (our options screen) 25 s, results 15 s; two pink digits above GO, and at 0 the screen
+  moves on as if GO was tapped. Off by default (`settings.menuTimers = false`): a home build has no
+  time pressure.
+- **RETRY tab**: the real results screen has a FAVORITE tab (pale-blue rim wedge, white disc icon,
+  small turned label) right of GO. We keep RETRY, drawn as that tab in its place.
+
+Remaining visible menu differences (vs E3 frames): no CREDIT/COIN header (arcade only); the guest
+icon ring is flat pink instead of the gradient; options screen is our own layout (no user plate,
+no character art); results background lacks the teal ring art; countdown digits use our numeral face
+instead of the game's outlined font; title glitch is an approximation (RGB-split copies and slipping
+strips on a pseudo-random schedule, not the `uT_CM_Glitch_*` displacement material).
 
 ---
 

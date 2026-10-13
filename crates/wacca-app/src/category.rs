@@ -183,7 +183,14 @@ fn stats(p: &mut Painter, list: &SongList, genre: i8, d: Difficulty, save: &Save
 
 /// The category screen. `cursor` indexes [`SongList::genres`]; `shift` is the wheel's visual
 /// offset in panels (eases to 0 after a move).
-pub fn view(c: Canvas, list: &SongList, cursor: usize, shift: f32, save: &SaveData) -> View {
+pub fn view(
+    c: Canvas,
+    list: &SongList,
+    cursor: usize,
+    shift: f32,
+    save: &SaveData,
+    who: &chrome::Player,
+) -> View {
     let mut p = Painter::new(c);
     chrome::background(&mut p);
     let genres = list.genres();
@@ -210,7 +217,7 @@ pub fn view(c: Canvas, list: &SongList, cursor: usize, shift: f32, save: &SaveDa
         difficulty_band(&mut p, d, 210.0);
         stats(&mut p, list, current.id, d, save);
     }
-    chrome::user_plate(&mut p, "GUEST");
+    chrome::user_plate(&mut p, who);
     chrome::rim(
         &mut p,
         RimButtons {
@@ -248,7 +255,14 @@ mod tests {
         let mut l = list(); // genres 0 and 2
         l.set_difficulty(Difficulty::Expert);
         let c = Canvas::fit(1080.0, 1080.0);
-        let v = view(c, &l, 1, 0.0, &SaveData::default());
+        let v = view(
+            c,
+            &l,
+            1,
+            0.0,
+            &SaveData::default(),
+            &chrome::Player::default(),
+        );
         let texts = v.texts();
         assert!(texts.contains(&"TOUHOU") && texts.contains(&"ANIME / POP"));
         assert!(texts.contains(&"EXPERT") && texts.contains(&"0/1"));

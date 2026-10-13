@@ -4,7 +4,8 @@
 //! locked and greyed as the original shows them for a guest, and cannot be selected (the arrows do
 //! nothing). Positions are measured on the real frame
 //! (`runs/e2/20261012-233738/nav-08-mode-select.png`, 0.625 px per unit, centre (337.5, 563)).
-// UNVERIFIED: the play countdown, "USE ITEM" and the mode-art material (`uM_AD_6`) are left out;
+// UNVERIFIED: "USE ITEM" and the mode-art material (`uM_AD_6`) are left out (the countdown is
+// drawn by the shell with the `menu_timers` setting);
 // the art ring uses `uT_RGclear03`, which matches its look.
 
 use wacca_render::text::Align;
@@ -27,7 +28,7 @@ const MANUAL_TEXT: u32 = 0x9287bf;
 const DECIDE_BTN: u32 = 0xe50485;
 
 /// The mode select screen `t` seconds after it appeared.
-pub fn view(c: Canvas, t: f32) -> View {
+pub fn view(c: Canvas, t: f32, who: &chrome::Player) -> View {
     let mut p = Painter::new(c);
     p.tex("uT_WCbg00", [0.0, 0.0], [1080.0, 1080.0], WHITE);
     // The mode art in a ring around the dial.
@@ -35,7 +36,7 @@ pub fn view(c: Canvas, t: f32) -> View {
     discs(&mut p);
     dial(&mut p, t);
     pills(&mut p);
-    chrome::user_plate(&mut p, "GUEST");
+    chrome::user_plate(&mut p, who);
     bottom(&mut p);
     p.button([0.0, 283.0], [400.0, 170.0], Action::Confirm);
     p.button(DIAL, [340.0, 340.0], Action::Confirm);
@@ -171,7 +172,7 @@ mod tests {
     #[test]
     fn single_play_is_the_only_choice() {
         let c = Canvas::fit(1080.0, 1920.0);
-        let v = view(c, 0.0);
+        let v = view(c, 0.0, &chrome::Player::default());
         let texts = v.texts();
         for name in ["Singleplayer", "Shop", "Multiplayer", "GO"] {
             assert!(texts.contains(&name), "{name}");
