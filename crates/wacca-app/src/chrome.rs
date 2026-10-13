@@ -27,6 +27,7 @@ pub enum Icon {
     Right,
     Left,
     Plus,
+    Options,
 }
 
 impl Icon {
@@ -38,6 +39,7 @@ impl Icon {
             Icon::Right => (0.0, 3.0),
             Icon::Left => (1.0, 3.0),
             Icon::Plus => (2.0, 3.0),
+            Icon::Options => (1.0, 1.0),
         }
     }
 
@@ -205,22 +207,31 @@ pub fn retry_tab(p: &mut Painter) {
     p.button([190.0, 452.0], [130.0, 90.0], Action::Retry);
 }
 
+/// The DIFFICULTY button on the left rim.
+pub fn difficulty(p: &mut Painter) {
+    icon(p, Icon::Plus, [-492.0, -2.0], 30.0, 0.0);
+    p.text_turned("DIFFICULTY", [-488.0, 63.0], 13.0, WHITE, 90.0);
+    p.button([-480.0, 50.0], [70.0, 140.0], Action::Difficulty);
+}
+
+/// The BACK wedge, lower left.
+pub fn back(p: &mut Painter) {
+    wedge(p, 51.0, 470.0, [170.0, 110.0], hex(0x6a1fb0, 0.9));
+    icon(p, Icon::Back, [-380.0, 310.0], 34.0, 0.0);
+    p.text_turned("BACK", [-352.0, 336.0], 12.0, WHITE, 51.0);
+    p.button([-365.0, 325.0], [110.0, 90.0], Action::Back);
+}
+
 /// The buttons around the rim: DIFFICULTY (left), BACK, SORT, the two arrows and GO.
 pub fn rim(p: &mut Painter, b: RimButtons) {
     go(p);
     for d in [27.0, -27.0] {
         wedge(p, d, 470.0, [190.0, 120.0], hex(0x1a4fb8, 0.9));
     }
-    if b.back {
-        wedge(p, 51.0, 470.0, [170.0, 110.0], hex(0x6a1fb0, 0.9));
-    }
     if b.sort.is_some() {
         wedge(p, -46.0, 470.0, [170.0, 110.0], MENU_BTN);
     }
-
-    icon(p, Icon::Plus, [-492.0, -2.0], 30.0, 0.0);
-    p.text_turned("DIFFICULTY", [-488.0, 63.0], 13.0, WHITE, 90.0);
-    p.button([-480.0, 50.0], [70.0, 140.0], Action::Difficulty);
+    difficulty(p);
 
     icon(p, Icon::Left, [-223.0, 438.0], 36.0, 45.0);
     p.button([-223.0, 438.0], [110.0, 90.0], Action::Left);
@@ -228,9 +239,7 @@ pub fn rim(p: &mut Painter, b: RimButtons) {
     p.button([222.0, 437.0], [110.0, 90.0], Action::Right);
 
     if b.back {
-        icon(p, Icon::Back, [-380.0, 310.0], 34.0, 0.0);
-        p.text_turned("BACK", [-352.0, 336.0], 12.0, WHITE, 51.0);
-        p.button([-365.0, 325.0], [110.0, 90.0], Action::Back);
+        back(p);
     }
     if let Some(order) = b.sort {
         icon(p, Icon::Sort, [348.0, 341.0], 34.0, 0.0);

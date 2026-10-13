@@ -196,7 +196,7 @@ fn counter(p: &mut Painter, list: &SongList) {
 }
 
 /// `Select_menu_OBJ07` at (0, 190): difficulty plate, level, best score, song info.
-fn info_plate(p: &mut Painter, list: &SongList, save: &SaveData) {
+pub fn info_plate(p: &mut Painter, list: &SongList, save: &SaveData) {
     let Some((song, chart)) = list.chart() else {
         return;
     };

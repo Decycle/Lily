@@ -86,7 +86,7 @@ impl Menu {
             (Screen::SongSelect, Left) => list.move_by(-1),
             (Screen::SongSelect, Right) => list.move_by(1),
             (Screen::SongSelect, Scroll(n)) => list.move_by(n),
-            (Screen::SongSelect, Action::Difficulty) => list.cycle_difficulty(),
+            (Screen::SongSelect | Screen::Options, Action::Difficulty) => list.cycle_difficulty(),
             (Screen::SongSelect, Genre(n)) => self.move_category(n, true),
             (Screen::Category | Screen::SongSelect, Up) => list.shift_difficulty(1),
             (Screen::Category | Screen::SongSelect, Down) => list.shift_difficulty(-1),

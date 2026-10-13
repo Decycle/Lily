@@ -319,19 +319,6 @@ pub fn background(v: &mut View, c: &Canvas) {
     }
 }
 
-/// The pink GO trapezoid at the bottom of the circle.
-pub fn go_button(v: &mut View, c: &Canvas, action: Action) {
-    let pts = [
-        [448.0, 1336.0],
-        [632.0, 1336.0],
-        [656.0, 1440.0],
-        [424.0, 1440.0],
-    ];
-    c.panel(v, &pts, &[[1.0, 0.25, 0.75, 1.0], PINK, PINK, PINK]);
-    c.text(v, "GO", [540.0, 1360.0], 44.0, ui::WHITE, Align::Center);
-    c.button(v, [424.0, 1320.0, 232.0, 120.0], action);
-}
-
 /// A slanted tab button left or right of GO (RETRY, BACK).
 pub fn side_tab(v: &mut View, c: &Canvas, label: &str, x: f32, color: Rgba, action: Action) {
     let (y, w, h) = (1300.0, 130.0, 56.0);

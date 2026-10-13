@@ -548,7 +548,7 @@ mod tests {
                 crate::mode::view(c, 1.0, &who),
                 crate::category::view(c, &l, 0, 0.0, &save, &who),
                 crate::select_ui::view(c, &l, 0.0, &save, &who),
-                crate::options::view(&menus, &Settings::default(), false, "Song", c),
+                crate::options::view(c, &menus, (&Settings::default(), false), &l, &save, &who),
             ];
             // The circle is on screen and every tap area is centred on screen, except the
             // wheel's outer slots, which sit past the circle under the mask as on the cabinet.

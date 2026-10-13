@@ -7,8 +7,14 @@
 use wacca_game::save::Settings;
 use wacca_render::text::Align;
 
-use crate::circle::{self, Canvas, NAVY, PINK, slab};
-use crate::ui::{Action, View, WHITE};
+use wacca_game::save::SaveData;
+use wacca_render::style::Rgba;
+
+use crate::canvas::{FULL, MID, Painter, TEX, hex};
+use crate::chrome::{self, Icon, PINK, WHITE};
+use crate::select::SongList;
+use crate::select_ui;
+use crate::ui::{Action, View};
 
 pub const SPEED_RANGE: std::ops::RangeInclusive<f32> = 1.0..=6.0;
 // UNVERIFIED: step 0.5 (doc 05 §1.5).
@@ -129,102 +135,136 @@ fn label(row: Row) -> &'static str {
     }
 }
 
-/// Rows styled like the game's option panel (`nav-20-options` in E2): a navy label slab with
-/// pink text and a pink value slab with spaced navy text, stepping right down the list. The
-/// selected row is lit and flanked by arrows; tapping left / right of the value's centre steps
-/// it down / up. BACK and GO sit at the bottom of the circle.
-pub fn view(
-    menu: &OptionsMenu,
-    s: &Settings,
-    autoplay: bool,
-    title: &str,
-    frame: crate::canvas::Canvas,
-) -> View {
-    let mut v = View::default();
-    let c = Canvas::new(frame);
-    circle::background(&mut v, &c);
-    c.panel(&mut v, &slab(350.0, 560.0, 420.0, 56.0), &[NAVY]);
-    c.text(
-        &mut v,
-        "OPTIONS",
-        [544.0, 566.0],
-        40.0,
-        WHITE,
-        Align::Center,
-    );
-    c.panel(
-        &mut v,
-        &slab(320.0, 622.0, 420.0, 34.0),
-        &[[0.0, 0.0, 0.0, 0.4]],
-    );
-    c.text_fit(&mut v, title, [520.0, 626.0], 24.0, PINK, 380.0);
-    let h = ROW_H;
-    for (k, &r) in ROWS.iter().enumerate() {
-        let sel = k == menu.row;
-        let (x, y) = row_origin(k);
-        let ym = y + h / 2.0;
-        let label_bg = if sel { [0.25, 0.18, 0.55, 1.0] } else { NAVY };
-        c.panel(&mut v, &slab(x, y, LABEL_W, h), &[label_bg]);
-        let lx = x + LABEL_W - h * circle::SLANT - 18.0;
-        c.text(&mut v, label(r), [lx, ym - 17.0], 28.0, PINK, Align::Right);
-        let vx = x + LABEL_W + 30.0;
-        let mut pink = PINK;
-        pink[3] = if sel { 1.0 } else { 0.8 };
-        c.panel(&mut v, &slab(vx, y, VALUE_W, h), &[pink]);
-        let text = value(r, s, autoplay);
-        let pitch = 26.0;
-        let vc = vx + VALUE_W / 2.0 - h * circle::SLANT / 2.0;
-        let start = vc - pitch * text.chars().count() as f32 / 2.0;
-        c.spaced(&mut v, &text, [start, ym - 20.0], 34.0, pitch, NAVY);
-        if sel {
-            let (l, r) = (vx - h * circle::SLANT / 2.0 - 22.0, vx + VALUE_W + 2.0);
-            c.panel(
-                &mut v,
-                &[[l, ym], [l + 20.0, ym - 16.0], [l + 20.0, ym + 16.0]],
-                &[WHITE],
-            );
-            c.panel(
-                &mut v,
-                &[[r + 20.0, ym], [r, ym + 16.0], [r, ym - 16.0]],
-                &[WHITE],
-            );
-        }
-        // Pick(2k) = decrease row k, Pick(2k + 1) = increase.
-        let x0 = x - h * circle::SLANT;
-        c.button(&mut v, [x0, y, vc - x0, h], Action::Pick(2 * k));
-        c.button(
-            &mut v,
-            [vc, y, vx + VALUE_W + 40.0 - vc, h],
-            Action::Pick(2 * k + 1),
-        );
+/// Rows per page: the real final check shows four option rows beside the preview monitor.
+pub const PAGE: usize = 4;
+/// `Pick` index of the OPTIONS tab, which turns to the other page of rows.
+pub const NEXT_PAGE: usize = 2 * ROWS.len();
+
+/// Row `k` of a page (0..[`PAGE`]): centre of the `uT_STmenu_obj013` slab. Measured on
+/// `runs/e3/*/nav-20-options.png`: the rows step down and right along the rim.
+fn row_at(k: usize) -> [f32; 2] {
+    [298.0 + 20.0 * k as f32, -136.0 + 38.0 * k as f32]
+}
+const ROW_SIZE: [f32; 2] = [268.0, 34.0];
+/// Label right edge and value centre, relative to the row centre.
+const LABEL_RIGHT: f32 = -46.0;
+const VALUE_X: f32 = 66.0;
+const VALUE_INK: u32 = 0x1c0f3a;
+
+/// One line with fixed `pitch` between character centres, centred on `at`.
+fn spaced(p: &mut Painter, text: &str, at: [f32; 2], size: f32, pitch: f32, color: Rgba) {
+    let n = text.chars().count() as f32;
+    for (i, ch) in text.chars().enumerate() {
+        let x = at[0] + (i as f32 - (n - 1.0) / 2.0) * pitch;
+        p.text(ch.to_string(), [x, at[1]], size, color, Align::Center);
     }
-    circle::side_tab(
-        &mut v,
-        &c,
-        "BACK",
-        300.0,
-        [0.55, 0.20, 0.80, 0.95],
-        Action::Back,
-    );
-    circle::go_button(&mut v, &c, Action::Confirm);
-    v
 }
 
-// Eight rows fit above the BACK tab (y 1300) and inside the circle.
-const ROW_TOP: f32 = 680.0;
-const ROW_PITCH: f32 = 70.0;
-const ROW_H: f32 = 56.0;
-const LABEL_W: f32 = 290.0;
-const VALUE_W: f32 = 280.0;
+/// The final check (`BP_Select01`, `nav-20` in E3): the navigator (`uT_Chara002_00`) on the left,
+/// the preview monitor in the middle with the option rows beside it, the selected song's plate
+/// at the bottom and DIFFICULTY / BACK / OPTIONS / GO on the rim. Our eight options take two
+/// pages of the four rows; the OPTIONS tab turns the page (the original opens its option wheel
+/// there). The selected row (keyboard) is flanked by arrows; tapping left / right of a value's
+/// centre steps it down / up.
+pub fn view(
+    c: crate::canvas::Canvas,
+    menu: &OptionsMenu,
+    (s, autoplay): (&Settings, bool),
+    list: &SongList,
+    save: &SaveData,
+    who: &chrome::Player,
+) -> View {
+    let mut p = Painter::new(c);
+    chrome::background(&mut p);
+    // Character art, then the panel around the monitor and the rows' stripes.
+    // UNVERIFIED: placed by matching the E3 frame (eyes and bow), not from the widget.
+    p.image(
+        &format!("{TEX}CHARACTER/chara002/uT_Chara002_00"),
+        [-307.0, 390.0],
+        [900.0, 1800.0],
+        MID,
+        FULL,
+        0.0,
+        WHITE,
+    );
+    p.tex_ex(
+        "uT_STmenu_obj006",
+        [-40.0, -80.0],
+        [780.0, 200.0],
+        [0.0, 0.5],
+        FULL,
+        0.0,
+        WHITE,
+    );
+    p.tex_ex(
+        "uT_STmenu_obj000",
+        [-185.0, -182.0],
+        [717.0, 382.0],
+        [0.0, 0.0],
+        FULL,
+        0.0,
+        WHITE,
+    );
+    monitor(&mut p);
+    let page = menu.row / PAGE;
+    for k in 0..PAGE {
+        let i = page * PAGE + k;
+        let Some(&r) = ROWS.get(i) else { break };
+        let at = row_at(k);
+        p.tex("uT_STmenu_obj013", at, ROW_SIZE, WHITE);
+        let name = label(r);
+        let size = if name.len() > 8 { 11.0 } else { 15.0 };
+        p.text(name, [at[0] + LABEL_RIGHT, at[1]], size, PINK, Align::Right);
+        let v = [at[0] + VALUE_X, at[1]];
+        let ink = hex(VALUE_INK, 1.0);
+        spaced(&mut p, &value(r, s, autoplay), v, 15.0, 24.0, ink);
+        if i == menu.row {
+            chrome::icon(&mut p, Icon::Left, [v[0] - 82.0, v[1]], 22.0, 0.0);
+            chrome::icon(&mut p, Icon::Right, [v[0] + 82.0, v[1]], 22.0, 0.0);
+        }
+        // Pick(2i) = decrease row i, Pick(2i + 1) = increase.
+        p.button([v[0] - 70.0, at[1]], [140.0, 36.0], Action::Pick(2 * i));
+        p.button([v[0] + 45.0, at[1]], [90.0, 36.0], Action::Pick(2 * i + 1));
+    }
+    if let Some(song) = list.current() {
+        p.fill([260.0, 186.0], [110.0, 110.0], MID, WHITE);
+        p.jacket(&song.jacket, [260.0, 186.0], 106.0);
+    }
+    select_ui::info_plate(&mut p, list, save);
+    chrome::user_plate(&mut p, who);
+    rim(&mut p);
+    p.circle_mask();
+    p.finish()
+}
 
-/// Top-left of row `k`'s label slab; rows step right like the game's panel.
-fn row_origin(k: usize) -> (f32, f32) {
-    (210.0 + 14.0 * k as f32, ROW_TOP + ROW_PITCH * k as f32)
+/// `uM_STmoniter00`: the round preview, a disc (`uT_CMen512_00`) of the live play-background
+/// capture (`BgCaptureTextureRenderTarget2D`).
+// UNVERIFIED: the capture is not rendered in the menus; drawn as its look on the E3 frame, a
+// dark blue disc brightening to violet in the middle.
+fn monitor(p: &mut Painter) {
+    let at = [0.0, 3.0];
+    p.tex("uT_CMen512_00", at, [300.0, 300.0], hex(0x120d3c, 1.0));
+    for k in 1..=6 {
+        let d = 300.0 - 40.0 * k as f32;
+        p.tex("uT_CMen512_00", at, [d, d], hex(0x4c45d8, 0.16));
+    }
+}
+
+/// DIFFICULTY (left), BACK, the OPTIONS tab (right) and GO, as on the real final check.
+fn rim(p: &mut Painter) {
+    chrome::go(p);
+    chrome::difficulty(p);
+    chrome::back(p);
+    chrome::icon(p, Icon::Options, [484.0, 43.0], 30.0, 0.0);
+    p.text_turned("OPTIONS", [486.0, -18.0], 9.0, WHITE, -90.0);
+    p.button([480.0, 20.0], [70.0, 130.0], Action::Pick(NEXT_PAGE));
 }
 
 /// Handle a tap on [`view`]'s `Pick(n)`: select row `n / 2` and step it down (even) or up (odd).
 pub fn pick(menu: &mut OptionsMenu, n: usize, s: &mut Settings, autoplay: &mut bool) {
-    if n / 2 < ROWS.len() {
+    if n == NEXT_PAGE {
+        menu.row = (menu.row / PAGE + 1) * PAGE % ROWS.len();
+    } else if n / 2 < ROWS.len() {
         menu.row = n / 2;
         menu.adjust(s, autoplay, if n.is_multiple_of(2) { -1 } else { 1 });
     }
@@ -286,14 +326,12 @@ mod tests {
     }
 
     #[test]
-    fn all_rows_fit_above_the_back_tab_inside_the_circle() {
-        for k in 0..ROWS.len() {
-            let (x, y) = row_origin(k);
-            assert!(y + ROW_H < 1300.0, "row {k}");
-            // The value slab's right edge and the arrow stay inside the circle.
-            let right = [x + LABEL_W + 30.0 + VALUE_W + 22.0, y + ROW_H];
-            let d = (right[0] - circle::CENTER[0]).hypot(right[1] - circle::CENTER[1]);
-            assert!(d < circle::RADIUS, "row {k}: {d}");
+    fn rows_and_their_arrows_stay_inside_the_circle() {
+        for k in 0..PAGE {
+            let [x, y] = row_at(k);
+            let right = [x + VALUE_X + 93.0, y + ROW_SIZE[1] / 2.0];
+            let d = right[0].hypot(right[1]);
+            assert!(d < crate::canvas::CIRCLE_R, "row {k}: {d}");
         }
     }
 
@@ -320,15 +358,20 @@ mod tests {
         assert_eq!((m.row, s.judge_offset), (1, 0.1));
         pick(&mut m, 99, &mut s, &mut auto);
         assert_eq!(m.row, 1);
-        let v = view(
-            &m,
-            &s,
-            auto,
-            "Song",
-            crate::canvas::Canvas::fit(900.0, 1600.0),
-        );
+        let list = crate::select::tests::list();
+        let who = crate::chrome::Player::default();
+        let save = SaveData::default();
+        let c = crate::canvas::Canvas::fit(900.0, 1600.0);
+        let v = view(c, &m, (&s, auto), &list, &save, &who);
         let t = v.texts().concat();
-        assert!(t.contains("TIMING+0.1") && t.contains("Song"), "{t}");
+        assert!(t.contains("TIMING+0.1") && !t.contains("BG MOVIE"), "{t}");
+        // The OPTIONS tab turns to the second page of rows and back.
+        pick(&mut m, NEXT_PAGE, &mut s, &mut auto);
+        assert_eq!(m.row, PAGE);
+        let t = view(c, &m, (&s, auto), &list, &save, &who).texts().concat();
+        assert!(t.contains("BG MOVIE") && !t.contains("SPEED"), "{t}");
+        pick(&mut m, NEXT_PAGE, &mut s, &mut auto);
+        assert_eq!(m.row, 0);
         assert!(v.buttons.iter().any(|(_, a)| *a == Action::Confirm));
         assert!(v.buttons.iter().any(|(_, a)| *a == Action::Back));
         // Left of the value's centre steps down, right of it steps up.

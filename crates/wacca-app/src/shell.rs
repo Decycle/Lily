@@ -609,10 +609,14 @@ impl App {
             Screen::SongSelect => {
                 select_ui::view(canvas, &m.list, self.wheel, &self.s.save, &self.plate())
             }
-            Screen::Options => {
-                let title = m.list.current().map_or("", |s| s.title.as_str());
-                options::view(&m.options, &m.settings, m.autoplay, title, canvas)
-            }
+            Screen::Options => options::view(
+                canvas,
+                &m.options,
+                (&m.settings, m.autoplay),
+                &m.list,
+                &self.s.save,
+                &self.plate(),
+            ),
             Screen::Calibrate => {
                 let pos = self.s.player.position();
                 calibrate::view(&m.calibration, &m.settings, pos, canvas)
