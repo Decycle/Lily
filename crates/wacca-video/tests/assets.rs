@@ -27,7 +27,7 @@ fn movies() -> Vec<PathBuf> {
 }
 
 #[test]
-#[ignore]
+#[ignore = "needs WACCA_ASSETS"]
 fn demuxes_every_movie() {
     let movies = movies();
     assert_eq!(movies.len(), 91);
@@ -61,7 +61,7 @@ fn demuxes_every_movie() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "needs WACCA_ASSETS and ffmpeg"]
 fn decodes_frames_through_ffmpeg() {
     let ffmpeg = find_ffmpeg_from_env().expect("ffmpeg");
     let path = movies().into_iter().next().unwrap();
