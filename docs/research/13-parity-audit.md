@@ -30,7 +30,7 @@ movie). "Before" = commit `8f95d2d` with the same replay; "after" = this branch.
 | KING before | 94.08 | 32.50 | 15.55 | 20.31 | 2.18 | 21.82 |
 | KING after | 92.57 | 30.03 | 14.05 | 11.59 | 0.79 | **18.65** |
 
-KING's centre/inner numbers are the missing no-movie background (§4.1).
+KING's centre/inner numbers were the missing no-movie background, since ported (§5: KING all 18.65 → 7.68).
 
 New RenderDoc captures (KING Normal, guest, LIVE.lock protocol, worktree `runs/rdc-king/`, not committed):
 frame 9800 (R-note hit), 9103 (held hold), 9574 / 11389 (normal background), 13214 (Good background), dumps
@@ -67,16 +67,86 @@ frame 9800 (R-note hit), 9103 (held hold), 9574 / 11389 (normal background), 132
 
 ## 4. Remaining
 
-1. **No-movie background** (KING centre ≈ 90 levels; most songs have no movie). The game renders a background
-   scene through `BgEffectSceneCapture` into a 1080² texture (own bloom, tonemap, FXAA) and draws it on the far
-   quad (`BgCaptureTextureRenderTarget2D_Mat`). States (CONFIRMED by captures): normal = `vb_BGS300_00_lp`
-   (`vMX_3_BGN03_000/002`, `vMX_3_BGBoss_004_MUD_m_Clp000`; blue grid), Good = `vb_BGS200_00_lp` (`vMX_3_02BGS_*`,
-   `vM_1_SAUV_000_MUD_m_02BGS00`; red crystals). KING switches between 64 and 66 s of perfect play (MEASURED:
-   gauge reaching the norma, UNVERIFIED), with `vp_bgcup000_00`/`vp_bgcdown000_00`. Other sets (`BGN*`, `BGB*`
-   boss, `BGC*` climax) not yet seen. Needs: the capture camera, ~6 materials, bloom, the state rules — a
-   separate port.
+1. ~~No-movie background~~: ported, see §5. Left: the state-change bursts (`vp_bgcup000_00` /
+   `vp_bgcdown000_00`, the yellow triangles at the switch), the end-of-song states (`ClimaxEffect`,
+   `FullCombo`, `Missless`, `AllMarvelous` → `vb_BGC*`, `vp_Clear00*`), Inferno (`vb_BGB*`) and multiplayer
+   sets, FXAA on the capture.
 2. HUD banners not drawn: "BONUSGET" (`BP_Game_bonus`), end-of-song "Missless!/Full Combo" (`uT_FTclear_*`),
    the credit track counter "1/3" on the rim (no credits in our app), the COMBO word's two 0.3-alpha colour
    copies (`combo1`/`comob2` images).
 3. R-note effect timing/size ±1 frame; Miss shard onset relies on the replay's popup times (E3 `shown`).
 4. CREDIT/COIN overlay at the top of the real frames is the cabinet's free-play overlay, not the play view.
+
+## 5. No-movie background scene (`wacca-render::bg`, `bg.wgsl`)
+
+Sources: `Map/RhythmGame.umap` (install `Content`, read with `cargo run -p wacca-ue4 --example dump_objects`),
+the RenderDoc KING frames 11389 (Normal) and 13214 (Good; dumps `runs/bg/d11389|d13214`, raw targets via
+`runs/bg/rdc_raw.py`, D3D11 pixel debugging via `runs/bg/rdc_debugpix.py`), the E2/E3 videos.
+
+**Level** (CONFIRMED, `RhythmGame.umap`): one `BackGroundEffectActor` per state, each a `ParticleSystemComponent`:
+Normal `vb_BGS300_00_lp`, Good `vb_BGS200_00_lp` (both at (0, −10000, 10000), yaw 180°), MultiNormal
+`vb_BGS300_01_lp`, Bad `vb_BGC001_00_lp`, Climax `vb_BGC002_00_lp`, InfernoNormal/Good `vb_BGB001/000_00_lp`,
+Up/Down `vp_bgcup000_00` / `vp_bgcdown000_00` (0, −410, 10000), Opening `vp_stgame000_00`, FullCombo /
+AllMarvelous / Missless `vp_Clear00*`. The systems have `WarmupTime` 8 s. `BgEffectSceneCapture`: a
+`SceneCapture2D` at (0, 190, 10000) looking down −Y, `FOVAngle` 45°, `SCS_FinalColorLDR` into
+`cTRT_BackgroundEffect`; `BGNormal_PP` / `BGGood_PP` / `BGClimax_PP` only override depth of field (no DOF pass in
+the captured frames).
+
+**Capture** (CONFIRMED, frame 11389 eids 650–1003): depth prepass, base pass of the active system, bloom chain
+(computed, unused), then a tonemapper permutation that only multiplies by the exposure (1.0) and writes linear
+colour into a B8G8R8A8 UNORM target (so: `saturate`, 8-bit), FXAA into the 1080² R16F `91966`. The play view draws
+it on the `BgCaptureTextureRenderTarget2D_Mat` quad (±811 cm at Y = −621, eid 2783: emissive = capture colour) —
+the movie's place; the final `pow(1/2.2)` then applies as for the movie. Guide-lane fade without a movie:
+`PercentageAlpha` 600, `WidthGradation` 3 (eid 3314; was UNVERIFIED).
+
+**Particles** (`wacca-ue4` / `wacca-render::particles` additions): `EmitterOrigin` (backdrop at local Y 1000 →
+w 11190, NDC ±0.9385 — eid 677's clip coordinates), `WarmupTime` (0.032 s steps), `ParticleModuleAcceleration`,
+`ParticleModuleMeshRotation` (CONFIRMED by the cube instance rows: applied with the opposite sign to
+`RollPitchYawRange`), cylinder start velocity = outward offset × scale (MEASURED: the triangles' spread and the
+R-note sparks of frame 9800), mesh vertex colours (the cubes' WPO weights).
+
+**Materials** (ported from the base-pass PS disassembly with the captured cbuffers, annotated asm in
+`runs/bg/d*/annot`): Normal `vMX_3_BGN03_000` backdrop sprite (radial glow, beat-flickering triangle pattern,
+rotating light layer, dark rim by the bar, tile grid, moving line layers), `vMX_3_BGN03_002` ring sprites,
+`vMX_3_BGBoss_004` dotted lines; Good `vMX_3_02BGS_002` tunnel walls, `vMX_3_02BGS_000` cube clusters (with their
+`WorldPositionOffset` pulse; the compiled VS reads the MPC Beat for both its bar and beat terms),
+`vM_1_SAUV_000` triangles. The Good walls and cubes are default-lit: the pixel debugger (eid 647) shows no
+indirect light (volumetric lightmap zero), no reflection, only the level's directional light (towards +Y,
+intensity 1.1): `emissive + (base/π + GGX(roughness 0.5, F0 0.04)) · 1.1 · N·L` with base = saturate(emissive),
+ported exactly (face normal from derivatives).
+
+**State** (MEASURED on the videos, `runs/bg/bgtrace.py` + `states.py`): Normal from the start, Good from the
+first judgement at which the clear gauge reaches the norma: KING at 65.06 s (our gauge 0.4534 at 64.34 s, 0.4585
+at 65.06 s), song 31 (E3 `035555`) at 91.9 s (ours 0.4537 at 91.61 s, next judgement 91.90 s) — so the real gauge
+runs slightly below our model's (UNVERIFIED gauge points, `wacca-game` unchanged). Rule implemented:
+`gauge ≥ norma` (`BgState::of_gauge`), switching instantly (the video changes within one 120 fps frame);
+switching back on a drop is UNVERIFIED (the level's `Down` actor suggests it). The materials' MPC
+`MPC_BpmSignal` Bar / Beat are taken as the measure / beat phase (UNVERIFIED: the captured values do not fit
+one phase), `View.GameTime` as the chart time.
+
+**Audit** (`parity_audit.py --bg-good-at S`, the switch time from the run's video; "before" =
+`--env WACCA_SHOT_BG=off`, i.e. the previous black background):
+
+| set (frames; Good from) | part | centre | inner | outer | ring | rim | all |
+|---|---|---|---|---|---|---|---|
+| KING E2 `043842` (70; 65.1 s) | before, Normal part | 83.57 | 24.40 | 11.21 | 11.38 | 0.66 | 16.09 |
+| | after, Normal part | 11.40 | 8.35 | 8.92 | 11.30 | 0.67 | 7.22 |
+| | before, Good part | 128.72 | 52.43 | 25.63 | 12.47 | 1.30 | 28.94 |
+| | after, Good part | 16.56 | 13.85 | 11.78 | 11.37 | 0.95 | 9.51 |
+| | **before → after, all** | 92.60 → 12.44 | 30.01 → 9.45 | 14.09 → 9.49 | 11.59 → 11.31 | 0.79 → 0.72 | **18.66 → 7.68** |
+| song 31 E3 `035555` (76; 91.9 s) | before → after, Normal | 116.56 → 10.19 | 68.63 → 8.21 | 48.10 → 14.63 | 42.29 → 19.13 | 2.36 → 1.08 | 43.43 → 10.24 |
+| | before → after, Good | 157.65 → 19.67 | 105.62 → 21.12 | 86.25 → 21.40 | 69.55 → 23.64 | 7.12 → 2.32 | 70.21 → 16.50 |
+| | **all** | 123.05 → 11.69 | 74.47 → 10.24 | 54.12 → 15.70 | 46.59 → 19.84 | 3.12 → 1.28 | **47.65 → 11.23** |
+| 3048 E3 `030310` (107; 99.6 s) | before → after, Normal | 84.11 → 11.14 | 29.65 → 9.86 | 18.24 → 13.47 | 16.08 → 14.28 | 1.11 → 1.01 | 20.03 → 9.34 |
+| | before → after, Good | 132.73 → 21.53 | 64.15 → 19.87 | 49.68 → 27.83 | 38.83 → 25.76 | 3.88 → 2.79 | 43.70 → 18.52 |
+| | **all** | 98.65 → 14.24 | 39.97 → 12.85 | 27.64 → 17.76 | 22.89 → 17.72 | 1.94 → 1.54 | **27.11 → 12.08** |
+| 3048 E3 `042834` (107; 86.3 s) | before → after, Normal | 85.96 → 10.54 | 29.51 → 8.39 | 18.06 → 11.52 | 16.17 → 13.47 | 1.04 → 0.89 | 20.09 → 8.32 |
+| | before → after, Good | 128.06 → 20.85 | 62.59 → 18.29 | 43.72 → 21.71 | 30.95 → 19.36 | 3.40 → 2.28 | 39.83 → 15.17 |
+| | **all** | 102.10 → 14.49 | 42.18 → 12.18 | 27.89 → 15.42 | 21.84 → 15.73 | 1.94 → 1.42 | **27.65 → 10.94** |
+
+(Every 3rd reference frame; the E3 runs' outcomes without a real judgement are left to the replay's
+default — `parity_audit.py` crashed on them before.)
+
+Remaining differences: particle phases (positions are random; the Good cube clusters pass at other times),
+the Good triangles are drawn ~1.8× the captured size (GPU sprite size, UNVERIFIED), FXAA, and the end-of-song
+states (§4.1).

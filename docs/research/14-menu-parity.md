@@ -82,7 +82,7 @@ content differences):
 | select | counter box | square | real is a capsule | open (minor) |
 | select | Notes Designer line | — | — | open: not in our catalog |
 | final check | layout | own 8-row list, no plate | real layout: `uT_Chara002_00` navigator, `uT_STmenu_obj000/006` panel, monitor, 4 `obj013` rows per page (OPTIONS tab turns the page), jacket, song plate, DIFFICULTY / BACK / OPTIONS / GO | fixed (rows hold our options) |
-| final check | preview monitor | — | dark disc with violet centre | approx: real is a live capture (`uM_STmoniter00` ← `BgCaptureTextureRenderTarget2D`) |
+| final check | preview monitor | — | dark disc with violet centre | live for charts without a movie: the background scene (doc 13 §5) under the empty guide lanes; movie charts keep the static stand-in |
 | results | ring art | none | dark / teal / rim bands between the pink stripes | approx: colours of a B grade |
 | results | ring letters | — | the play's CLEAR end stamp (round 2) | approx: the "R" is the stamp (`BP_Result_clear02/Clear02`, `uT_FTclear_900..906`) left behind the panels, x0.88 / −11.3° from an overlay; only the CLEAR stamp (other lamps have their own) |
 | results | entry timings | E2 estimates | 120 fps E3 (round 2) | fixed (§5) |
@@ -154,10 +154,13 @@ t 0): info slides in 0.9 s (~0.1 s), list 1.37 s (~0.2 s), score counts 1.83–2
    so no menu navigation is on video; `WHEEL_TAU` 0.07 s and the 0.35 / 0.35 s wipe stay
    UNVERIFIED. The final check → play transition is a zoom tunnel (31.6–33.0 s of that video), not
    our wipe.
-3. Final-check monitor: kept as the static stand-in. The real `uM_STmoniter00` shows
-   `BgCaptureTextureRenderTarget2D`, a capture of the play background (song movie / stage), not a
-   playfield; rendering it needs a second render target of the stage renderer (play-area code),
-   not cheap here.
+3. Final-check monitor: live for charts without a movie (`options::Monitor`,
+   `Renderer::render_background_display`: the background scene seen through the empty guide-lane
+   cone, as the play view shows it). The real `uM_STmoniter00` samples
+   `BgCaptureTextureRenderTarget2D`, which the level's `PreviewSceneCapture` (at the play camera's
+   place, `RhythmGame.umap`) fills with the play view itself — lanes, judgement ring and a demo
+   note at the chosen speed (E3 `nav-20`). Left: ring, lane separators, the demo note, movie charts
+   (static stand-in).
 4. Results: stamps for Missless / Full Combo / All Marvelous / Failed; ring colours per grade.
 5. Mode: the rings `uM_Ring00_x` / `uM_CMcircle000` of `BP_Select_level` (their sizes come from
    material-parameter animations: `Gauge_Width` tracks).
