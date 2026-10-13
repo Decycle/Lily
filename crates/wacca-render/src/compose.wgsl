@@ -61,9 +61,24 @@ fn hud_rim(pos: vec2<f32>) -> f32 {
     return k;
 }
 
+// The game's view runs TAA; a still converged TAA image is the scene seen through a ~0.55 px
+// Gaussian (fitted on RenderDoc frame 12365: edge pixels' mean |diff| 20.4 → 15.8 levels,
+// minimum at σ 0.45–0.6). Taps: centre, 4 edges, 4 corners of σ = 0.55.
+const TAA_W: vec3<f32> = vec3<f32>(0.522, 0.100, 0.0193);
+
+fn scene_at(p: vec2<i32>) -> vec3<f32> {
+    let size = vec2<i32>(textureDimensions(scene));
+    return textureLoad(scene, clamp(p, vec2<i32>(0), size - 1), 0).rgb;
+}
+
 @fragment
 fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
-    let c = textureLoad(scene, vec2<i32>(pos.xy), 0).rgb;
+    let q = vec2<i32>(pos.xy);
+    var c = scene_at(q) * TAA_W.x;
+    c += (scene_at(q + vec2<i32>(1, 0)) + scene_at(q - vec2<i32>(1, 0)) + scene_at(q + vec2<i32>(0, 1))
+        + scene_at(q - vec2<i32>(0, 1))) * TAA_W.y;
+    c += (scene_at(q + vec2<i32>(1, 1)) + scene_at(q - vec2<i32>(1, 1)) + scene_at(q + vec2<i32>(1, -1))
+        + scene_at(q + vec2<i32>(-1, 1))) * TAA_W.z;
     let e = pow(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2)) * hud_rim(pos.xy);
     return vec4<f32>(select(e, srgb_to_linear(e), SRGB_TARGET > 0.5), 1.0);
 }
