@@ -1,7 +1,8 @@
 //! Parsed chart data model (shared by the judge engine and the renderer).
 //!
 //! Times are chart seconds (`f64`), see `docs/research/01-chart-format.md` §5.
-//! Lanes: 60 segments of 6°, lane 0 at 3 o'clock, increasing counter-clockwise (UNVERIFIED on screen).
+//! Lanes: 60 segments of 6°, lane 0 at 3 o'clock, increasing counter-clockwise (confirmed on screen by
+//! experiments E1 and E2, `docs/research/08-e1-results.md` §0, `09-e2-results.md` §0).
 
 pub const TICKS_PER_MEASURE: u32 = 1920;
 pub const LANES: u8 = 60;

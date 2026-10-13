@@ -1,8 +1,9 @@
 //! Perfect input for a chart: every note hit exactly on time.
 
+use super::sense;
 use crate::input::{DEPTHS, InputFrame, SensorState};
 use crate::rules::FRAME_SECS;
-use wacca_chart::{Arc, Chart, HoldNode, LANES, NoteBody, SlideDir, SnapDir};
+use wacca_chart::{Arc, Chart, HoldNode, NoteBody, SlideDir, SnapDir};
 
 /// Length of each scripted contact phase; short so neighbouring notes get fresh presses.
 const STEP: f64 = FRAME_SECS / 4.0;
@@ -23,18 +24,15 @@ struct Contact {
 
 fn mask(arc: Arc, depths: std::ops::Range<usize>) -> SensorState {
     let mut s = SensorState::default();
-    for o in 0..arc.width {
-        let lane = ((arc.lane as u16 + o as u16) % LANES as u16) as u8;
-        for d in depths.clone() {
-            s.set(lane, d, true);
-        }
+    for d in depths {
+        s.rings[d] = sense::arc_mask(arc);
     }
     s
 }
 
 fn lane(arc: Arc, offset: u8) -> Arc {
     Arc {
-        lane: ((arc.lane as u16 + offset as u16) % LANES as u16) as u8,
+        lane: sense::lane_at(arc, offset),
         width: 1,
     }
 }
