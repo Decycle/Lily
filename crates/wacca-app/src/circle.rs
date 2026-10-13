@@ -321,7 +321,10 @@ mod tests {
         assert_eq!(c.p([440.0, 0.0]), [270.0, 0.0]);
         let mut v = View::default();
         c.image(&mut v, font_tex("x"), [540.0, 960.0], [100.0, 50.0], 1.0);
-        let crate::ui::Item::Image { key, tint, rect } = &v.items[0] else {
+        let crate::ui::Item::Image {
+            key, tint, rect, ..
+        } = &v.items[0]
+        else {
             panic!()
         };
         assert_eq!((key.as_str(), tint[3]), ("UI/Textures/FONT/x", 0.5));

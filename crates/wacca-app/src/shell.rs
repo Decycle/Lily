@@ -22,17 +22,20 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Fullscreen, Window, WindowId};
 
+use crate::canvas::{Canvas, ease};
 use crate::gesture::{Gesture, Pointer, Scroller};
 use crate::menu::Menu;
 use crate::play::{PlayOptions, PlaySpec, PlayState, VideoSetup, load_chart, movie_path};
 use crate::results::Summary;
 use crate::screen::{self, Event, Next, Screen};
 use crate::ui::{Action, Item, View, WHITE};
-use crate::{hud, jacket, options, preview, record, results, select};
+use crate::{category, hud, jacket, options, preview, record, results, select_ui};
 
 /// Contact id used for the mouse (touch ids come from the OS).
 const MOUSE_ID: u64 = u64::MAX;
 const SPEED_STEP: f64 = 0.5;
+/// Time constant of the wheel scroll easing (s).
+const WHEEL_TAU: f32 = 0.07;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ShellError {
@@ -70,7 +73,7 @@ pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
         s: setup,
         fonts: Some(fonts),
         gfx: None,
-        screen: Screen::SongSelect,
+        screen: Screen::Category,
         play: None,
         summary: None,
         results_at: Instant::now(),
@@ -83,6 +86,9 @@ pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
         mouse_down: false,
         alt: false,
         jackets_tried: HashSet::new(),
+        ui_tried: HashSet::new(),
+        wheel: 0.0,
+        last_frame: None,
         error: None,
     };
     EventLoop::new()?.run_app(&mut app)?;
@@ -146,7 +152,7 @@ impl Gfx {
     }
 
     /// Playfield `scene` (may be empty), then the `view` overlay.
-    fn draw(&mut self, scene: &[Vertex], view: &View, jackets: &mut Jackets) {
+    fn draw(&mut self, scene: &[Vertex], view: &View, jackets: &mut Images, ui: &mut Images) {
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(e) => {
@@ -175,6 +181,26 @@ impl Gfx {
                     align,
                     max_width,
                 } => self.text.text(text, *at, *px, *color, *align, *max_width),
+                Item::TurnedText {
+                    text,
+                    at,
+                    px,
+                    color,
+                    align,
+                    angle,
+                } => self
+                    .text
+                    .text_turned(text, *at, *px, *color, *align, *angle),
+                Item::Image {
+                    key,
+                    rect,
+                    uv,
+                    angle,
+                    tint,
+                } => {
+                    ui.ensure(&mut self.text, key);
+                    self.text.image_region(key, *rect, *uv, *angle, *tint);
+                }
                 Item::Jacket { rect, key } => {
                     jackets.ensure(&mut self.text, key);
                     if self.text.has_image(key) {
@@ -184,11 +210,6 @@ impl Gfx {
                     }
                 }
                 Item::Poly { points, colors } => self.text.fill_poly(points, colors),
-                Item::Image { rect, key, tint } => {
-                    let key = format!("{UI_IMAGE}{key}");
-                    jackets.ensure(&mut self.text, &key);
-                    self.text.image(&key, *rect, *tint);
-                }
             }
         }
         self.text.render(&mut encoder, &target);
@@ -198,26 +219,22 @@ impl Gfx {
     }
 }
 
-/// Image-key prefix of exported UI textures (`data/ui/<key>.png`); other keys are jackets.
-const UI_IMAGE: &str = "ui:";
-
-/// Loads each jacket / UI texture PNG once, on first use.
-struct Jackets<'a> {
-    data: &'a std::path::Path,
+/// Loads each image (`<dir>/<key>.png`) once, on first use. Jacket keys (`S03/uT_J_S03_30`)
+/// and UI texture keys (`UI/Textures/...`) never collide.
+struct Images<'a> {
+    dir: PathBuf,
     tried: &'a mut HashSet<String>,
 }
 
-impl Jackets<'_> {
+impl Images<'_> {
     fn ensure(&mut self, text: &mut TextRenderer, key: &str) {
         if key.is_empty() || !self.tried.insert(key.to_string()) {
             return;
         }
-        let path = match key.strip_prefix(UI_IMAGE) {
-            Some(ui) => self.data.join("ui").join(format!("{ui}.png")),
-            None => jacket::path(self.data, key),
-        };
-        if let Some((size, rgba)) = jacket::load(&path) {
-            text.set_image(key, size, &rgba);
+        let path = self.dir.join(format!("{key}.png"));
+        match jacket::load(&path) {
+            Some((size, rgba)) => text.set_image(key, size, &rgba),
+            None => log::debug!("no image {}", path.display()),
         }
     }
 }
@@ -350,6 +367,10 @@ struct App {
     mouse_down: bool,
     alt: bool,
     jackets_tried: HashSet<String>,
+    ui_tried: HashSet<String>,
+    /// Visual offset of the category / song wheel in panels; eases to 0 after a move.
+    wheel: f32,
+    last_frame: Option<Instant>,
     error: Option<ShellError>,
 }
 
@@ -367,9 +388,13 @@ impl App {
     fn view(&self) -> View {
         let area = self.area();
         let m = &self.s.menu;
+        let [w, h] = self.size();
+        let canvas = Canvas::fit(w, h);
         match self.screen {
-            Screen::SongSelect => select::select_view(&m.list, &self.s.save, area),
-            Screen::Difficulty => select::difficulty_view(&m.list, &self.s.save, area),
+            Screen::Category => {
+                category::view(canvas, &m.list, m.category, self.wheel, &self.s.save)
+            }
+            Screen::SongSelect => select_ui::view(canvas, &m.list, self.wheel, &self.s.save),
             Screen::Options => {
                 let title = m.list.current().map_or("", |s| s.title.as_str());
                 options::view(&m.options, &m.settings, m.autoplay, title, area)
@@ -530,9 +555,25 @@ impl App {
         }
     }
 
+    /// Wheel position on the category / song screens: (cursor, length).
+    fn wheel_pos(&self) -> Option<(usize, usize)> {
+        let m = &self.s.menu;
+        match self.screen {
+            Screen::Category => Some((m.category, m.list.genres().len())),
+            Screen::SongSelect => Some((m.list.cursor(), m.list.len())),
+            _ => None,
+        }
+    }
+
     fn action(&mut self, event_loop: &ActiveEventLoop, a: Action) {
+        let (screen, before) = (self.screen, self.wheel_pos());
         if let Some(e) = self.s.menu.act(self.screen, a) {
             self.event(event_loop, e);
+        }
+        if self.screen != screen {
+            self.wheel = 0.0;
+        } else if let (Some((b, len)), Some((c, _))) = (before, self.wheel_pos()) {
+            self.wheel += select_ui::wrap_delta(b, c, len) as f32;
         }
     }
 
@@ -578,6 +619,9 @@ impl App {
             KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => Action::Confirm,
             KeyCode::Escape | KeyCode::Backspace => Action::Back,
             KeyCode::KeyS => Action::NextSort,
+            KeyCode::KeyD => Action::Difficulty,
+            KeyCode::PageUp => Action::Genre(-1),
+            KeyCode::PageDown => Action::Genre(1),
             KeyCode::KeyF => Action::ToggleFilter,
             KeyCode::KeyR => Action::Retry,
             _ => return,
@@ -610,9 +654,9 @@ impl App {
                     self.action(event_loop, a);
                 }
             }
-            Some(Gesture::Drag(dy)) if self.screen == Screen::SongSelect => {
-                let row = self.area().w * 0.12;
-                let n = self.scroller.steps(dy, row);
+            Some(Gesture::Drag([dx, _])) if self.wheel_pos().is_some() => {
+                let step = Canvas::fit(self.size()[0], self.size()[1]).scale * 250.0;
+                let n = self.scroller.steps(dx, step);
                 if n != 0 {
                     self.action(event_loop, Action::Scroll(n));
                 }
@@ -653,21 +697,32 @@ impl App {
                     scene = p.scene(sprites);
                 }
             }
+            Screen::SongSelect | Screen::Options => self.preview.update(&self.s),
+            Screen::Category => self.preview.stop(&self.s.player),
             Screen::Results => {}
-            _ => self.preview.update(&self.s),
         }
+        let now = Instant::now();
+        let dt = self
+            .last_frame
+            .replace(now)
+            .map_or(0.0, |t| (now - t).as_secs_f32());
+        self.wheel = ease(self.wheel, dt, WHEEL_TAU);
         if self.screen != Screen::Play
             && let Some(gfx) = &mut self.gfx
         {
             gfx.renderer.show_video(false);
         }
         let view = self.view();
-        let mut jackets = Jackets {
-            data: &self.s.data,
+        let mut jackets = Images {
+            dir: self.s.data.join("jackets"),
             tried: &mut self.jackets_tried,
         };
+        let mut ui = Images {
+            dir: self.s.data.join("ui"),
+            tried: &mut self.ui_tried,
+        };
         if let Some(gfx) = &mut self.gfx {
-            gfx.draw(&scene, &view, &mut jackets);
+            gfx.draw(&scene, &view, &mut jackets, &mut ui);
         }
     }
 
@@ -760,7 +815,7 @@ impl ApplicationHandler for App {
                     self.pointer(event_loop, MOUSE_ID, p, Some(self.mouse_down));
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } if self.screen == Screen::SongSelect => {
+            WindowEvent::MouseWheel { delta, .. } if self.wheel_pos().is_some() => {
                 let dy = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,

@@ -1,11 +1,7 @@
 //! Display names and colours of game values.
 
 use wacca_chart::Difficulty;
-use wacca_game::grade::{Grade, Lamp};
-use wacca_game::save::ChartRecord;
 use wacca_render::style::Rgba;
-
-use crate::hud::format_score;
 
 pub fn difficulty(d: Difficulty) -> &'static str {
     match d {
@@ -16,13 +12,21 @@ pub fn difficulty(d: Difficulty) -> &'static str {
     }
 }
 
-// UNVERIFIED: hues from doc 05 §3.1; exact RGB to come from the UI assets.
+/// The game's difficulty colour (`uMPC_DifficultyColor` `*FlagL`, linear → sRGB).
 pub fn difficulty_color(d: Difficulty) -> Rgba {
+    difficulty_flags(d)[0]
+}
+
+/// Difficulty plate colour (`*FlagL`) and level text colour (`*FontInner`) from
+/// `uMPC_DifficultyColor`, in sRGB. (`*FlagR` is a slightly different shade not visible on
+/// the reference frames.)
+pub fn difficulty_flags(d: Difficulty) -> [Rgba; 2] {
+    let c = |rgb: u32| crate::canvas::hex(rgb, 1.0);
     match d {
-        Difficulty::Normal => [0.20, 0.70, 1.0, 1.0],
-        Difficulty::Hard => [1.0, 0.80, 0.10, 1.0],
-        Difficulty::Expert => [1.0, 0.20, 0.45, 1.0],
-        Difficulty::Inferno => [0.60, 0.25, 0.90, 1.0],
+        Difficulty::Normal => [c(0x1b7cff), c(0xffffff)],
+        Difficulty::Hard => [c(0xffc200), c(0xffffff)],
+        Difficulty::Expert => [c(0xff0084), c(0xffffff)],
+        Difficulty::Inferno => [c(0x400044), c(0x13142d)],
     }
 }
 
@@ -32,47 +36,6 @@ pub fn level(l: f32) -> String {
     let whole = l.trunc();
     let plus = if l - whole >= 0.7 - 1e-4 { "+" } else { "" };
     format!("{whole:.0}{plus}")
-}
-
-pub fn grade(g: Grade) -> &'static str {
-    match g {
-        Grade::D => "D",
-        Grade::C => "C",
-        Grade::B => "B",
-        Grade::A => "A",
-        Grade::AA => "AA",
-        Grade::AAA => "AAA",
-        Grade::S => "S",
-        Grade::SPlus => "S+",
-        Grade::SS => "SS",
-        Grade::SsPlus => "SS+",
-        Grade::SSS => "SSS",
-        Grade::SssPlus => "SSS+",
-        Grade::Master => "MASTER",
-    }
-}
-
-pub fn lamp(l: Lamp) -> &'static str {
-    match l {
-        Lamp::Failed => "FAILED",
-        Lamp::Clear => "CLEAR",
-        Lamp::Missless => "MISSLESS",
-        Lamp::FullCombo => "FULL COMBO",
-        Lamp::AllMarvelous => "ALL MARVELOUS",
-    }
-}
-
-/// Personal best summary, e.g. `987,654  SSS  FULL COMBO`, or `NO PLAY`.
-pub fn record(r: Option<&ChartRecord>) -> String {
-    match r.filter(|r| r.play_count > 0) {
-        None => "NO PLAY".into(),
-        Some(r) => format!(
-            "{}  {}  {}",
-            format_score(r.best_score),
-            r.best_grade.map_or("-", grade),
-            lamp(r.best_lamp)
-        ),
-    }
 }
 
 #[cfg(test)]
@@ -89,17 +52,12 @@ mod tests {
     }
 
     #[test]
-    fn record_summary() {
-        assert_eq!(record(None), "NO PLAY");
-        assert_eq!(record(Some(&ChartRecord::default())), "NO PLAY");
-        let r = ChartRecord {
-            best_score: 987_654,
-            best_grade: Some(Grade::SssPlus),
-            best_lamp: Lamp::FullCombo,
-            play_count: 3,
-            ..ChartRecord::default()
-        };
-        assert_eq!(record(Some(&r)), "987,654  SSS+  FULL COMBO");
+    fn names_and_colours() {
         assert_eq!(difficulty(Difficulty::Expert), "EXPERT");
+        // `uMPC_DifficultyColor` NormalFlagL (0.011, 0.202, 1.0) linear.
+        assert_eq!(
+            difficulty_color(Difficulty::Normal),
+            crate::canvas::hex(0x1b7cff, 1.0)
+        );
     }
 }
