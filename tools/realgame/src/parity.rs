@@ -330,6 +330,7 @@ pub fn probe_text(p: Option<Probe>) -> String {
             from_ms / (FRAME_SECS * 1000.0),
             to_ms / (FRAME_SECS * 1000.0)
         ),
+        Some(p @ (Probe::GroupPress { .. } | Probe::GroupSplit { .. })) => format!("{p:?}"),
     }
 }
 
@@ -348,12 +349,13 @@ pub fn confusion(rows: &[&Row]) -> Confusion {
     m
 }
 
-const CLASSES: [Class; 5] = [
+const CLASSES: [Class; 6] = [
     Class::Touch,
     Class::Hold,
     Class::Chain,
     Class::Slide,
     Class::Snap,
+    Class::SnapOut,
 ];
 
 /// Markdown report: agreement and confusion per class (probed and perfect notes), then every disagreement.

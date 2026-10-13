@@ -51,7 +51,11 @@ fn read_json<T: serde::de::DeserializeOwned>(p: &Path) -> Result<T, String> {
     serde_json::from_str(&read(p)?).map_err(|e| format!("{}: {e}", p.display()))
 }
 
-fn compare(dir: &Path) -> Result<Vec<Row>, String> {
+/// One line per two-note group test (E6): `(agrees, markdown row)`.
+type GroupLine = (bool, String);
+
+/// Per-note rows and the run's group lines.
+fn compare(dir: &Path) -> Result<(Vec<Row>, Vec<GroupLine>), String> {
     let name = dir
         .file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
@@ -131,7 +135,40 @@ fn compare(dir: &Path) -> Result<Vec<Row>, String> {
     // Real verdicts: probed notes from e3.json, unprobed ones from the panel.
     let mut real: Vec<Option<(Option<Probe>, wacca_game::rules::Judgement)>> =
         vec![None; chart.notes.len()];
+    // Groups (E6): all panel changes of both notes against ours for both (`analyze_e3` pooled them).
+    let mut groups = Vec::new();
     for o in &run.outcomes {
+        let (Some(j), Some(_)) = (o.test.partner, o.clock_ms) else {
+            continue;
+        };
+        let mut real: Vec<_> = o.seen.iter().map(|&x| Some(x)).collect();
+        real.sort_by_key(|x| x.map(e3::rank));
+        let mine = [o.test.note, j].map(|k| ours.get(k).copied().flatten().map(|e| e.judgement));
+        let agree = e3_analysis::judgement_set(real.clone()) == e3_analysis::judgement_set(mine);
+        let offs = [o.test.note, j].map(|k| {
+            ours.get(k)
+                .copied()
+                .flatten()
+                .and_then(|e| e.offset)
+                .map_or("–".into(), |x| format!("{:+.1}", x / FRAME_SECS))
+        });
+        groups.push((
+            agree,
+            format!(
+                "| {name} | {} | {:?} | {:?} | {real:?} | {mine:?} | {} / {} | {} |",
+                o.test.note,
+                o.test.class,
+                o.test.probe,
+                offs[0],
+                offs[1],
+                if agree { "✔" } else { "✘" }
+            ),
+        ));
+    }
+    for o in &run.outcomes {
+        if o.test.partner.is_some() {
+            continue;
+        }
         if let (Some(j), Some(_)) = (o.real, o.clock_ms) {
             real[o.test.note] = Some((Some(o.test.probe), j));
         }
@@ -148,7 +185,11 @@ fn compare(dir: &Path) -> Result<Vec<Row>, String> {
         }
     }
     let assigned = e3_analysis::assign(&events, &spans, run.lag);
-    let tested: Vec<usize> = plan.tests.iter().map(|t| t.note).collect();
+    let tested: Vec<usize> = plan
+        .tests
+        .iter()
+        .flat_map(|t| std::iter::once(t.note).chain(t.partner))
+        .collect();
     let ends: Vec<f64> = spans.iter().flat_map(|&(s, e)| [s, e]).collect();
     for (i, hits) in assigned.iter().enumerate() {
         if tested.contains(&i) {
@@ -244,18 +285,33 @@ fn compare(dir: &Path) -> Result<Vec<Row>, String> {
         rows.iter().filter(|r| r.probe.is_some()).count(),
         late.len()
     );
-    Ok(rows)
+    Ok((rows, groups))
 }
 
 fn run(a: &Args) -> Result<(), String> {
-    let mut rows = Vec::new();
+    let (mut rows, mut groups) = (Vec::new(), Vec::new());
     for d in &a.runs {
         match compare(d) {
-            Ok(r) => rows.extend(r),
+            Ok((r, g)) => {
+                rows.extend(r);
+                groups.extend(g);
+            }
             Err(e) => eprintln!("skipped: {e}"),
         }
     }
-    let report = parity::report(&rows);
+    let mut report = parity::report(&rows);
+    if !groups.is_empty() {
+        report.push_str(&format!(
+            "\n## Two-note groups (E6): {} / {} agree\n\nOurs on the injected input; offsets in frames.\n\n\
+             | Run | Note | Class | Probe | Real changes | Ours (1st, 2nd) | Offsets | Agree |\n|---|---|---|---|---|---|---|---|\n",
+            groups.iter().filter(|g| g.0).count(),
+            groups.len()
+        ));
+        for (_, line) in &groups {
+            report.push_str(line);
+            report.push('\n');
+        }
+    }
     println!("{report}");
     if let Some(p) = &a.report {
         std::fs::write(p, &report).map_err(|e| format!("{}: {e}", p.display()))?;

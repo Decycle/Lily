@@ -317,6 +317,22 @@ impl Gfx {
                     images.ensure(key, Folder::Ui);
                     self.text.image_poly(key, points, uvs, *tint);
                 }
+                Item::Material {
+                    material,
+                    rect,
+                    uv,
+                    angle,
+                    textures,
+                    params,
+                    tint,
+                } => {
+                    for key in textures {
+                        images.ensure(key, Folder::Ui);
+                    }
+                    let keys: Vec<&str> = textures.iter().map(String::as_str).collect();
+                    self.text
+                        .material(*material, *rect, *angle, *uv, &keys, params, *tint);
+                }
             }
         }
         self.text.render(&mut encoder, &target);
@@ -584,10 +600,15 @@ impl App {
     /// Seconds left on the current screen's countdown, if the `menu_timers` setting shows one.
     fn countdown(&self) -> Option<u32> {
         let limit = screen::time_limit(self.screen).filter(|_| self.s.menu.settings.menu_timers)?;
-        Some(screen::countdown(
-            limit,
-            self.timer_at.elapsed().as_secs_f32(),
-        ))
+        let mut elapsed = self.timer_at.elapsed().as_secs_f32();
+        if self.screen == Screen::Results {
+            // The results countdown starts with GO (E3: "15" when GO appears).
+            elapsed = self.results_at.elapsed().as_secs_f32() - results::GO_AT;
+            if elapsed < 0.0 {
+                return None;
+            }
+        }
+        Some(screen::countdown(limit, elapsed))
     }
 
     fn screen_view(&self, screen: Screen) -> View {

@@ -38,8 +38,9 @@ impl JudgeTable {
     /// `JudgeParameterTable` of WACCA Reverse 3.07.01 (`docs/research/02-data-tables.md` §2).
     /// `AdjustRateFront/Rear` (Chain front = 20 %) is not applied: the real game's chain window
     /// is ≈ ±4 f on any touch, not 0.8 or 3.2 f early (doc 10 §9). Touch / hold / chain / slide windows are confirmed in
-    /// continuous time (`docs/research/10-e3-judge-results.md` §0, §6.4); snap windows are
-    /// consistent with the few measured samples.
+    /// continuous time (`docs/research/10-e3-judge-results.md` §0, §6.4); slide early edges and
+    /// snap in / out windows match the table to ±1 f on Hard charts (doc 10 §10), and Hard uses
+    /// the same windows as Normal.
     pub fn reverse() -> Self {
         let slide = row((5.0, 7.0), (8.0, 10.0), (10.0, 10.0));
         Self {

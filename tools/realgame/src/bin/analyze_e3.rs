@@ -168,6 +168,15 @@ fn analyse(dir: &Path, ff: &Path) -> Result<RunResult, String> {
             sp.1 = sp.1.max(sp.0);
         }
     }
+    // Groups (E6): every change near either note goes to the test note.
+    for t in &plan.tests {
+        if let Some(j) = t.partner {
+            spans[t.note] = (t.time, t.end);
+            if let Some(sp) = spans.get_mut(j) {
+                *sp = (t.time, t.end);
+            }
+        }
+    }
     let assigned = e3_analysis::assign(&events, &spans, lag);
     let outcomes: Vec<_> = kept
         .into_iter()

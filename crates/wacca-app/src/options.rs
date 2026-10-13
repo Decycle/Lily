@@ -175,7 +175,7 @@ pub fn view(
     who: &chrome::Player,
 ) -> View {
     let mut p = Painter::new(c);
-    chrome::background(&mut p);
+    chrome::background(&mut p, chrome::SELECT_BACKDROP);
     // Character art, then the panel around the monitor and the rows' stripes.
     // UNVERIFIED: placed by matching the E3 frame (eyes and bow), not from the widget.
     p.image(
