@@ -180,6 +180,10 @@ pub struct Painter {
     side: View,
 }
 
+/// Top of a text line above its vertical centre, in pixel heights: the UI face
+/// (`TT_RODINNTLG-EB`, ascent 0.88, cap height ~0.73) centres its capitals there.
+const TEXT_MID: f32 = 0.52;
+
 /// Centre alignment.
 pub const MID: [f32; 2] = [0.5, 0.5];
 
@@ -301,7 +305,7 @@ impl Painter {
     ) {
         let px = font_px(size);
         let m = self.c.place(at);
-        let [x, y] = m.pt([at[0], at[1] - px * 0.62]);
+        let [x, y] = m.pt([at[0], at[1] - px * TEXT_MID]);
         let k = m.scale;
         self.layer(at)
             .text_in(s, [x, y], px * k, color, align, max_w.map(|w| w * k));
@@ -332,7 +336,7 @@ impl Painter {
     ) {
         let px = font_px(size);
         let m = self.c.place(at);
-        let p = m.pt([at[0], at[1] - px * 0.62]);
+        let p = m.pt([at[0], at[1] - px * TEXT_MID]);
         self.layer(at)
             .text_face(s, p, px * m.scale, color, align, face);
     }
@@ -345,7 +349,7 @@ impl Painter {
         let m = self.c.place(at);
         let mut x = at[0];
         for ch in s.chars() {
-            let p = m.pt([x, at[1] - px * 0.62]);
+            let p = m.pt([x, at[1] - px * TEXT_MID]);
             self.layer(at).text_face(
                 ch.to_string(),
                 p,
@@ -363,7 +367,7 @@ impl Painter {
         let px = font_px(size);
         let a = degrees.to_radians();
         // Rotate the line's top-centre about `at`; the renderer turns the line about it.
-        let up = 0.62 * px;
+        let up = TEXT_MID * px;
         let m = self.c.place(at);
         let top = m.pt([at[0] + up * a.sin(), at[1] - up * a.cos()]);
         self.layer(at).items.push(Item::TurnedText {
