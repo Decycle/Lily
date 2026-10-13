@@ -2,14 +2,15 @@
 //! `uT_Chara000_RT000` in front of `uT_Chara000_EV001`), the `uT_LG04` logo, the message plate and
 //! the START button at the bottom. Coin / credit / Aime texts of the arcade build are left out.
 //!
-//! The key art is the material `uM_Title012`, which composites the character textures with a
-//! glitch effect; it is drawn here as layers placed on the real attract frame
-//! (`runs/explore/20261012-225558/nav-00-attract.png`), with the glitch approximated by RGB-split
-//! copies and slipping strips, the halftone dots and the copyright / version lines along the left
-//! rim (`runs/reference/20261012-223942/video.mkv`, 10–18 s).
+//! The key art: the ghost behind is the material `uM_Title012` (ported, `title_glitch.wgsl`),
+//! lit by `uM_Chara_2` smoke glows (ported, `chara_glow.wgsl`). The guide character in front is
+//! not a widget of BP_Title_1 (its `Image_9` stays hidden), so he is a layer placed on the real
+//! attract frame (`runs/explore/20261012-225558/nav-00-attract.png`) with his steady
+//! magenta / cyan fringes and slipping strips in bursts; plus the halftone dots and the copyright
+//! / version lines along the left rim (`runs/reference/20261012-223942/video.mkv`, 10–21 s).
 
 use wacca_render::style::Rgba;
-use wacca_render::text::Align;
+use wacca_render::text::{Align, UiMaterial};
 
 use crate::canvas::{Canvas, FULL, MID, Painter, hex};
 use crate::chrome::{self, Icon, WHITE};
@@ -19,7 +20,7 @@ use crate::ui::{Action, View};
 pub const INTRO: f32 = 0.25;
 
 const CHARA: &str = "CHARACTER/chara000/";
-const BACKDROP: u32 = 0x3a05c8;
+const BACKDROP: u32 = 0x310c9a;
 /// Message plate text (UMG text colour of `t_coment` on the frame).
 const PLATE_TEXT: u32 = 0x6a0fa0;
 /// `ColorTable` `DecideBtnColor`.
@@ -35,14 +36,27 @@ pub fn view(c: Canvas, t: f32) -> View {
     let mut p = Painter::new(c);
     p.fill([0.0, 0.0], [1080.0, 1080.0], MID, hex(BACKDROP, 1.0));
     // Glow behind the character.
-    p.tex("uT_CM19", [0.0, -40.0], [900.0, 900.0], hex(0xb060ff, 0.7));
+    glow(&mut p, [0.0, -40.0], 900.0, [0.45, 0.05, 0.9, 1.0], t);
     // Halftone dots of the key art's background: a band behind the head, a patch on the left.
     halftone(&mut p, [124.0, -393.0], [600.0, 104.0], 14.0, 8.0);
     halftone(&mut p, [-330.0, -70.0], [230.0, 130.0], 24.0, 14.0);
     let g = glitch(t);
-    // The second character, a dim ghost on the right with her coloured hair streaks.
-    let ghost = format!("UI/Textures/{CHARA}uT_Chara000_EV001");
-    layer(&mut p, &ghost, [76.0, 95.0], 1300.0, hex(0xd0d8ff, 0.75), g);
+    // The second character behind, `uM_Title012`: each colour channel of her art shifted by its
+    // own glitch. Placement measured on the attract frame (edge correlation). UNVERIFIED: the
+    // material's default channel colours (lavender / pink / violet) do not match that frame
+    // (teal crescents, grey-blue hair), so the widget must set them at run time; the art's own
+    // colours with a measured blue tint stand in.
+    p.material(
+        UiMaterial::TitleGlitch,
+        ([124.0, 62.0], [1220.0, 1220.0]),
+        &[
+            "uT_TTlogo07",
+            "uT_CM06",
+            &format!("{CHARA}uT_Chara000_EV001"),
+        ],
+        &title012(t),
+        [0.6, 0.69, 1.0, 0.75],
+    );
     let chara = format!("UI/Textures/{CHARA}uT_Chara000_RT000");
     layer(&mut p, &chara, [0.0, -17.0], 1080.0, WHITE, g);
     // Copyright and version along the left rim, reading downwards (attract frame).
@@ -51,7 +65,7 @@ pub fn view(c: Canvas, t: f32) -> View {
     let version = concat!("Ver.", env!("CARGO_PKG_VERSION"));
     arc_text(&mut p, version, 482.0, 160.0, 9.6, 7.0, edge);
     // The purple light falling on the character's clothes.
-    p.tex("uT_CM19", [0.0, 90.0], [700.0, 700.0], hex(0xc070ff, 0.45));
+    glow(&mut p, [0.0, 90.0], 700.0, [0.5, 0.0, 0.7, 1.0], t);
     // `Kerare` vignette and the dark gradient up from the bottom (`Image_10`, `uT_CM00`).
     p.tex("uT_CM04", [0.0, 0.0], [1080.0, 1080.0], hex(0x0a0b1c, 1.0));
     p.tex_ex(
@@ -81,6 +95,49 @@ pub fn view(c: Canvas, t: f32) -> View {
     p.button([0.0, 0.0], [1080.0, 1080.0], Action::Confirm);
     p.circle_mask();
     p.finish()
+}
+
+/// `uM_Chara_2`'s smoky additive glow, `side` square at `at`, tinted (linear).
+fn glow(p: &mut Painter, at: [f32; 2], side: f32, tint: [f32; 4], t: f32) {
+    p.material(
+        UiMaterial::CharaGlow,
+        (at, [side, side]),
+        &["uT_TTlogo07", "Vfx/Textures/vT_FogNoise00_00_m"],
+        &[[t, 0.0, 0.0, 0.0]],
+        tint,
+    );
+}
+
+/// `uM_Title012`'s parameters at material time `t`, packed as `title_glitch.wgsl` reads them:
+/// the material's defaults for the glitches (`ue4_material.py --uniforms`), durations clamped to
+/// their span as the material does. The channel colours are not the defaults (color_1 =
+/// (0.577, 0.537, 0.594), color_2 = (1, 0, 0.140), color_4 = (0.044, 0, 0.227)) but each channel
+/// as itself (see the call site).
+fn title012(t: f32) -> [[f32; 4]; 10] {
+    let (span_1, duration_1, move_5) = (3.0, 1.0, 0.006);
+    let (speed_1, width_1, offset_1, ran_1) = (0.02, 6.0, 0.005, 0.0);
+    let (span_2, duration_2, speed_2, width_2, offset_2, ran_2) = (0.0, 0.0, 0.01, 1.0, 0.002, 0.0);
+    let (span_3, duration_3, rotator_3, width_3, speed_3) = (0.0, 1.0f32, 0.0f32, 1.0, 0.0);
+    let (offset_3, ran_3) = (0.01, 1.0);
+    let turn = rotator_3 * std::f32::consts::TAU;
+    [
+        [t, span_1, f32::clamp(duration_1, 0.0, span_1), move_5],
+        [speed_1, 1.0 / width_1, offset_1, ran_1],
+        [
+            span_2,
+            f32::clamp(duration_2, 0.0, span_2),
+            speed_2,
+            1.0 / width_2,
+        ],
+        [offset_2, ran_2, span_3, duration_3.clamp(0.0, span_3)],
+        [turn.cos(), turn.sin(), 1.0 / width_3, speed_3],
+        [offset_3, ran_3, 0.0, 0.0],
+        // Blue, red and green channel colours (linear), constant.
+        [0.0, 0.0, 1.0, 0.0],
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0; 4],
+    ]
 }
 
 /// Blue halftone dots in a `size` box around `at`: dots on a `pitch` grid, `max` wide on the
@@ -142,22 +199,18 @@ const STRIPS: u32 = 14;
 /// A key-art layer, square `side` centred at `at`. During a burst cyan and magenta copies peek out
 /// left and right of it and some horizontal strips slip sideways.
 fn layer(p: &mut Painter, key: &str, at: [f32; 2], side: f32, tint: Rgba, g: Option<Glitch>) {
+    // Magenta and cyan copies always peek out left and right of the art (attract recording,
+    // 12-21 s: steady fringes, wider during bursts).
+    let split = if g.is_some() { 9.0 } else { 5.0 };
+    for (d, rgb) in [([-split, -2.0], 0xff30c8), ([split, 0.0], 0x30f0ff)] {
+        let ghost = hex(rgb, 0.6 * tint[3]);
+        let at = [at[0] + d[0], at[1] + d[1]];
+        p.image(key, at, [side, side], MID, FULL, 0.0, ghost);
+    }
     let Some(g) = g else {
         p.image(key, at, [side, side], MID, FULL, 0.0, tint);
         return;
     };
-    for (dx, rgb) in [(-9.0, 0x30f0ff), (9.0, 0xff30c8)] {
-        let ghost = hex(rgb, 0.45 * tint[3]);
-        p.image(
-            key,
-            [at[0] + dx, at[1]],
-            [side, side],
-            MID,
-            FULL,
-            0.0,
-            ghost,
-        );
-    }
     for i in 0..STRIPS {
         let h = hash(g.seed.wrapping_add(i));
         let shift = if h.is_multiple_of(3) {
@@ -285,6 +338,39 @@ mod tests {
             .find(|&t| glitch(t).is_none())
             .unwrap();
         assert_eq!(strips(calm), 0);
+    }
+
+    #[test]
+    fn ghost_is_the_ported_glitch_material_with_its_clock() {
+        let v = view(Canvas::fit(1080.0, 1920.0), 2.5);
+        let ghost = v.items.iter().find_map(|i| match i {
+            Item::Material {
+                material: UiMaterial::TitleGlitch,
+                textures,
+                params,
+                ..
+            } => Some((textures, params)),
+            _ => None,
+        });
+        let (textures, params) = ghost.expect("uM_Title012 layer");
+        assert!(textures[2].ends_with("uT_Chara000_EV001"));
+        assert_eq!(params[0][0], 2.5);
+        // Duration_3 (1) is clamped to Span_3 (0) like the material does.
+        assert_eq!(params[3][3], 0.0);
+        let glows = v
+            .items
+            .iter()
+            .filter(|i| {
+                matches!(
+                    i,
+                    Item::Material {
+                        material: UiMaterial::CharaGlow,
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(glows, 2);
     }
 
     #[test]

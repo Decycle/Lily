@@ -4,7 +4,7 @@
 
 use wacca_render::layout::Rect;
 use wacca_render::style::Rgba;
-use wacca_render::text::{Align, Face};
+use wacca_render::text::{Align, Face, UiMaterial};
 
 pub const WHITE: Rgba = [1.0, 1.0, 1.0, 1.0];
 pub const GREY: Rgba = [0.65, 0.65, 0.72, 1.0];
@@ -81,6 +81,17 @@ pub enum Item {
         key: String,
         points: Vec<[f32; 2]>,
         uvs: Vec<[f32; 2]>,
+        tint: Rgba,
+    },
+    /// A ported UI material ([`UiMaterial`]) on `rect` (turned like [`Item::Image`]) with its
+    /// exported `textures` (keys as for images), float4 `params` and a linear `tint`.
+    Material {
+        material: UiMaterial,
+        rect: Rect,
+        uv: [f32; 4],
+        angle: f32,
+        textures: Vec<String>,
+        params: Vec<[f32; 4]>,
         tint: Rgba,
     },
 }

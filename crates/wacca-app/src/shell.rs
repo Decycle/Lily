@@ -317,6 +317,22 @@ impl Gfx {
                     images.ensure(key, Folder::Ui);
                     self.text.image_poly(key, points, uvs, *tint);
                 }
+                Item::Material {
+                    material,
+                    rect,
+                    uv,
+                    angle,
+                    textures,
+                    params,
+                    tint,
+                } => {
+                    for key in textures {
+                        images.ensure(key, Folder::Ui);
+                    }
+                    let keys: Vec<&str> = textures.iter().map(String::as_str).collect();
+                    self.text
+                        .material(*material, *rect, *angle, *uv, &keys, params, *tint);
+                }
             }
         }
         self.text.render(&mut encoder, &target);
