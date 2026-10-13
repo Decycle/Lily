@@ -4,9 +4,6 @@
 // BLEND_Masked + MSM_Unlit: emissive colour, discard below OpacityMaskClipValue 0.3333.
 // Constant names in comments are the material parameters (cb4 / cb3 slots in the disassembly).
 
-// 1.0 when the target is sRGB (it re-encodes what we write).
-override LINEARIZE: f32 = 0.0;
-
 struct Material {
     color: vec4<f32>,
     // Dark, HighLight, Line, ChainNote
@@ -46,8 +43,8 @@ fn vs_main(
     @location(2) material: u32,
 ) -> VsOut {
     var out: VsOut;
-    // 90° FOV: NDC = (X, Z) / w (notes3d::place).
-    out.pos = vec4<f32>(pos.x, pos.y, 0.5 * pos.z, pos.z);
+    // 90° FOV: NDC = (X, Z) / w (notes3d::place); reversed-Z depth near / w (stage.wgsl).
+    out.pos = vec4<f32>(pos.x, pos.y, 10.0, pos.z);
     out.uv = uv;
     out.w = pos.z;
     out.material = material;
@@ -110,16 +107,6 @@ fn note_tap(uv: vec2<f32>, w: f32, m: Material) -> vec4<f32> {
     return vec4<f32>(max(rgb, vec3<f32>(0.0)), opacity);
 }
 
-// The game's tonemap pass for the main view: `pow(linear, 1/2.2)` into a UNORM target (doc 11 §2.6).
-fn encode(c: vec3<f32>) -> vec3<f32> {
-    return pow(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));
-}
-
-// Inverse sRGB transfer: an sRGB target re-encodes it, so the stored value is `encode(c)`.
-fn srgb_to_linear(e: vec3<f32>) -> vec3<f32> {
-    return select(pow((e + 0.055) / 1.055, vec3<f32>(2.4)), e / 12.92, e <= vec3<f32>(0.04045));
-}
-
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let m = materials[in.material];
@@ -127,8 +114,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if c.a < CLIP {
         discard;
     }
-    // No bloom/TAA yet (doc 11 §2.6: the main view's tonemap is a plain 1/2.2 power).
-    let e = encode(c.rgb);
-    let rgb = select(e, srgb_to_linear(e), LINEARIZE > 0.5);
-    return vec4<f32>(rgb, 1.0);
+    // Linear scene colour into the stage target (stage_gpu composes the final 1/2.2 power).
+    return vec4<f32>(c.rgb, 1.0);
 }

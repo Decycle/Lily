@@ -29,6 +29,7 @@ fn hold(nodes: &[(f64, Arc)]) -> Note {
             time,
             arc,
             lane_unwrapped: arc.lane as f32,
+            control: true,
         })
         .collect();
     note(nodes[0].time, nodes[0].arc, NoteBody::Hold { nodes })

@@ -39,7 +39,7 @@ pub(crate) struct NoteLayer {
 }
 
 impl NoteLayer {
-    pub(crate) fn new(device: &wgpu::Device, format: wgpu::TextureFormat, samples: u32) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, samples: u32) -> Self {
         let module = device.create_shader_module(wgpu::include_wgsl!("notes.wgsl"));
         let tex = |binding| wgpu::BindGroupLayoutEntry {
             binding,
@@ -80,11 +80,7 @@ impl NoteLayer {
             bind_group_layouts: &[&layout],
             push_constant_ranges: &[],
         });
-        let constants = [("LINEARIZE", if format.is_srgb() { 1.0 } else { 0.0 })];
-        let options = wgpu::PipelineCompilationOptions {
-            constants: &constants,
-            ..Default::default()
-        };
+        let options = wgpu::PipelineCompilationOptions::default();
         let attributes = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Uint32];
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("notes"),
@@ -100,7 +96,7 @@ impl NoteLayer {
                 }],
             },
             primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
+            depth_stencil: Some(crate::stage_gpu::depth_state(true)),
             multisample: wgpu::MultisampleState {
                 count: samples,
                 ..Default::default()
@@ -110,7 +106,7 @@ impl NoteLayer {
                 entry_point: Some("fs_main"),
                 compilation_options: options,
                 targets: &[Some(wgpu::ColorTargetState {
-                    format,
+                    format: crate::stage_gpu::HDR_FORMAT,
                     // Masked material: opaque where not discarded.
                     blend: None,
                     write_mask: wgpu::ColorWrites::ALL,

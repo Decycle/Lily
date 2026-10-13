@@ -86,6 +86,7 @@ mod tests {
             time: 0.0,
             arc: arc(lane, width),
             lane_unwrapped,
+            control: true,
         }
     }
 

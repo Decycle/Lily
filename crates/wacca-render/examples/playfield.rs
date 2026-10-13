@@ -8,7 +8,9 @@
 //! up to it: hit effects, judgement, combo, score row) to a PNG without opening a window.
 //! `WACCA_SHOT_BARS=1` adds bar lines, `WACCA_SHOT_TITLE` the song title on the rim. Notes are the
 //! game's 3D meshes when `data/meshes` exists (`wacca-convert --meshes`); `WACCA_SHOT_2D=1` forces
-//! the 2D notes.
+//! the 2D notes. `WACCA_SHOT_SIZE` sets the side (px), `WACCA_SHOT_MOVIE=<dir>` shows a movie
+//! frame from `<dir>/{y,u,v}.png` (8-bit grey planes), `WACCA_SHOT_3D=1` leaves out the 2D layer
+//! (compare with the game's main view before its HUD).
 
 use std::error::Error;
 use std::sync::Arc as Shared;
@@ -19,8 +21,8 @@ use wacca_chart::{
     ScrollSegment, SlideDir, SnapDir,
 };
 use wacca_render::{
-    Effects, JudgeSprite, LiveState, Renderer, RimState, SceneOptions, build_mesh_notes,
-    build_scene_into,
+    Effects, JudgeSprite, LiveState, Renderer, RimState, SceneOptions, Stage, build_mesh_notes,
+    build_scene_into, build_stage_into,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -132,7 +134,7 @@ impl Gfx {
         if let Some(meshes) = self.renderer.note_meshes() {
             build_mesh_notes(&mut notes, meshes, chart, now, &opts, &live);
         }
-        let split = build_scene_into(
+        build_scene_into(
             &mut scene,
             chart,
             now,
@@ -140,8 +142,17 @@ impl Gfx {
             &live,
             self.renderer.sprites(),
         );
+        let mut stage = Stage::default();
+        build_stage_into(
+            &mut stage,
+            chart,
+            now,
+            &opts,
+            &live,
+            self.renderer.note_meshes(),
+        );
         self.renderer
-            .render_with_notes(&mut encoder, &view, size, &scene, split, &notes);
+            .render_with_notes(&mut encoder, &view, size, &scene, &notes, &stage);
         self.queue.submit([encoder.finish()]);
         self.window.pre_present_notify();
         frame.present();
@@ -267,8 +278,12 @@ fn snapshot(
     at: f64,
     out: &std::path::Path,
 ) -> Result<(), Box<dyn Error>> {
-    // Rows must be 256-byte aligned for the readback.
-    const SIDE: u32 = 1024;
+    let side: u32 = std::env::var("WACCA_SHOT_SIZE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1024);
+    // Readback rows are 256-byte aligned.
+    let row = (side * 4).next_multiple_of(256);
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
     let adapter = pollster::block_on(instance.request_adapter(&Default::default()))?;
     let (device, queue) =
@@ -277,8 +292,8 @@ fn snapshot(
     let target = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("snapshot"),
         size: wgpu::Extent3d {
-            width: SIDE,
-            height: SIDE,
+            width: side,
+            height: side,
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
@@ -290,6 +305,15 @@ fn snapshot(
     });
     let mut renderer = Renderer::new(&device, &queue, format);
     renderer.load_sprites(ui);
+    let movie = std::env::var_os("WACCA_SHOT_MOVIE").map(std::path::PathBuf::from);
+    if let Some(dir) = &movie {
+        let plane = |name| -> Result<image::GrayImage, Box<dyn Error>> {
+            Ok(image::open(dir.join(name))?.to_luma8())
+        };
+        let (y, u, v) = (plane("y.png")?, plane("u.png")?, plane("v.png")?);
+        renderer.set_video_frame([y.width(), y.height()], [&y, &u, &v]);
+        renderer.show_video(true);
+    }
     // Perfect play up to `at` (WACCA_SHOT_JUDGE=great|good for other judgements): every
     // note judged on time, effects stepped at 120 Hz.
     let kind = match std::env::var("WACCA_SHOT_JUDGE").as_deref() {
@@ -338,7 +362,7 @@ fn snapshot(
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(2.0),
-        movie: false,
+        movie: movie.is_some(),
         bar_lines: flag("WACCA_SHOT_BARS"),
         touch_guide: false,
         mesh_notes: renderer.note_meshes().is_some() && !flag("WACCA_SHOT_2D"),
@@ -348,13 +372,18 @@ fn snapshot(
         build_mesh_notes(&mut notes, meshes, chart, at, &opts, &live);
     }
     let mut scene = Vec::new();
-    let split = build_scene_into(&mut scene, chart, at, &opts, &live, renderer.sprites());
+    if !flag("WACCA_SHOT_3D") {
+        build_scene_into(&mut scene, chart, at, &opts, &live, renderer.sprites());
+    }
+    let mut stage = Stage::default();
+    let meshes = renderer.note_meshes().filter(|_| opts.mesh_notes);
+    build_stage_into(&mut stage, chart, at, &opts, &live, meshes);
     let mut encoder = device.create_command_encoder(&Default::default());
     let view = target.create_view(&Default::default());
-    renderer.render_with_notes(&mut encoder, &view, [SIDE, SIDE], &scene, split, &notes);
+    renderer.render_with_notes(&mut encoder, &view, [side, side], &scene, &notes, &stage);
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("snapshot readback"),
-        size: u64::from(SIDE * SIDE * 4),
+        size: u64::from(row * side),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -364,8 +393,8 @@ fn snapshot(
             buffer: &buffer,
             layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(SIDE * 4),
-                rows_per_image: Some(SIDE),
+                bytes_per_row: Some(row),
+                rows_per_image: Some(side),
             },
         },
         target.size(),
@@ -373,8 +402,13 @@ fn snapshot(
     queue.submit([encoder.finish()]);
     buffer.slice(..).map_async(wgpu::MapMode::Read, |_| {});
     device.poll(wgpu::PollType::wait_indefinitely())?;
-    let pixels = buffer.slice(..).get_mapped_range().to_vec();
-    image::save_buffer(out, &pixels, SIDE, SIDE, image::ExtendedColorType::Rgba8)?;
+    let padded = buffer.slice(..).get_mapped_range().to_vec();
+    let pixels: Vec<u8> = padded
+        .chunks(row as usize)
+        .flat_map(|r| &r[..side as usize * 4])
+        .copied()
+        .collect();
+    image::save_buffer(out, &pixels, side, side, image::ExtendedColorType::Rgba8)?;
     log::info!("wrote {}", out.display());
     Ok(())
 }
@@ -422,6 +456,7 @@ fn demo_chart() -> Chart {
                         width: 6,
                     },
                     lane_unwrapped,
+                    control: true,
                 }
             })
             .collect();

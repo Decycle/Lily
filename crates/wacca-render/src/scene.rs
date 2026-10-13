@@ -9,9 +9,8 @@ use wacca_chart::{BeatPos, Bonus, Chart, LANES, Note, NoteBody, SlideDir, SnapDi
 
 use crate::effects::Effects;
 use crate::layout::{
-    Paint, UvRect, Vertex, depth_to_radius, last_drawable_time, mask_state, paint_sector, polar,
-    push_hold_body, push_oriented_rect, push_radial_line, push_rect, push_sector, raw_depth,
-    sensor_ring, three_slice, tiles,
+    Paint, UvRect, Vertex, depth_to_radius, last_drawable_time, paint_sector, polar,
+    push_oriented_rect, push_rect, push_sector, raw_depth, sensor_ring, three_slice, tiles,
 };
 use crate::sprites::{DIGIT_PAD, JudgeSprite, Sprite, SpriteSheet, TextSprite};
 use crate::style;
@@ -136,8 +135,7 @@ pub fn build_scene(
 }
 
 /// [`build_scene`] into `out` (cleared first), so a caller can reuse one buffer every frame.
-/// Returns the length of the part under the notes (guide lanes, hold bodies, 2D notes): with
-/// [`SceneOptions::mesh_notes`] the 3D notes go between `out[..split]` and `out[split..]`.
+/// The guide lanes, judgement ring and hold bodies are 3D ([`crate::stage`]), drawn under it.
 pub fn build_scene_into(
     out: &mut Vec<Vertex>,
     chart: &Chart,
@@ -145,37 +143,8 @@ pub fn build_scene_into(
     opts: &SceneOptions,
     live: &LiveState,
     sheet: &SpriteSheet,
-) -> usize {
+) {
     out.clear();
-    let lanes = LANES as usize;
-
-    let mask = mask_state(&chart.masks, now);
-    // Over a movie the guide sectors are a dark translucent tunnel: lanes that are on dim the
-    // movie towards the rim, masked lanes show it bright (E2 frames).
-    let guide = sheet.get(Sprite::GuideLane);
-    let (tint, flat) = if opts.movie {
-        (style::GUIDE_LANE_MOVIE, style::GUIDE_LANE_MOVIE_FLAT)
-    } else {
-        (style::GUIDE_LANE_TINT, style::GUIDE_LANE)
-    };
-    for lane in (0..lanes).filter(|&l| mask[l]) {
-        match guide {
-            Some(uv) => {
-                let paint = Paint::image(tint, uv);
-                paint_sector(out, 1.0, 0.0, lane as f32, 1.0, &paint);
-            }
-            None => push_sector(out, 0.0, 1.0, lane as f32, 1.0, flat),
-        }
-    }
-    let line = if opts.movie {
-        style::LANE_LINE_MOVIE
-    } else {
-        style::LANE_LINE
-    };
-    for lane in (0..lanes).filter(|&l| mask[l] || mask[(l + lanes - 1) % lanes]) {
-        let w = style::LANE_LINE_HALF_WIDTH;
-        push_radial_line(out, lane as f32, 0.0, 1.0, w, line);
-    }
     if opts.touch_guide {
         push_touch_guide(out, &live.pressed);
     }
@@ -192,19 +161,6 @@ pub fn build_scene_into(
             .map(|d| d as f32)
     };
 
-    let hold_paint = match sheet.get(Sprite::HoldBody) {
-        // One row of the cross-section texture: u runs across the hold's width.
-        Some([u0, v0, u1, v1]) => {
-            let v = (v0 + v1) / 2.0;
-            Paint::image(style::HOLD_BODY, [u0, v, u1, v])
-        }
-        None => Paint::flat(style::HOLD_BODY),
-    };
-    for (_, note) in chart.notes.iter().enumerate().filter(drawable) {
-        if let NoteBody::Hold { nodes } = &note.body {
-            push_hold_body(out, nodes, depth_of, &hold_paint);
-        }
-    }
     if opts.bar_lines {
         push_bar_lines(out, chart, now, depth_of);
     }
@@ -232,8 +188,7 @@ pub fn build_scene_into(
         }
     }
 
-    let split = out.len();
-    push_judge_ring(out, sheet, &mask);
+    push_rim(out);
     if let Some(rim) = &live.rim {
         push_rim_row(out, sheet, rim);
     }
@@ -241,28 +196,11 @@ pub fn build_scene_into(
         fx.draw(out, sheet);
     }
     push_hud_sprites(out, sheet, live);
-    split
 }
 
-/// Judgement ring colour at `lane`'s start edge: hot pink on the sides, turning purple towards
-/// the bottom and (less) the top (E2 frames).
-// UNVERIFIED: the game likely samples vT_JudgeColor01 by angle; this is an eyeballed gradient.
-pub fn judge_ring_color(lane: u8) -> style::Rgba {
-    let s = crate::layout::lane_angle(f32::from(lane)).sin();
-    let t = s.abs().powf(1.5)
-        * if s > 0.0 {
-            style::JUDGE_RING_TOP_PURPLE
-        } else {
-            1.0
-        };
-    let (a, b) = (style::JUDGE_RING_SIDE, style::JUDGE_RING_PURPLE);
-    [0, 1, 2, 3].map(|i| a[i] + (b[i] - a[i]) * t)
-}
-
-/// The dark rim with its thin outer edge all the way round (black beyond it), and on every
-/// lane that is on the thick band from the line outwards (E2: 292–315 px at a 291.8 px line):
-/// two bright stripes over a dimmer middle, soft additive glow on both sides.
-fn push_judge_ring(out: &mut Vec<Vertex>, sheet: &SpriteSheet, mask: &[bool]) {
+/// The dark rim (UMG HUD) outside the judgement ring with its thin outer edge, black beyond it
+/// (E2: 315–331 px at a 291.8 px line). The ring itself is the guide-lane shader's.
+fn push_rim(out: &mut Vec<Vertex>) {
     let band_out = 1.0 + style::JUDGE_BAND_WIDTH;
     let rim_out = band_out + style::RIM_WIDTH;
     let all = LANES as f32;
@@ -272,29 +210,6 @@ fn push_judge_ring(out: &mut Vec<Vertex>, sheet: &SpriteSheet, mask: &[bool]) {
     push_sector(out, band_out, rim_out, 0.0, all, style::RIM);
     let e = style::RIM_EDGE_HALF_WIDTH;
     push_sector(out, rim_out - e, rim_out + e, 0.0, all, style::RIM_EDGE);
-    let glow = sheet.get(Sprite::GuideLane).map(|[u0, v0, u1, v1]| {
-        // A single column of the gradient (bright at v0), stretched along the ring.
-        let u = (u0 + u1) / 2.0;
-        [u, v0, u, v1]
-    });
-    for lane in (0..LANES).filter(|&l| mask[usize::from(l)]) {
-        let l = f32::from(lane);
-        let color = judge_ring_color(lane);
-        let k = style::JUDGE_BAND_MID;
-        let mid = [color[0] * k, color[1] * k, color[2] * k, 1.0];
-        push_sector(out, 1.0, band_out, l, 1.0, mid);
-        let w = style::JUDGE_STRIPE_HALF_WIDTH;
-        for r in style::JUDGE_STRIPES {
-            push_sector(out, r - w, r + w, l, 1.0, color);
-        }
-        if let Some(uv) = glow {
-            let paint = Paint::image([color[0], color[1], color[2], style::JUDGE_GLOW_ALPHA], uv)
-                .additive();
-            let w = style::JUDGE_GLOW_WIDTH;
-            paint_sector(out, 1.0, 1.0 - w, l, 1.0, &paint);
-            paint_sector(out, band_out, band_out + w, l, 1.0, &paint);
-        }
-    }
 }
 
 /// Lane at `deg` degrees clockwise from 12 o'clock.
@@ -673,7 +588,7 @@ fn push_snap_arrows(
 mod tests {
     use super::*;
     use crate::layout::{APPROACH_SECS, lane_angle, tiles};
-    use wacca_chart::{Arc, BeatPos, ChartHeader, HoldNode, MaskDir, MaskEvent, ReverseSection};
+    use wacca_chart::{Arc, BeatPos, ChartHeader, HoldNode, ReverseSection};
 
     fn chart(notes: Vec<Note>) -> Chart {
         Chart {
@@ -723,31 +638,19 @@ mod tests {
     }
 
     #[test]
-    fn empty_chart_has_all_lanes_and_ring() {
+    fn empty_chart_has_only_the_rim() {
+        let none = SpriteSheet::default();
         let v = build_scene(
             &chart(vec![]),
             0.0,
             &SceneOptions::default(),
             &LiveState::default(),
-            &SpriteSheet::default(),
+            &none,
         );
-        assert_eq!(count(&v, style::GUIDE_LANE), 60 * 6);
-        assert_eq!(count(&v, style::LANE_LINE), 60 * 6);
-        // Lane 15 (top) has a ring colour of its own (two bright stripes); the rim goes all the
-        // way round.
-        assert_eq!(count(&v, judge_ring_color(15)), 2 * 6);
+        // Lanes and the judgement ring are 3D (stage); the dark rim goes all the way round.
         assert_eq!(count(&v, style::RIM), 60 * 6);
-        assert_eq!(v.len() % 3, 0);
-        let movie = SceneOptions {
-            movie: true,
-            ..Default::default()
-        };
-        let none = SpriteSheet::default();
-        // Over a movie: dark translucent guide sectors, faint lane lines.
-        let v = build_scene(&chart(vec![]), 0.0, &movie, &LiveState::default(), &none);
-        assert_eq!(count(&v, style::GUIDE_LANE), 0);
-        assert_eq!(count(&v, style::GUIDE_LANE_MOVIE_FLAT), 60 * 6);
-        assert_eq!(count(&v, style::LANE_LINE_MOVIE), 60 * 6);
+        assert_eq!(count(&v, style::OUTSIDE), 60 * 6);
+        assert_eq!(v.len(), 3 * 60 * 6, "outside, rim, rim edge");
         // Into a reused buffer: cleared first, same triangles, no reallocation.
         let mut reused = v.clone();
         let capacity = reused.capacity();
@@ -755,20 +658,11 @@ mod tests {
             &mut reused,
             &chart(vec![]),
             0.0,
-            &movie,
+            &SceneOptions::default(),
             &LiveState::default(),
             &none,
         );
         assert_eq!((reused == v, reused.capacity()), (true, capacity));
-        let v = build_scene(
-            &chart(vec![]),
-            0.0,
-            &movie,
-            &LiveState::default(),
-            &full_sheet(),
-        );
-        assert_eq!(count(&v, style::GUIDE_LANE_TINT), 0);
-        assert_eq!(count(&v, style::GUIDE_LANE_MOVIE), 60 * 6);
     }
 
     #[test]
@@ -863,17 +757,6 @@ mod tests {
     }
 
     #[test]
-    fn ring_colour_is_pink_on_the_sides_and_purple_at_the_bottom() {
-        let near =
-            |a: style::Rgba, b: style::Rgba| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-5);
-        assert!(near(judge_ring_color(45), style::JUDGE_RING_PURPLE));
-        assert!(near(judge_ring_color(0), style::JUDGE_RING_SIDE));
-        assert!(near(judge_ring_color(30), style::JUDGE_RING_SIDE));
-        let top = judge_ring_color(15);
-        assert!(top[2] > style::JUDGE_RING_SIDE[2] && top[2] < style::JUDGE_RING_PURPLE[2]);
-    }
-
-    #[test]
     fn bar_lines_at_visible_measures() {
         // Default tempo: 120 BPM 4/4, 2 s per measure; at note speed 1 the window is 3.3 s.
         let on = SceneOptions {
@@ -895,31 +778,6 @@ mod tests {
             60 * 6,
             "none after the chart ends"
         );
-    }
-
-    #[test]
-    fn masked_lanes_are_not_drawn() {
-        let mut c = chart(vec![]);
-        c.masks = vec![MaskEvent {
-            pos: BeatPos::default(),
-            time: 0.0,
-            arc: Arc { lane: 0, width: 10 },
-            add: true,
-            dir: MaskDir::Plus,
-        }];
-        let v = build_scene(
-            &c,
-            5.0,
-            &SceneOptions::default(),
-            &LiveState::default(),
-            &SpriteSheet::default(),
-        );
-        assert_eq!(count(&v, style::GUIDE_LANE), 10 * 6);
-        // The band follows the mask, the dark rim stays.
-        assert_eq!(count(&v, judge_ring_color(5)), 2 * 6);
-        assert_eq!(count(&v, judge_ring_color(45)), 0);
-        assert_eq!(count(&v, style::RIM), 60 * 6);
-        assert_eq!(count(&v, style::LANE_LINE), 11 * 6);
     }
 
     #[test]
@@ -953,12 +811,13 @@ mod tests {
     }
 
     #[test]
-    fn hold_draws_body_head_and_end() {
+    fn hold_draws_head_and_end() {
         let n = |time, lane: u8| HoldNode {
             pos: BeatPos::default(),
             time,
             arc: Arc { lane, width: 4 },
             lane_unwrapped: lane as f32,
+            control: true,
         };
         let hold = NoteBody::Hold {
             nodes: vec![n(1.0, 10), n(2.0, 12)],
@@ -970,7 +829,6 @@ mod tests {
             &LiveState::default(),
             &SpriteSheet::default(),
         );
-        assert!(count(&v, style::HOLD_BODY) > 0);
         assert_eq!(count(&v, style::HOLD), 2 * 4 * 6);
     }
 
@@ -1045,9 +903,6 @@ mod tests {
         ] {
             assert!(uv_range(&v, sheet.get(s).unwrap()) > 0, "{s:?} missing");
         }
-        // Lanes use the guide texture, and the flat guide colour is gone.
-        assert_eq!(count(&v, style::GUIDE_LANE), 0);
-        assert_eq!(count(&v, style::GUIDE_LANE_TINT), 60 * 6);
         // Sparkles are additive.
         assert!(v.iter().any(|p| p.fx[1] == 1.0));
     }
