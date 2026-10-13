@@ -203,8 +203,174 @@ the MPC defaults), `cb4` = Material (= §1.3 table with the MI values, e.g. Norm
 `t0` = `vT_NoteBase00_00_m` (1024×2048 BC3), `t1` = `vT_NoteBase01_00_m` (256×512 BC3), sampler s0
 anisotropic clamp.
 
-(continued below as the remaining captures are analysed)
+### 2.5 Other main-view draws (CONFIRMED, frames 10699 / 11184 / 12365)
+Draw order inside the main view (opaque pass first, then separate translucency):
 
-## 3. Port spec
+| # | element | material | geometry / transform | state |
+|---|---|---|---|---|
+| 1 | bar lines | `vMX_2_BarLine_000` | `vMsh_BarLine00_60_s`, note transform of the measure start | opaque/masked, 60 draws × 12 idx |
+| 2 | notes (touch/chain/hold-start/slide bodies) | `vMX_2_NTap_000` MIs | §1.4 meshes, §2.4 transform | opaque/masked, one draw per lane section |
+| 3 | slide chevrons | `vMX_2_SlideL_002` / `SlideR_002` | extra sections of `vMsh_SlideNote00_NN_s`, **same transform as the slide body** | masked (cutoff 0.3333) |
+| 4 | hold end cap | `vMX_2_Hold_003` (masked) | `vMsh_HoldEndNote00_NN`, note transform (s = 0 / Y = −600 until it appears) | opaque/masked |
+| 5 | (hidden) `LineMaterial` quad | engine | ±335.9 quad at Y = −621 | opaque, fully covered by the movie |
+| 6 | **movie** | `mv_<song>_Texture_Mat` (`/CriWare/ManaYUVToRGB`) | quad **±810 × ±810** in world XZ at **Y = −620** → exactly fills the 675² view (810/810 = NDC 1) | opaque, emissive |
+| 7 | miss effect | `vMX_1_Miss_000_MUS_m_Miss000` | GPU sprites | opaque/masked |
+| 8 | `uM_BgMask000` | UI material | ±809 quad at Y = −619 | alpha blend; opacity = MPC `vMPC_Option.BG_Mask` (0 in guest play → invisible) |
+| 9 | **guide lanes + judgement ring** | `vMX_2_GuideLane_000` (MI `TUS_m_Lane00`) | 60 dynamic per-lane meshes (one draw each): verts `P0 = 218.75·(cos a0, ·, sin a0)` at Y = +150, `P1 = (0, −600, 0)`, `P2` = same as P0 at a1 = a0 + 6°, `P3 = P1`; UV0 (half2) = (0,0), (0,1), (0.5,0), (0.5,1); indices (u32) 2,1,0, 3,1,2 → a **cone** from the far apex (r 0 at Y −600) to r 218.75 at Y +150 (r = 0.29167·(Y+600)) | separate translucency, `SrcAlpha/InvSrcAlpha`, depth test GreaterEqual, no write |
+| 10 | hold bodies | `vMX_2_Hold_001` | one dynamic mesh for all holds (8100 indices in frame 12365), identity transform | translucency, alpha blend |
+| 11 | hit effects | `vMX_2_Tap_000` (alpha) + `vMX_2_Tap_000_TUS_m_05..08` (additive) mesh particles; `vM_1_Base_004_AUS_m_MarvPt00x` GPU sprites (additive, component at r = 170, Y = 0, scale 1.7, rotated to the lane); `vM_2_Scroll_003_TUD_HitMarv000` mesh particle (additive) | Cascade systems `Vfx/Particle/tap_*` | translucency, `One/One` or alpha |
 
-(in progress)
+Then separate translucency is composited (`FPostProcessBokehDOFRecombinePS`: scene·alpha + translucency).
+
+### 2.6 Post-processing (CONFIRMED, frame 12365)
+* MSAA: off (`View.NumSceneColorMSAASamples` = 1 → masked materials `discard`, no alpha-to-coverage).
+* Fog: none (fog factor 1, fog colour 0 in every base-pass VS).
+* **TAA** (`FPostProcessTemporalAAPS`) runs on the main view (sub-pixel jitter ~1e-4 NDC in `ViewToClip`).
+* Bloom chain (downsample 540→17, `TFilterPS` up-chain) and the LUT blender run, **but the tonemapper permutation that
+  draws the main view only reads scene colour**: `out.rgb = pow(sceneColor · exposure, 1/2.2)` with exposure from
+  the eye-adaptation texture = **1.0** (read back), `cb0[19].x = 0.454545`. No film curve, no LUT, no bloom, no
+  vignette/grain in the main view. Output UNORM (clamps at 1), alpha 0. → render linear HDR, then `pow(x, 1/2.2)`.
+* Movie: Y (1080²) + U,V (540²) R8 planes, `rgb = 1.164·(Y − 0.0625) + {1.596·(V−.5), −0.813·(V−.5) −
+  0.392·(U−.5), 2.017·(U−.5)}`, then `max(·,0)^2.2` as emissive (linear) — so after the final 1/2.2 the movie shows
+  its BT.601 RGB unchanged except where translucency (guide lanes) is blended over it.
+
+### 2.7 Runtime material constants (captured, guest options, movie on)
+* Notes: MPC NoteCustomize = asset defaults (§1.3); `NoteHeight` 0.5. Normal00 NoteColor (1, .0356, .8632),
+  Hold00 NoteColor (.3278, .2582, 0) with `Line` 0.01, SlideR (.0137, .6514, .0086), SlideL (1, .3231, 0). `Far` 0.
+* Guide lane (Material cbuffer = `cb5` in its PS): `PercentageAlpha` **290**, `WidthGradation` **6** (=
+  `RhythmGameAppearanceTable` movie values), `OutsideGlowStrength` 0.12, `GuideLane_Alpha` 1, `Boss_Alpha` 0,
+  `JudgeLine_Pos` 0.1473, `NoteLength_*` (1600/2500/4600/11000/19000, picked by `NoteHeight`: 0.5 → 4600),
+  `B_Color_5` (.0122, .0133, .0313), `B_Color_2`/`B_Color_1` (.0444, .0474, .0938), `Judge_Line_10` (.289, .429, .5),
+  `L_line_pos` 0, `R_line_pos` 0.51, `Line_LorR` 0.5, `LineONOFF` 1, `Combo_ONOFF` 0, insideglow 0.25..0.3,
+  SmoothStep 0.6..1. Second MPC scalar (`cb4[0].y`) = 0.6249 in that frame (animated pulse; UNVERIFIED source).
+  `View.GameTime` (`cb1[132].z`) drives the scrolls.
+* Hold body: `HoldColorNumber` 2 (picks tile 2 of the 13-tile `vT_HoldNote01_00_m` strip), `U_Tiling` 13.
+
+Annotated disassembly (every constant operand followed by its captured value, plus SRV/sampler list) for each of
+these draws: `runs/renderdoc/cap3/d12365/annot/<eid>_{vs,ps}.asm` — 2493 bar line, 2635 hold-start note, 2680 hold
+end, 2754 movie, 3003 BgMask, 3028 guide lane, 3538 hold body, 3555/3623 tap effects, 3642 MarvPt, 3675 HitMarv,
+4227/4234 TAA, 4248 downsample, 4316/4434/4446 bloom filter, 4462 LUT blender, 4483 tonemap; and
+`runs/renderdoc/cap3/d11184/annot/` 2367 slide chevron, 2258 slide body, 2455 miss, 3359 tap. Generate more with
+`python -I tools/research/rdc_analyze.py <dump> runs/shaders --annotate <eid>`.
+
+## 3. Port spec (for wacca-render / WGSL)
+
+### 3.0 Frame
+* One perspective camera: eye (0, 190, 0) → −Y, up +Z, 90° vertical FOV, aspect 1, reversed-Z (near 10, infinite).
+  Viewport: the largest centred square (real 675×1200 window: (0, 228, 675, 675)). World units = cm.
+* Passes: (a) opaque/masked: bar lines, notes, slide chevrons, hold end caps, movie quad (depth test + write);
+  (b) translucency over it, depth-tested, no depth write, in this order: guide-lane cone (alpha), hold bodies
+  (alpha), hit effects (alpha / additive); (c) output `pow(linear, 1/2.2)` to a UNORM target (no sRGB format, no
+  tonemap curve, no bloom). TAA is optional (sub-pixel; skip first).
+* Time base: the note scale s for a note with onset t_n at song time t: `s = 1 − (t_n − t)/T`, `T = 3.3333 s /
+  speed` (2.2222 s at the guest speed 1.5); drawn while 0 < s ≤ 1 (UNVERIFIED: how far past 1 it is drawn before
+  the judgement removes it; the visual is ~0.1 s ahead of audio on the real PC, E2).
+
+### 3.1 Notes (touch, chain, hold start, slide body; bar lines)
+Geometry: the cooked mesh for the note kind and width (`ue4_mesh.py` → positions, UV0, indices per section;
+`runs/meshes/`), or regenerate it procedurally from the profile in §1.4. Model matrix (column-vector form):
+
+    M = T(0, 600(s−1), 0) · R_y(φ) · S(s),   φ = 6°·lane_start, R_y maps +X → (cosφ, 0, sinφ), +Z → (−sinφ, 0, cosφ)
+
+Vertex: `clip = ViewProj · M · p`; pass UV0 and view depth w (= 190 − Y_world).
+Pixel (exact translation of `vMX_2_NTap_000` BasePass PS; `M*` = Material cbuffer of the MI, see §1.3/§2.7;
+t0 = `vT_NoteBase00_00_m`, t1 = `vT_NoteBase01_00_m`, clamp, linear/aniso):
+
+    h    = lerp(clamp(NoteHeight,0,0.85), Far, smoothstep01(sat((w/Camera_Length_ − GradMin)/(GradMax − GradMin))))
+    off  = 0.4·h
+    uvA  = uv + (off, 0);  uvB = uv − (off, 0);  uvC = ((uv.x − off)/(1 − 2·off), uv.y)
+    s    = smoothstep01(sat((2·uv.x − min)/(max − min)))        // min 1.0, max 0.92: 1 on the outer half, 0 inner
+    m1   = lerp(t1(uvA).r, t1(uvB).r, s)
+    stepA = uv.y ≥ 0.57619 ;  stepB = uv.y ≥ 0.4
+    shade(T) = lerp(lerp(NC, (NC·Dark)², T.r), screen(lerp(NC,(NC·Dark)²,T.r), NC + HighLight), T.g) + Line·T.b
+               with screen(a,b) = 1 − (1−a)(1−b), NC = NoteColor.rgb
+    A = t0(uvA).rgb ; B = t0(uvB).rgb
+    colA = lerp(A, shade(A), m1·stepA) ; colB = lerp(B, shade(B), m1·stepA)
+    col  = lerp(colA, colB, s)
+    colC = col·(1 − 0.5·ChainNote·m1·stepA·t0(uv).a)                   // chain stripes
+    bon  = lerp(t1(uvC).b, t1(uvC).a, BornusNoteFlip) · inside01(uvC)  // bonus pattern
+    col  = lerp(colC, lerp(col, screen(col, NC), bon), BornusNote) + SelectionColor(0)
+    mask = m1·(stepB + SyncNote·(1 − stepB));  discard if mask < 0.3333
+    out  = max(col, 0)   (opaque; alpha unused)
+
+(`smoothstep01(x) = x²(3−2x)`; `inside01(p)` = 1 inside [0,1]², sharp edge.) Bar lines: `vMX_2_BarLine_000`,
+emissive `B_Color_2` (.466, .468, .5), opacity mask from `Floor` of a UV expression with `Line_Width` (see
+`d12365/annot/2493_ps.asm`).
+
+### 3.2 Slide chevrons (`vMX_2_SlideL/R_002`)
+Same model matrix as the slide body (the chevrons are extra sections of `vMsh_SlideNote00_NN_s`). PS (annotated
+`d11184/annot/2367_ps.asm`): pattern t0 (256², wrap) sampled at `(uv.x·UV_Scale.x, uv.y·3.395·1.7 + w·0.007246)` —
+**the scroll comes from the view depth w, not time** (chevrons are anchored in world space and slide with the note);
+mask t1 (128×256, `vT_SlideMsk00`) at `(uv.x, −uv.y)`; colour = gradient between two MI colours by
+`uv.y²`/smoothstep, screen-blended with a third, ×2 (+0.1); mask = t0.g·t1.b, cutoff 0.3333.
+
+### 3.3 Guide lanes, lane mask and judgement ring (`vMX_2_GuideLane_000`)
+Geometry per lane i (0..59, a0 = 6°·i, a1 = a0 + 6°): `P0 = (218.75 cos a0, 150, 218.75 sin a0)`, `P1 = P3 = (0,
+−600, 0)`, `P2 = (218.75 cos a1, 150, 218.75 sin a1)`, UV0 (0,0), (0,1), (0.5,0), (0.5,1), triangles (2,1,0),
+(3,1,2). Lanes masked by the chart are simply not drawn (the frame shows 30/60 lane draws during a half mask) —
+the movie is then seen unshaded there. Pixel (`d12365/annot/3028_ps.asm`; constants §2.7; t0 = `vT_JudgeLine00_00_m`
+64×1024 BC1 wrap, t1 = 1024² BC3 sampled in **screen space** (`(svpos.xy − viewMin)/viewSize`; the ring colour
+gradient, `vT_JudgeColor01_00_m` UNVERIFIED by name), t2 = `vT_GuideLane01_00_m` 32×256):
+
+    n    = clamp(pow(1−v, 9)·t0.Sample((2u, 10v + 5·time)).b, 0, 0.003) + clamp(t1(screen).a, 0, 0.0015)
+    base = B_Color_5 − n
+    l0   = 5·t0((u, −v) + (L_line_pos, 0)).g
+    q    = rot(−13.68°)·(u − 0.5, −v) + (R_line_pos + 0.5, 0)        // (0.971632, −0.236499 / 0.236499, 0.971632)
+    line = lerp(l0, 5·t0(q).g, Line_LorR)·LineONOFF
+    col  = lerp(base, B_Color_2, line)                                  // lane separator lines
+    (Combo_ONOFF = 0 → no guide-lane scroll texture)
+    k    = min(pow(max(sin(2π(0.5·v + JudgeLine_Pos)), 0), NoteLength), 1)   // NoteLength 4600 at NoteHeight 0.5
+    g    = smoothstep01(sat((1 − 3k·OutsideGlowStrength − SS_min)/(SS_max − SS_min)))
+           + (sin(2π·P) + 0.5)·(inside_max − inside_min) + inside_min       // P = MPC pulse (cb4[0].y)
+    r    = sat(g·sat(3k·OutsideGlowStrength + floor(3k)))
+    col  = lerp(col, 1.5·t1(screen).rgb, r)                             // the magenta judgement ring
+    fade = min(pow(max(w/PercentageAlpha, 0), WidthGradation), 1)        // 290, 6 with a movie
+    a0   = lerp(GuideLane_Alpha, Boss_Alpha·(GuideLane_Alpha − 0.3), fade)
+    q2   = (3k·OutsideGlowStrength + floor(3k))·((cos(2π·max(frac(k), 0.5)) + 1)/2 + ceil(k))
+    alpha = sat(q2·(5 − a0) + a0)
+    out  = (max(col, 0), alpha)       blend SrcAlpha / InvSrcAlpha
+
+The ring peak is where 0.5·v + 0.1473 = 0.25 → v = 0.2054 → Y = −4.05, r = 173.8, d = 194.05 → NDC 0.896 (302 px
+of 337.5; E2 measured the band at 292–315 px).
+
+### 3.4 Holds
+Body: one dynamic triangle mesh per frame in world space (identity transform), material `vMX_2_Hold_001`: colour =
+tile `floor(HoldColorNumber)` (lerp to the next tile by `frac`) of the 13-tile strip `vT_HoldNote01_00_m` (512²)
+sampled at `((rot180(uv − (0.45, 0.5)) + 0.5 + (tileX, tileY))·(1/13, 1))`, constant opacity, alpha blend.
+Strip geometry (CONFIRMED, frame 12365, `cap3/d12365b`, hold at lanes 40–49): rows of **16 vertices** at fixed world
+Y, rows every **ΔY = 4.5 cm (Δs = 0.0075)** from the hold head (here s = 0.6737, Y = −195.77) back to the tail (or to
+Y = −600 / s = 0 if the tail has not appeared: 91 rows). A row at scale s lies on the circle **r = 172.5·s** at
+Y = 600(s−1) and spans the hold's lane range at that time **inset 4° at each side** (lanes 40–49 → 244°…296°), the
+16 vertices evenly spaced in angle (u = 0…0.5 across); the angle range follows the hold's lane interpolation per
+row (the strip bends with moving holds). UV0.v grows by 0.0059 per row (≈ 1.31e-3 per cm of Y). Indices per quad:
+(2,1,0), (3,1,2) pattern (u32).
+Start cap = `vMsh_HoldStartNote00(S)` with the Hold00 MI (§3.1); end cap = `vMsh_HoldEndNote00` + `vMX_2_Hold_003`.
+
+### 3.5 Hit effects
+Cascade particle systems (`Vfx/Particle/tap_0|tap_1`): mesh particles with `vMX_2_Tap_000` and its MIs 05–08
+(additive), GPU sprites `vM_1_Base_004_AUS_m_MarvPt00x` (additive, emitter at r = 170, Y = 0, scale 1.7, rotated
+to the lane: one per lane of the hit note), `vM_2_Scroll_003_TUD_HitMarv000` (additive mesh particle). Shaders and
+constants: `d12365/annot/3555, 3623, 3642, 3675`. Particle curves are in the ParticleSystem assets (not yet
+dumped).
+
+### 3.6 Movie
+Quad ±810 at Y = −620 (fills the view square), YUV→RGB as §2.6, `^2.2` → linear, drawn opaque before the
+translucency; final `^(1/2.2)`.
+
+### 3.7 Current wacca-render approximations that are wrong
+* Projection: 2D `r = (1−k)x/(1−kx)` with k 0.75 and `APPROACH_SECS` 3.29 → real is a 3D scene: note scale
+  s ∝ time, Y = 600(s−1), camera 190 in front, 90° FOV; travel 3.333 s at speed 1 (s from 0 to 1).
+* Notes are flat textured sectors (`push_note`, `NOTE_THICKNESS`, caps) → real notes are tilted 3D bands (outer edge
+  nearer the camera) with per-lane sections, 1.5° end insets, joint strips, and the NoteBase00/01 two-texture
+  parallax shading of §3.1 (gradation by view depth, chain stripes, bonus pattern).
+* Guide lanes: flat dark sectors / tint (`GUIDE_LANE*`, `LANE_LINE*`) → real is a 60-lane cone, dark blue
+  (.0122, .0133, .0313) with **depth-faded alpha** `1 − (w/290)^6` (movie), separator lines from the JudgeLine texture.
+* Judgement ring: drawn as bands with fixed colours (`JUDGE_RING_*`, `JUDGE_BAND_*`, stripes, glow) → real ring is
+  the guide-lane shader's peak at v = 0.2054 coloured by a screen-space texture ×1.5.
+* Rim / score row (`RIM*`, `PROGRESS*`, `SCORE_*`) are UMG/Slate HUD drawn after the 3D view (not part of the 3D
+  scene) — keep as 2D but match the widget layout (doc 06 §2).
+* Slide arrows: animated by time (`SLIDE_ARROW_SPEED`) → real chevrons are fixed in world space (scroll = depth).
+* Colour pipeline: sprite colours treated as sRGB and linearised with 2.2 → the real output is linear HDR then
+  `pow(1/2.2)`; no tonemap, no bloom in the main view.
+* Hit effects (`effects.rs` pop/shoot/sparks constants) are hand-tuned → real are Cascade systems with the
+  materials above at r 170, scale 1.7.

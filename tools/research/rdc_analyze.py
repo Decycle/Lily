@@ -21,6 +21,15 @@ def shader_map(root):
     return m
 
 
+def _find_set(root, name):
+    """The extraction set (subdir of root) that holds package `name`'s shaders."""
+    pkg = name.split("/")[0]
+    for s in sorted(os.listdir(root)):
+        if os.path.isdir(os.path.join(root, s, pkg)):
+            return s
+    return ""
+
+
 def short(names):
     if not names:
         return "?"
@@ -48,6 +57,37 @@ def main(argv):
             print("[%3d] % .6g % .6g % .6g % .6g" % ((r,) + v))
         return 0
     sm = shader_map(root)
+    if "--annotate" in argv:
+        # write <dump>/annot/<eid>_<vs|ps>.asm: the disassembly with every cbN[i].c operand followed by the value
+        # captured at that draw (and the SRV list), so shaders can be translated with the real constants.
+        import re
+        eid = int(argv[argv.index("--annotate") + 1])
+        d = next(x for x in draws if x["eid"] == eid)
+        os.makedirs(os.path.join(dump, "annot"), exist_ok=True)
+        for stage in ("vs", "ps"):
+            names = sm.get(d[stage].get("dxbc"), [])
+            if not names:
+                continue
+            asm = open(os.path.join(root, _find_set(root, names[0]),
+                                    names[0] + ".asm"), encoding="utf-8").read()
+            cbs = {c["slot"]: cb_rows(dump, c["blob"]) for c in d[stage]["cbs"]}
+
+            def val(m):
+                slot, row, comps = int(m.group(1)), int(m.group(2)), m.group(3) or "xyzw"
+                rows = cbs.get(slot)
+                if rows is None or row >= len(rows):
+                    return m.group(0)
+                v = ",".join("%.6g" % rows[row]["xyzw".index(c)] for c in comps[:4])
+                return "%s{%s}" % (m.group(0), v)
+            out = re.sub(r"cb(\d+)\[(\d+)\]\.?([xyzw]*)", val, asm)
+            head = "// eid %d %s: %s\n// SRVs: %s\n// samplers: %s\n" % (
+                eid, stage, names[:3], [(s["slot"], s["res"], s.get("w"), s.get("h"), s.get("fmt"))
+                                        for s in d[stage].get("srvs", [])], d[stage].get("samplers"))
+            p = os.path.join(dump, "annot", "%d_%s.asm" % (eid, stage))
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(head + out)
+            print(p)
+        return 0
     if "--prims" in argv:
         # one line per (material, primitive transform): LocalToWorld decoded as uniform scale, translation,
         # rotation about world Z/Y; consecutive section draws of one mesh are merged.
