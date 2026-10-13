@@ -24,6 +24,8 @@ pub struct Import {
 pub struct Export {
     /// Package index of the class (usually an import, e.g. `Texture2D`).
     pub class_index: i32,
+    /// Package index of the owning object (0 = the package itself).
+    pub outer_index: i32,
     pub object_name: String,
     pub serial_size: u64,
     /// Offset in the combined `.uasset` + `.uexp` file.
@@ -98,7 +100,8 @@ impl Package {
         let mut er = Reader::at(uasset, export_offset)?;
         for _ in 0..export_count {
             let class_index = er.i32()?;
-            er.bytes(12)?; // SuperIndex, TemplateIndex, OuterIndex
+            er.bytes(8)?; // SuperIndex, TemplateIndex
+            let outer_index = er.i32()?;
             let object_name = pkg.read_fname(&mut er)?;
             er.u32()?; // ObjectFlags
             let serial_size = er.u64()?;
@@ -106,6 +109,7 @@ impl Package {
             er.bytes(EXPORT_TRAILER_SIZE)?;
             pkg.exports.push(Export {
                 class_index,
+                outer_index,
                 object_name,
                 serial_size,
                 serial_offset,

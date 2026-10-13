@@ -6,6 +6,7 @@ mod datatable;
 #[cfg(test)]
 mod fixture;
 mod mesh;
+mod object;
 mod package;
 mod property;
 mod reader;
@@ -13,6 +14,7 @@ mod texture;
 
 pub use datatable::{DataTable, read_datatable};
 pub use mesh::{MeshSection, StaticMesh, read_static_mesh};
+pub use object::{Object, Objects, read_objects};
 pub use property::{Text, Value};
 pub use texture::{PixelFormat, Texture, read_texture2d};
 

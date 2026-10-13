@@ -7,8 +7,9 @@ pub(crate) struct Fixture {
     names: Vec<String>,
     /// (class package, class name, object name) as name indices.
     imports: Vec<[i32; 3]>,
-    /// (class package index, object name index, serial size); serialized back to back after the header.
-    exports: Vec<(i32, i32, usize)>,
+    /// (class package index, object name index, serial size, outer index); serialized back to back
+    /// after the header.
+    exports: Vec<(i32, i32, usize, i32)>,
 }
 
 fn i32le(b: &mut Vec<u8>, v: i32) {
@@ -59,8 +60,13 @@ impl Fixture {
 
     /// Adds an export of `size` bytes; exports are laid out back to back in the `.uexp`.
     pub(crate) fn export(&mut self, class_index: i32, object: &str, size: usize) {
+        self.export_in(class_index, object, size, 0);
+    }
+
+    /// [`Fixture::export`] owned by package index `outer`.
+    pub(crate) fn export_in(&mut self, class_index: i32, object: &str, size: usize, outer: i32) {
         let name = self.index(object);
-        self.exports.push((class_index, name, size));
+        self.exports.push((class_index, name, size, outer));
     }
 
     fn header(&mut self, b: &mut Vec<u8>, name: &str, kind: &str, size: usize, index: i32) {
@@ -194,8 +200,8 @@ impl Fixture {
             }
         }
         let mut serial_offset = export_off + 104 * self.exports.len();
-        for &(class, name, size) in &self.exports {
-            for v in [class, 0, 0, 0, name, 0, 0] {
+        for &(class, name, size, outer) in &self.exports {
+            for v in [class, 0, 0, outer, name, 0, 0] {
                 i32le(&mut b, v); // class, super, template, outer, name, number, flags
             }
             b.extend((size as u64).to_le_bytes());
