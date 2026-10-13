@@ -334,7 +334,7 @@ impl Renderer {
         pass.set_vertex_buffer(0, self.vertices.slice(..bytes.len() as u64));
         pass.draw(0..split as u32, 0..1);
         if !notes.is_empty() {
-            self.notes.draw(&mut pass, notes.len());
+            self.notes.draw(&mut pass, notes);
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.atlas_group, &[]);
             pass.set_vertex_buffer(0, self.vertices.slice(..bytes.len() as u64));
