@@ -2140,11 +2140,14 @@ dependencies = [
  "cpal",
  "env_logger",
  "log",
+ "png",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "wacca-audio",
  "wacca-chart",
  "wacca-game",
+ "wacca-render",
 ]
 
 [[package]]

@@ -1,0 +1,4 @@
+{"steps":[
+  {"do":"touch","lane":44,"width":3,"hold_ms":120,"wait_ms":1000},
+  {"do":"expect","name":"started","all":[]}
+]}

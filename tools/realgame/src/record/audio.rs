@@ -67,11 +67,26 @@ pub struct AudioResult {
     pub frames: u64,
     pub first_buffer: Option<Instant>,
     pub level: Level,
+    /// Per packet: index of its first frame in the file and that frame's capture time (WASAPI's QPC stamp).
+    pub packets: Vec<(u64, Instant)>,
 }
+
+/// One loopback packet as forwarded to a live consumer ([`AudioRecorder::start`]'s `tap`).
+#[derive(Debug)]
+pub struct Captured {
+    /// Capture time of the first frame.
+    pub at: Instant,
+    /// Index of the first frame in the recording.
+    pub frame: u64,
+    /// Interleaved samples.
+    pub samples: Vec<f32>,
+}
+
+type WriterResult = Result<(u64, Level, Vec<(u64, Instant)>), std::io::Error>;
 
 pub struct AudioRecorder {
     stream: cpal::Stream,
-    writer: JoinHandle<Result<(u64, Level), std::io::Error>>,
+    writer: JoinHandle<WriterResult>,
     first: Arc<OnceLock<Instant>>,
     path: PathBuf,
     pub device: String,
@@ -91,7 +106,8 @@ impl std::fmt::Debug for AudioRecorder {
 }
 
 impl AudioRecorder {
-    pub fn start(path: &Path) -> Result<Self, AudioError> {
+    /// Starts capturing into `path`; every packet is also sent to `tap` (if any) after it was written.
+    pub fn start(path: &Path, tap: Option<mpsc::Sender<Captured>>) -> Result<Self, AudioError> {
         let device = cpal::default_host()
             .default_output_device()
             .ok_or(AudioError::NoDevice)?;
@@ -108,24 +124,46 @@ impl AudioRecorder {
         let file = File::create(path).map_err(io_err)?;
         let mut wav = WavWriter::new(BufWriter::new(file), config.sample_rate.0, config.channels)
             .map_err(io_err)?;
-        let (tx, rx) = mpsc::channel::<Vec<f32>>();
+        let (tx, rx) = mpsc::channel::<(Instant, Vec<f32>)>();
+        let channels = u64::from(config.channels.max(1));
         let writer = std::thread::spawn(move || {
             let mut level = Level::default();
-            for buf in rx {
+            let mut packets = Vec::new();
+            let mut frame = 0;
+            for (at, buf) in rx {
                 level.add(&buf);
                 wav.write(&buf)?;
+                packets.push((frame, at));
+                let n = buf.len() as u64 / channels;
+                if let Some(tap) = &tap {
+                    // A consumer that went away just stops receiving.
+                    let _ = tap.send(Captured {
+                        at,
+                        frame,
+                        samples: buf,
+                    });
+                }
+                frame += n;
             }
             let (frames, _) = wav.finish()?;
-            Ok((frames, level))
+            Ok((frames, level, packets))
         });
         let first = Arc::new(OnceLock::new());
         let first_cb = Arc::clone(&first);
         let stream = device.build_input_stream(
             &config,
-            move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                first_cb.get_or_init(Instant::now);
+            move |data: &[f32], info: &cpal::InputCallbackInfo| {
+                let now = Instant::now();
+                first_cb.get_or_init(|| now);
+                // Back-date to the packet's capture stamp (WASAPI QPC position) when cpal provides it.
+                let ts = info.timestamp();
+                let at = ts
+                    .callback
+                    .duration_since(&ts.capture)
+                    .and_then(|lag| now.checked_sub(lag))
+                    .unwrap_or(now);
                 // The receiver only goes away after the stream is dropped.
-                let _ = tx.send(data.to_vec());
+                let _ = tx.send((at, data.to_vec()));
             },
             |e| log::warn!("loopback stream: {e}"),
             None,
@@ -150,7 +188,7 @@ impl AudioRecorder {
 
     pub fn stop(self) -> Result<AudioResult, AudioError> {
         drop(self.stream);
-        let (frames, level) = self
+        let (frames, level, packets) = self
             .writer
             .join()
             .map_err(|_| AudioError::Writer)?
@@ -164,6 +202,7 @@ impl AudioRecorder {
             frames,
             first_buffer: self.first.get().copied(),
             level,
+            packets,
         })
     }
 }

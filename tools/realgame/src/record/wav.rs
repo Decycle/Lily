@@ -27,6 +27,29 @@ pub fn header(sample_rate: u32, channels: u16, frames: u32) -> [u8; HEADER_LEN] 
     h
 }
 
+/// Reads a file written by [`WavWriter`] (canonical 44-byte float header): `(sample_rate, channels, samples)`.
+/// Uses the bytes actually present, so a recording whose header was never patched still reads.
+pub fn read_f32(bytes: &[u8]) -> Option<(u32, u16, Vec<f32>)> {
+    let u16_at = |i: usize| Some(u16::from_le_bytes(bytes.get(i..i + 2)?.try_into().ok()?));
+    let u32_at = |i: usize| Some(u32::from_le_bytes(bytes.get(i..i + 4)?.try_into().ok()?));
+    let ok = bytes.get(0..4) == Some(b"RIFF")
+        && bytes.get(8..16) == Some(b"WAVEfmt ")
+        && u16_at(20)? == FORMAT_IEEE_FLOAT
+        && u16_at(34)? == 32
+        && bytes.get(36..40) == Some(b"data");
+    if !ok {
+        return None;
+    }
+    let samples = bytes
+        .get(HEADER_LEN..)?
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|b| f32::from_le_bytes(*b))
+        .collect();
+    Some((u32_at(24)?, u16_at(22)?, samples))
+}
+
 #[derive(Debug)]
 pub struct WavWriter<W: Write + Seek> {
     out: W,
@@ -95,5 +118,11 @@ mod tests {
         assert_eq!(bytes.len(), HEADER_LEN + 16);
         assert_eq!(&bytes[..HEADER_LEN], &header(48_000, 2, 2));
         assert_eq!(&bytes[HEADER_LEN..HEADER_LEN + 4], &0.5f32.to_le_bytes());
+        assert_eq!(
+            read_f32(&bytes),
+            Some((48_000, 2, vec![0.5, -0.5, 1.0, 0.0]))
+        );
+        assert_eq!(read_f32(&bytes[..40]), None);
+        assert_eq!(read_f32(b"RIFX"), None);
     }
 }
