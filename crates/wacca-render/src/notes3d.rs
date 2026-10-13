@@ -1,8 +1,8 @@
 //! Notes as the game's real 3D meshes (pure, no GPU). Spec: `docs/research/11-shaders-and-meshes.md`
 //! §1.3–1.4 (meshes, materials), §2.3–2.4 (camera, note transforms from RenderDoc captures).
 //!
-//! Placement: [`crate::camera`]. Drawn here: note bodies, hold end caps, bar lines and the R-note
-//! aura. The slide chevron and snap arrow sections (mesh sections at or above the note width that
+//! Placement: [`crate::camera`]. Drawn here: note bodies, hold end caps, bar lines, the R-note
+//! aura and the sync connectors ([`crate::sync`]). The slide chevron and snap arrow sections (mesh sections at or above the note width that
 //! are not aura) are left out (ported separately).
 //!
 //! R notes (`Bonus::R`) use the `…NoteS` meshes: the same body sections plus one wider section
@@ -39,10 +39,12 @@ pub enum MeshKind {
     HoldStartS,
     SlideS,
     SnapS,
+    /// Sync connector (`vMsh_GuideSync00`, [`crate::sync`]).
+    GuideSync,
 }
 
 impl MeshKind {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Default,
         Self::HoldStart,
         Self::Slide,
@@ -53,6 +55,7 @@ impl MeshKind {
         Self::HoldStartS,
         Self::SlideS,
         Self::SnapS,
+        Self::GuideSync,
     ];
 
     fn stem(self) -> &'static str {
@@ -67,6 +70,7 @@ impl MeshKind {
             Self::HoldStartS => "vMsh_HoldStartNoteS00",
             Self::SlideS => "vMsh_SlideNoteS00",
             Self::SnapS => "vMsh_SnapNoteS00",
+            Self::GuideSync => "vMsh_GuideSync00",
         }
     }
 
@@ -78,7 +82,7 @@ impl MeshKind {
             Self::SlideS => Some(Self::Slide),
             Self::SnapS => Some(Self::Snap),
             Self::HoldStart | Self::Slide | Self::Snap => Some(Self::Default),
-            Self::Default | Self::BarLine | Self::HoldEnd => None,
+            Self::Default | Self::BarLine | Self::HoldEnd | Self::GuideSync => None,
         }
     }
 
@@ -120,6 +124,8 @@ pub enum MaterialId {
     HoldEnd,
     /// `vMX_2_NoteAura_AUS_m_00` (R-note glow, additive).
     Aura,
+    /// `vMX_2_Sync_000` (sync connector, opaque).
+    Sync,
 }
 
 /// Flag in [`MeshVertex::material`]: the note shares its time with another (`SyncNote` 1).
@@ -135,6 +141,8 @@ pub enum Shader {
     HoldEnd,
     /// `vMX_2_NoteAura_000`.
     Aura,
+    /// `vMX_2_Sync_000`.
+    Sync,
 }
 
 /// Material constants (linear RGB colour and the NTap scalars) from the cooked material
@@ -174,7 +182,7 @@ const fn other(shader: Shader, color: [f32; 3]) -> Material {
 
 /// Indexed by [`MaterialId`]. MI values override the master's defaults (`Line` 0.08,
 /// `BornusNoteFlip` 1, `ChainNote`/`BornusNote` 0).
-pub const MATERIALS: [Material; 13] = [
+pub const MATERIALS: [Material; 14] = [
     // vMX_2_Note_MUS_m_000_Normal00
     tap([1.0, 0.035601, 0.863157], 0.08, 0.0, 0.0, 1.0),
     // Chain00
@@ -197,6 +205,8 @@ pub const MATERIALS: [Material; 13] = [
     other(Shader::HoldEnd, [1.0, 1.0, 1.0]),
     // vMX_2_NoteAura_AUS_m_00: NewNoteColor.
     other(Shader::Aura, [2.5, 2.305553, 1.041667]),
+    // vMX_2_Sync_000: colour from vT_SyncNote00_00_m (in the shader).
+    other(Shader::Sync, [1.0, 1.0, 1.0]),
 ];
 
 /// Mesh and body material of a note (R notes: the aura mesh, UNVERIFIED for holds/slides/snaps).
@@ -410,6 +420,8 @@ pub fn build_mesh_notes(
     let sync = |i: usize| same_time(i, i.checked_sub(1)) || same_time(i, Some(i + 1));
     // (depth, mesh, first lane, width, material + flags); no depth buffer: drawn far to near.
     let mut items: Vec<(f32, &NoteMesh, f32, u8, u32)> = Vec::new();
+    // Visible simultaneous heads, for the sync connectors.
+    let mut heads = Vec::new();
     for (i, note) in notes.iter().enumerate() {
         if judged(i) || last_time.is_some_and(|last| note.time > last) {
             continue;
@@ -427,7 +439,12 @@ pub fn build_mesh_notes(
         };
         let (kind, material) = note_style(&note.body, note.bonus);
         let width = note.arc.width.clamp(1, LANES);
-        let flags = if sync(i) { SYNC_BIT } else { 0 };
+        let flags = if sync(i) {
+            heads.push((note.time, d, note.arc));
+            SYNC_BIT
+        } else {
+            0
+        };
         if let Some(mesh) = meshes.get(kind, width) {
             let lane = f32::from(note.arc.lane);
             items.push((d, mesh, lane, width, material as u32 | flags));
@@ -448,6 +465,8 @@ pub fn build_mesh_notes(
         push_mesh((&mut body, out), mesh, d, lane, width, material);
     }
     out.extend(body);
+    // After the bar lines: drawn over them where coplanar (depth test GreaterEqual).
+    crate::sync::push_connectors(out, meshes, &heads);
 }
 
 /// Number of leading aura vertices in a [`build_mesh_notes`] list.
@@ -506,7 +525,8 @@ mod tests {
         );
         assert!(m.get(MeshKind::HoldEnd, 3).is_none());
         assert_eq!(MATERIALS[MaterialId::Aura as usize].shader, Shader::Aura);
-        assert_eq!(MaterialId::Aura as usize, MATERIALS.len() - 1);
+        assert_eq!(MaterialId::Sync as usize, MATERIALS.len() - 1);
+        assert_eq!(MATERIALS[MaterialId::Sync as usize].shader, Shader::Sync);
     }
 
     #[test]

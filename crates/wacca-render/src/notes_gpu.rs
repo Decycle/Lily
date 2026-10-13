@@ -1,5 +1,5 @@
-//! wgpu side of [`crate::notes3d`]: the note material pipelines (`notes.wgsl`; opaque/masked and
-//! the additive aura), their textures and the per-frame vertex buffer. Without meshes or textures
+//! wgpu side of [`crate::notes3d`]: the note material pipelines (`notes.wgsl`; opaque/masked
+//! incl. the sync connector, and the additive aura), their textures and the per-frame vertex buffer. Without meshes or textures
 //! nothing is drawn (2D notes instead).
 
 use std::path::Path;
@@ -10,13 +10,15 @@ use crate::sprites::{self, Image};
 /// The note material textures (bindings 1..): file stem under `data/ui/Vfx/Textures` and whether
 /// the material samples it as sRGB colour (`SAMPLERTYPE_Color`) or linear (`LinearColor`,
 /// `LinearGrayscale`).
-const TEXTURES: [(&str, bool); 5] = [
+const TEXTURES: [(&str, bool); 6] = [
     ("vT_NoteBase00_00_m", true),
     ("vT_NoteBase01_00_m", false),
     // vMX_2_Hold_003: TilingTexture (captured: the 512² 13-colour strip) and its mask.
     ("vT_HoldGrd00_00_m", true),
     ("vT_HoldENote00_00_m", true),
     ("vT_SNote00_00_m", false),
+    // vMX_2_Sync_000 (cooked with SRGB on).
+    ("vT_SyncNote00_00_m", true),
 ];
 
 const MIN_BUFFER_BYTES: u64 = 256 * 1024;
@@ -36,6 +38,7 @@ fn gpu_materials() -> [GpuMaterial; MATERIALS.len()] {
             Shader::BarLine => 1.0,
             Shader::HoldEnd => 2.0,
             Shader::Aura => 3.0,
+            Shader::Sync => 4.0,
         };
         GpuMaterial {
             color: [m.color[0], m.color[1], m.color[2], 1.0],
@@ -372,6 +375,7 @@ mod tests {
         assert_eq!(m[MaterialId::BarLine as usize].p1[2], 1.0);
         assert_eq!(m[MaterialId::HoldEnd as usize].p1[2], 2.0);
         assert_eq!(m[MaterialId::Aura as usize].p1[2], 3.0);
+        assert_eq!(m[MaterialId::Sync as usize].p1[2], 4.0);
         assert_eq!(m[0].p0, [0.8, 0.35, 0.08, 0.0]);
     }
 }
