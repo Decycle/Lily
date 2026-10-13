@@ -1,0 +1,66 @@
+name: Release (Windows portable)
+
+# Manual only: Actions → "Release (Windows portable)" → Run workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag for a draft GitHub release (e.g. v0.1.0). Leave empty to only upload a workflow artifact."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  portable:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (GNU toolchain, see CONTRIBUTING.md#toolchain)
+        shell: bash
+        run: |
+          rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
+          rustup default stable-x86_64-pc-windows-gnu
+          rustc -vV
+      - run: cargo test --locked --workspace
+      - name: Build the portable zip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force release-out | Out-Null
+          if (Test-Path tools/make-portable.ps1) {
+            # The packaging script builds the release binaries and writes the portable zip.
+            & ./tools/make-portable.ps1
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            Get-ChildItem -Recurse -Filter *.zip |
+              Where-Object { $_.FullName -notmatch '[\\/](target|release-out|\.git)[\\/]' } |
+              Copy-Item -Destination release-out
+          } else {
+            # Without the packaging script: the game binary plus the license files.
+            cargo build --locked --release -p wacca-app
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            $dir = 'release-out/Lily'
+            New-Item -ItemType Directory -Force $dir | Out-Null
+            Copy-Item target/release/*.exe, LICENSE, NOTICE.md, README.md -Destination $dir
+            Compress-Archive -Path $dir -DestinationPath release-out/Lily-windows-x64.zip
+            Remove-Item -Recurse $dir
+          }
+          $zips = @(Get-ChildItem release-out -Filter *.zip)
+          if ($zips.Count -eq 0) { throw 'no zip was produced' }
+          $zips | ForEach-Object { "{0}  {1:N1} MB" -f $_.Name, ($_.Length / 1MB) }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lily-windows-portable
+          path: release-out/*.zip
+          if-no-files-found: error
+      - name: Draft GitHub release
+        if: inputs.tag != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: gh release create "$TAG" release-out/*.zip --draft --target "$GITHUB_SHA" --title "Lily $TAG" --notes "Portable Windows build. You need your own copy of WACCA Reverse 3.07.01; see docs/GUIDE.md."

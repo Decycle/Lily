@@ -46,3 +46,18 @@ build fails. Until a full MinGW-w64 is installed we stay below that line: `wgpu`
 default features (its colour support pulls `windows-sys` 0.61). Do not run a bare `cargo update`; update single
 crates with `cargo update -p <crate>` and check that `cargo tree --target x86_64-pc-windows-gnu -i windows-link`
 prints nothing.
+
+**Other platforms.** The workspace also builds on Linux (needs `libasound2-dev` / `alsa-lib-devel` and
+`pkg-config` for `cpal`) and macOS (wgpu's Metal backend). Windows-only code (the real-game harness's Win32 FFI,
+process creation flags, the setup's folder picker) is behind `#[cfg(windows)]` with a non-Windows fallback. Check a
+change on other targets without their linkers using `rustup target add x86_64-unknown-linux-gnu aarch64-apple-darwin`
+and `cargo clippy --workspace --all-targets --target <triple> -- -D warnings` (on Windows, the Linux check needs
+`PKG_CONFIG_ALLOW_CROSS=1` and a `PKG_CONFIG` stub that prints `-lasound`, because `alsa-sys` asks `pkg-config`).
+
+## CI
+
+`.github/workflows/ci.yml` runs `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and
+`cargo test --workspace` (non-ignored tests) on `windows-latest`, `ubuntu-latest` and `macos-latest`. Windows CI uses
+the same `stable-x86_64-pc-windows-gnu` toolchain as local development and fails if `windows-link` enters the
+dependency tree: the rustup GNU toolchain has `dlltool` but no assembler, so the pins above are what keeps it
+building without a full MinGW-w64. `.github/workflows/release.yml` (manual) builds the Windows portable zip.
