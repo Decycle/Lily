@@ -8,8 +8,10 @@ use wacca_render::text::Align;
 
 use crate::canvas::{CIRCLE_R, Canvas, MID, Painter, hex};
 use crate::chrome::{INK, PINK, WHITE};
-use crate::setup_backend::Severity;
-use crate::setup_flow::{Flow, Reason, Step, progress_text};
+use crate::setup_backend::Finding;
+use crate::setup_flow::{
+    Flow, Reason, Severity, Step, bytes, finding_text, movies_available, progress_text,
+};
 use crate::ui::{Action, GREY, View};
 
 const WARN: Rgba = hex(0xffc94a, 1.0);
@@ -50,21 +52,41 @@ pub fn view(c: Canvas, flow: &Flow, now: f64, t: f32) -> View {
             );
             let shown = dir.display().to_string();
             lines(&mut p, -320.0, &[(&version, WHITE), (&shown, GREY)]);
-            let report: Vec<(&str, Rgba)> = detected
+            let report: Vec<(String, Rgba)> = detected
                 .report
                 .iter()
                 .take(7)
                 .map(|f| {
-                    let color = match f.severity {
+                    let (text, severity) = finding_text(f);
+                    let color = match severity {
                         Severity::Info => WHITE,
                         Severity::Warning => WARN,
-                        Severity::Missing => BAD,
+                        Severity::Bad => BAD,
                     };
-                    (f.message.as_str(), color)
+                    (text, color)
                 })
                 .collect();
-            small_lines(&mut p, -220.0, &report);
-            toggle(&mut p, 120.0, *movies);
+            let refs: Vec<(&str, Rgba)> = report.iter().map(|(s, c)| (s.as_str(), *c)).collect();
+            small_lines(&mut p, -220.0, &refs);
+            let size = detected.report.iter().find_map(|f| match f {
+                Finding::Movies {
+                    present: true,
+                    bytes,
+                } => Some(*bytes),
+                _ => None,
+            });
+            if movies_available(detected) {
+                toggle(&mut p, 120.0, *movies, size.unwrap_or(0));
+            } else {
+                small_lines(
+                    &mut p,
+                    120.0,
+                    &[(
+                        "No background videos in these files: songs play without them.",
+                        GREY,
+                    )],
+                );
+            }
             button(&mut p, 250.0, "START", Action::Confirm, true);
             button(&mut p, 345.0, "BACK", Action::Back, false);
         }
@@ -99,16 +121,25 @@ pub fn view(c: Canvas, flow: &Flow, now: f64, t: f32) -> View {
             p.text("SETUP COMPLETE", [0.0, -300.0], 24.0, GOOD, Align::Center);
             let songs = format!("{} songs playable", s.songs_playable);
             p.text(songs, [0.0, -220.0], 22.0, WHITE, Align::Center);
-            let movies = if s.movies_present {
-                "Background videos: included"
+            let movies = if s.movies_present > 0 {
+                format!("Background videos: {}", s.movies_present)
             } else {
-                "Background videos: not included"
+                "Background videos: not included".into()
             };
-            let mut out: Vec<(String, Rgba)> = vec![(movies.into(), GREY)];
+            let mut out: Vec<(String, Rgba)> = vec![(movies, GREY)];
+            if s.songs_skipped > 0 {
+                out.push((
+                    format!("{} songs left out (no playable chart)", s.songs_skipped),
+                    WARN,
+                ));
+            }
             if !s.charts_skipped.is_empty() {
-                out.push((format!("Skipped ({}):", s.charts_skipped.len()), WARN));
+                out.push((
+                    format!("Charts skipped ({}):", s.charts_skipped.len()),
+                    WARN,
+                ));
                 for k in s.charts_skipped.iter().take(4) {
-                    out.push((format!("{}: {}", k.what, k.why), WARN));
+                    out.push((format!("{} ({}): {}", k.song, k.chart_path, k.reason), WARN));
                 }
                 if s.charts_skipped.len() > 4 {
                     out.push((format!("… and {} more", s.charts_skipped.len() - 4), WARN));
@@ -253,8 +284,8 @@ fn button(p: &mut Painter, y: f32, label: &str, action: Action, main: bool) {
     p.button([0.0, y], size, action);
 }
 
-/// The background-video choice: tap (or ←/→) to flip.
-fn toggle(p: &mut Painter, y: f32, on: bool) {
+/// The background-video choice (`size` bytes): tap (or ←/→) to flip.
+fn toggle(p: &mut Painter, y: f32, on: bool, size: u64) {
     p.fill([0.0, y], [620.0, 70.0], MID, hex(0xffffff, 0.08));
     p.text("BACKGROUND VIDEOS", [-280.0, y], 16.0, WHITE, Align::Left);
     let (label, color) = if on {
@@ -264,7 +295,7 @@ fn toggle(p: &mut Painter, y: f32, on: bool) {
     };
     p.text(label, [280.0, y], 18.0, color, Align::Right);
     p.text(
-        "About 20 GB more; playing them needs FFmpeg.",
+        format!("{} more; playing them needs FFmpeg.", bytes(size)),
         [0.0, y + 55.0],
         11.0,
         GREY,
@@ -301,7 +332,7 @@ fn dots(p: &mut Painter, y: f32, t: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::setup_backend::{Detected, Finding, Progress, Source, Summary};
+    use crate::setup_backend::{Detected, Phase, Progress, Source, Summary};
     use crate::setup_flow::failure;
 
     fn c() -> Canvas {
@@ -326,12 +357,17 @@ mod tests {
         f.step = Step::Found {
             dir: "G".into(),
             detected: Detected {
-                source: Source::Installed("G".into()),
+                source: Source::Installed {
+                    content_dir: "G".into(),
+                },
                 version: Some("3.07.01".into()),
-                report: vec![Finding {
-                    severity: Severity::Missing,
-                    message: "3.05.00 update missing".into(),
-                }],
+                report: vec![
+                    Finding::MissingUpdates(vec!["3.05.00".into()]),
+                    Finding::Movies {
+                        present: true,
+                        bytes: 21_369_353_312,
+                    },
+                ],
             },
             movies: true,
         };
@@ -339,8 +375,9 @@ mod tests {
         let texts = v.texts();
         for s in [
             "Version: 3.07.01",
-            "3.05.00 update missing",
+            "Missing updates: 3.05.00 (older version)",
             "◀ YES ▶",
+            "21.4 GB more; playing them needs FFmpeg.",
             "START",
         ] {
             assert!(texts.contains(&s), "{s}");
@@ -354,11 +391,10 @@ mod tests {
         f.step = Step::Running {
             dir: "G".into(),
             progress: Some(Progress {
-                step: "Copying".into(),
-                index: 0,
-                steps: 2,
+                phase: Phase::Copy,
                 done: 50,
                 total: 100,
+                detail: String::new(),
             }),
             step_since: 0.0,
             cancelling: false,

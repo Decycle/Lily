@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use crate::setup_backend::{Detected, Progress, SetupError, Source, Summary};
+use crate::setup_backend::{Detected, Finding, Phase, Progress, SetupError, Source, Summary};
 
 /// Why setup is showing.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -139,14 +139,18 @@ impl Flow {
                     movies,
                 },
                 Toggle,
-            ) => (
-                Step::Found {
-                    dir,
-                    detected,
-                    movies: !movies,
-                },
-                None,
-            ),
+            ) => {
+                // Only when there are videos to include.
+                let movies = !movies && movies_available(&detected);
+                (
+                    Step::Found {
+                        dir,
+                        detected,
+                        movies,
+                    },
+                    None,
+                )
+            }
             (
                 Step::Found {
                     dir,
@@ -193,7 +197,9 @@ impl Flow {
                 },
                 Progress(p, at),
             ) => {
-                let new_step = old.as_ref().is_none_or(|o| o.step != p.step);
+                let new_step = old
+                    .as_ref()
+                    .is_none_or(|o| (o.phase, &o.detail) != (p.phase, &p.detail));
                 (
                     Step::Running {
                         dir,
@@ -277,20 +283,105 @@ pub fn clock(secs: f64) -> String {
     }
 }
 
-/// The progress lines: step (`2/3 Converting`), percent, `bytes / bytes`, `ETA m:ss`.
+/// What a phase is doing, for people; `true` when its counts are bytes.
+pub fn phase_name(phase: Phase) -> (&'static str, bool) {
+    match phase {
+        Phase::Verify => ("Checking archives", true),
+        Phase::Prepare => ("Preparing", false),
+        Phase::Extract => ("Unpacking archives", true),
+        Phase::Copy => ("Copying game files", true),
+        Phase::Convert => ("Converting", false),
+        Phase::Validate => ("Checking charts", false),
+    }
+}
+
+/// The progress lines: step (`Unpacking archives 3.05.00`), percent, `bytes / bytes` (or
+/// `n / total`), `about m:ss left`.
 pub fn progress_text(p: &Progress, elapsed: f64) -> [String; 4] {
-    let step = format!("{}/{}  {}", p.index + 1, p.steps.max(p.index + 1), p.step);
+    let (name, in_bytes) = phase_name(p.phase);
+    let step = if p.detail.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name}  {}", p.detail)
+    };
     let pct = percent(p.done, p.total).map_or_else(|| "…".to_string(), |v| format!("{v}%"));
+    let count = |n| if in_bytes { bytes(n) } else { n.to_string() };
     let amount = if p.total > 0 {
-        format!("{} / {}", bytes(p.done), bytes(p.total))
+        format!("{} / {}", count(p.done), count(p.total))
     } else if p.done > 0 {
-        bytes(p.done)
+        count(p.done)
     } else {
         String::new()
     };
     let eta = eta(p.done, p.total, elapsed)
         .map_or_else(String::new, |s| format!("about {} left", clock(s)));
     [step, pct, amount, eta]
+}
+
+/// How serious a report line is (its colour).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Severity {
+    Info,
+    Warning,
+    /// Setup will fail or the result will lack something important.
+    Bad,
+}
+
+/// One detection finding, worded for the screen.
+pub fn finding_text(f: &Finding) -> (String, Severity) {
+    let name = |p: &std::path::Path| {
+        p.file_name().map_or_else(
+            || p.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        )
+    };
+    match f {
+        Finding::MissingUpdates(v) => (
+            format!("Missing updates: {} (older version)", v.join(", ")),
+            Severity::Warning,
+        ),
+        Finding::ChecksumNotVerified => ("Archive checksums not verified".into(), Severity::Info),
+        Finding::Renamed { archive, version } => (
+            format!("{} recognised as {version}", name(archive)),
+            Severity::Info,
+        ),
+        Finding::SizeMismatch {
+            archive,
+            expected,
+            actual,
+        } => (
+            format!(
+                "{}: {} instead of {} (incomplete download?)",
+                name(archive),
+                bytes(*actual),
+                bytes(*expected)
+            ),
+            Severity::Bad,
+        ),
+        Finding::Movies {
+            present: true,
+            bytes: b,
+        } => (
+            format!("Background videos found ({})", bytes(*b)),
+            Severity::Info,
+        ),
+        Finding::Movies { present: false, .. } => {
+            ("No background videos found".into(), Severity::Warning)
+        }
+        Finding::Songs(n) => (format!("{n} songs"), Severity::Info),
+        Finding::UnknownVersion => (
+            "Game version unknown (may still work)".into(),
+            Severity::Warning,
+        ),
+        Finding::UnsupportedVersion(why) => (format!("Unsupported: {why}"), Severity::Bad),
+    }
+}
+
+/// Whether the detection report offers background videos.
+pub fn movies_available(d: &Detected) -> bool {
+    d.report
+        .iter()
+        .any(|f| matches!(f, Finding::Movies { present: true, .. }))
 }
 
 /// The screen's wording of a setup error.
@@ -300,11 +391,14 @@ pub fn failure(e: &SetupError) -> Failure {
             "7-ZIP NOT FOUND",
             vec![
                 "Unpacking the .7z archives needs 7-Zip.".into(),
-                "Install 7-Zip, or put 7z.exe and 7z.dll next to wacca-app.exe,".into(),
+                "Install 7-Zip, or put 7z.exe and 7z.dll next to wacca-app.exe".into(),
+                "(or in a tools folder there),".into(),
                 "then try again.".into(),
             ],
         ),
-        SetupError::NoSpace { needed, available } => (
+        SetupError::DiskSpace {
+            needed, available, ..
+        } => (
             "NOT ENOUGH DISK SPACE",
             vec![
                 format!(
@@ -318,9 +412,16 @@ pub fn failure(e: &SetupError) -> Failure {
         SetupError::UnsupportedVersion(v) => (
             "UNSUPPORTED VERSION",
             vec![
-                format!("These files are WACCA {v}."),
+                format!("These game files cannot be used: {v}."),
                 "WACCA_slim needs WACCA Reverse 3.07.01: the Reverse update".into(),
                 "archives (3.00.00 base + 3.01.00 … 3.07.01) or a game folder.".into(),
+            ],
+        ),
+        SetupError::BaseArchiveMissing => (
+            "BASE ARCHIVE MISSING",
+            vec![
+                "Only update archives were found.".into(),
+                "The base archive WACCA Reverse (3.00.00).7z is needed too.".into(),
             ],
         ),
         SetupError::NothingFound(dir) => (
@@ -346,26 +447,26 @@ pub fn failure(e: &SetupError) -> Failure {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::setup_backend::{Finding, Severity};
 
     fn detected() -> Detected {
         Detected {
-            source: Source::Installed(PathBuf::from("G/Content")),
-            version: Some("3.07.01".into()),
-            report: vec![Finding {
-                severity: Severity::Info,
-                message: "ok".into(),
+            source: Source::Installed {
+                content_dir: PathBuf::from("G/Content"),
+            },
+            version: Some("3.07".into()),
+            report: vec![Finding::Movies {
+                present: true,
+                bytes: 21_000_000_000,
             }],
         }
     }
 
-    fn progress(step: &str, done: u64) -> Progress {
+    fn progress(phase: Phase, done: u64) -> Progress {
         Progress {
-            step: step.into(),
-            index: 0,
-            steps: 2,
+            phase,
             done,
             total: 100,
+            detail: String::new(),
         }
     }
 
@@ -386,12 +487,12 @@ mod tests {
         assert_eq!(
             f.input(Input::Confirm),
             Some(Effect::Run {
-                source: Source::Installed(PathBuf::from("G/Content")),
+                source: detected().source,
                 include_movies: true
             })
         );
-        f.input(Input::Progress(progress("Copy", 10), 5.0));
-        f.input(Input::Progress(progress("Copy", 20), 6.0));
+        f.input(Input::Progress(progress(Phase::Copy, 10), 5.0));
+        f.input(Input::Progress(progress(Phase::Copy, 20), 6.0));
         assert!(matches!(
             f.step,
             Step::Running {
@@ -399,7 +500,7 @@ mod tests {
                 ..
             }
         ));
-        f.input(Input::Progress(progress("Convert", 0), 9.0));
+        f.input(Input::Progress(progress(Phase::Convert, 0), 9.0));
         assert!(matches!(
             f.step,
             Step::Running {
@@ -410,6 +511,23 @@ mod tests {
         assert_eq!(f.input(Input::Finished(Ok(Summary::default()))), None);
         assert!(matches!(f.step, Step::Done(_)));
         assert_eq!(f.input(Input::Confirm), Some(Effect::Finish));
+    }
+
+    #[test]
+    fn videos_can_only_be_chosen_when_found() {
+        let mut d = detected();
+        d.report = vec![Finding::Movies {
+            present: false,
+            bytes: 0,
+        }];
+        let mut f = Flow::new(Reason::Requested);
+        f.step = Step::Found {
+            dir: "G".into(),
+            detected: d,
+            movies: false,
+        };
+        f.input(Input::Toggle);
+        assert!(matches!(f.step, Step::Found { movies: false, .. }));
     }
 
     #[test]
@@ -490,21 +608,28 @@ mod tests {
         assert_eq!(clock(65.4), "1:05");
         assert_eq!(clock(3723.0), "1:02:03");
         let p = Progress {
-            step: "Copying".into(),
-            index: 0,
-            steps: 3,
+            phase: Phase::Extract,
             done: 2_000_000_000,
             total: 6_000_000_000,
+            detail: "3.05.00".into(),
         };
         assert_eq!(
             progress_text(&p, 60.0),
             [
-                "1/3  Copying".to_string(),
+                "Unpacking archives  3.05.00".to_string(),
                 "33%".into(),
                 "2.00 GB / 6.00 GB".into(),
                 "about 2:00 left".into()
             ]
         );
+        let songs = Progress {
+            phase: Phase::Validate,
+            done: 12,
+            total: 300,
+            detail: String::new(),
+        };
+        assert_eq!(progress_text(&songs, 1.0)[0], "Checking charts");
+        assert_eq!(progress_text(&songs, 1.0)[2], "12 / 300");
         let unknown = Progress {
             total: 0,
             done: 0,
@@ -515,23 +640,59 @@ mod tests {
     }
 
     #[test]
+    fn findings_are_worded_and_coloured() {
+        let (t, s) = finding_text(&Finding::MissingUpdates(vec!["3.07.01".into()]));
+        assert!(t.contains("3.07.01") && s == Severity::Warning);
+        let (t, s) = finding_text(&Finding::SizeMismatch {
+            archive: "D:/a/WACCA Reverse (3.01.00).7z".into(),
+            expected: 2_000_000_000,
+            actual: 1_000_000_000,
+        });
+        assert!(t.starts_with("WACCA Reverse (3.01.00).7z") && s == Severity::Bad);
+        let (t, _) = finding_text(&Finding::Movies {
+            present: true,
+            bytes: 21_369_353_312,
+        });
+        assert_eq!(t, "Background videos found (21.4 GB)");
+        assert_eq!(
+            finding_text(&Finding::UnsupportedVersion("x".into())).1,
+            Severity::Bad
+        );
+        assert!(movies_available(&detected()));
+    }
+
+    #[test]
     fn errors_map_to_screen_text() {
         let f = failure(&SetupError::SevenZipMissing);
         assert_eq!(f.title, "7-ZIP NOT FOUND");
-        let f = failure(&SetupError::NoSpace {
+        let f = failure(&SetupError::DiskSpace {
+            path: "D:/".into(),
             needed: 6_000_000_000,
             available: 1_000_000_000,
         });
         assert_eq!(f.title, "NOT ENOUGH DISK SPACE");
         assert!(f.lines[0].contains("6.00 GB") && f.lines[0].contains("1.00 GB"));
-        let f = failure(&SetupError::UnsupportedVersion("2.50.00".into()));
-        assert!(f.lines[0].contains("2.50.00"));
+        let f = failure(&SetupError::UnsupportedVersion("no song table".into()));
+        assert_eq!(f.title, "UNSUPPORTED VERSION");
+        assert!(f.lines[0].contains("no song table"));
         let f = failure(&SetupError::NothingFound("D:/x".into()));
         assert_eq!(f.title, "NO WACCA FILES FOUND");
-        let f = failure(&SetupError::Other("boom".into()));
+        assert_eq!(
+            failure(&SetupError::BaseArchiveMissing).title,
+            "BASE ARCHIVE MISSING"
+        );
+        let f = failure(&SetupError::Convert("boom".into()));
         assert_eq!(
             (f.title.as_str(), f.lines[0].as_str()),
-            ("SETUP FAILED", "boom")
+            ("SETUP FAILED", "conversion failed: boom")
         );
+        // No download locations anywhere on the screens.
+        for e in [
+            SetupError::SevenZipMissing,
+            SetupError::BaseArchiveMissing,
+            SetupError::NothingFound("x".into()),
+        ] {
+            assert!(!failure(&e).lines.iter().any(|l| l.contains("http")));
+        }
     }
 }

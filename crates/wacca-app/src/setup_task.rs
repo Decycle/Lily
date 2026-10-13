@@ -127,16 +127,16 @@ impl SetupRun {
                 log::info!("setup: {source:?} → {}", plan.dest.display());
                 spawn("setup-run", move || {
                     let progress_tx = tx.clone();
+                    // Returning `false` cancels the run.
                     let mut progress = |p| {
                         let at = clock.elapsed().as_secs_f64();
                         let _ = progress_tx.send(Input::Progress(p, at));
+                        !cancel.load(Ordering::Relaxed)
                     };
-                    let r = backend
-                        .run(&source, &plan, &cancel, &mut progress)
-                        .map_err(|e| {
-                            log::error!("setup: {e}");
-                            failure(&e)
-                        });
+                    let r = backend.run(&source, &plan, &mut progress).map_err(|e| {
+                        log::error!("setup: {e}");
+                        failure(&e)
+                    });
                     if let Ok(s) = &r {
                         log::info!("setup done: {s:?}");
                     }
