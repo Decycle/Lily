@@ -154,9 +154,13 @@ impl Renderer {
     }
 
     /// Load the playfield sprites from `ui_dir` (the `data/ui` export). Missing textures are
-    /// logged and drawn in flat colours.
+    /// logged and drawn in flat colours. Combo digits come from the SHINBI font next to it
+    /// (`data/fonts/SHINBI.otf`, 06 §3).
     pub fn load_sprites(&mut self, ui_dir: &Path) {
-        let (sheet, placed) = sprites::pack(sprites::load_sources(ui_dir));
+        let mut all = sprites::load_sources(ui_dir);
+        let font = ui_dir.with_file_name("fonts").join("SHINBI.otf");
+        all.extend(sprites::load_digits(&font));
+        let (sheet, placed) = sprites::pack(all);
         self.upload(placed);
         self.sheet = sheet;
     }

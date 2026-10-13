@@ -7,10 +7,6 @@ use wacca_chart::Difficulty;
 use wacca_game::catalog::{ChartEntry, Song};
 use wacca_game::grade::{Grade, Lamp};
 use wacca_game::save::SaveData;
-use wacca_render::layout::Rect;
-use wacca_render::text::Align;
-
-use crate::ui::{Action, HIGHLIGHT, PANEL, View, WHITE};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sort {
@@ -284,30 +280,6 @@ fn sorted_difficulties(song: &Song) -> Vec<Difficulty> {
     let mut have: Vec<_> = song.charts.iter().map(|c| c.difficulty).collect();
     have.sort();
     have
-}
-
-/// Back / confirm buttons at the bottom of `area`.
-pub fn buttons(v: &mut View, area: Rect, back: &str, confirm: &str) {
-    let u = area.w / 100.0;
-    let y = area.y + area.h - 16.0 * u;
-    for (n, text, action) in [(0.0, back, Action::Back), (1.0, confirm, Action::Confirm)] {
-        let r = Rect {
-            x: area.x + 4.0 * u + n * 48.0 * u,
-            y,
-            w: 44.0 * u,
-            h: 11.0 * u,
-        };
-        v.fill(r, if n > 0.0 { HIGHLIGHT } else { PANEL });
-        v.text_in(
-            text,
-            [r.x + r.w / 2.0, r.y + 3.0 * u],
-            5.0 * u,
-            WHITE,
-            Align::Center,
-            None,
-        );
-        v.button(r, action);
-    }
 }
 
 #[cfg(test)]

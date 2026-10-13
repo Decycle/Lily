@@ -14,9 +14,11 @@ use wacca_chart::{Arc as LaneArc, Chart, Difficulty, NoteBody};
 use wacca_game::grade::PlayResult;
 use wacca_game::input::InputFrame;
 use wacca_game::rules::{JudgeClass, JudgeEvent, Judgement};
+use wacca_render::effects::hold_arc_at;
 use wacca_render::layout::Rect;
-use wacca_render::style::FLASH_SECS;
-use wacca_render::{Flash, JudgeSprite, LiveState, SceneOptions, SpriteSheet, Vertex, build_scene};
+use wacca_render::{
+    Effects, JudgeSprite, LiveState, SceneOptions, SpriteSheet, Vertex, build_scene,
+};
 use wacca_video::{Frame, VideoPlayer};
 
 use crate::hitsound::{self, Cue, HoldStarts};
@@ -107,8 +109,14 @@ pub struct PlayState {
     /// Sustain voices of holds being held, by note index.
     hold_voices: HashMap<usize, Vec<VoiceId>>,
     contacts: Contacts,
-    /// Judgements of the last [`FLASH_SECS`] (hit flashes).
-    recent: Vec<JudgeEvent>,
+    /// Hit effects, key beams and hold glows, advanced in chart time.
+    effects: Effects,
+    /// Chart time the effects were last advanced to.
+    effects_at: f64,
+    /// Holds started and not yet judged (note indices): their sustain glow shows.
+    holding: Vec<usize>,
+    /// Chart time of the last combo change (count animation).
+    combo_at: f64,
     /// Chart time at which the play is over.
     end: f64,
     pub paused: bool,
@@ -160,7 +168,10 @@ impl PlayState {
             hits,
             hold_voices: HashMap::new(),
             contacts: Contacts::default(),
-            recent: Vec::new(),
+            effects: Effects::default(),
+            effects_at: f64::NEG_INFINITY,
+            holding: Vec::new(),
+            combo_at: f64::NEG_INFINITY,
             end,
             paused: false,
             video,
@@ -241,12 +252,42 @@ impl PlayState {
             let bonus = self.chart.notes[note].bonus;
             let voices = self.play_cue(hitsound::hold_cue(j), hitsound::gain(bonus));
             self.hold_voices.insert(note, voices);
+            // The hold head pops like a tap; its body glows until the hold is judged.
+            let arc = self.chart.notes[note].arc;
+            self.effects.hit(arc.lane, arc.width, judge_sprite(j));
+            self.holding.push(note);
         }
+        let combo = self.session.combo();
         let events = self.session.feed(frame);
-        self.recent
-            .retain(|e| frame.time - e.time < f64::from(FLASH_SECS));
-        self.recent.extend(events.iter().copied());
+        if self.session.combo() != combo {
+            self.combo_at = frame.time;
+        }
+        self.effects
+            .touch(frame.sensors.rings.iter().fold(0, |a, r| a | r));
+        for e in &events {
+            self.holding.retain(|&n| n != e.note);
+            if let Some(arc) = hit_arc(&self.chart, e) {
+                self.effects
+                    .hit(arc.lane, arc.width, judge_sprite(e.judgement));
+            }
+        }
         self.sound(&events);
+    }
+
+    /// Advance the effects to chart time `now` (at most 0.1 s per frame, never backwards).
+    fn advance_effects(&mut self, now: f64) {
+        let dt = (now - self.effects_at).clamp(0.0, 0.1);
+        self.effects_at = now;
+        let arcs = self
+            .holding
+            .iter()
+            .filter_map(|&n| match &self.chart.notes.get(n)?.body {
+                NoteBody::Hold { nodes } => hold_arc_at(nodes, now),
+                _ => None,
+            })
+            .collect();
+        self.effects.set_holds(arcs);
+        self.effects.update(dt as f32);
     }
 
     fn sound(&mut self, events: &[JudgeEvent]) {
@@ -294,6 +335,7 @@ impl PlayState {
             }
             None => self.feed_contacts(),
         }
+        self.advance_effects(now);
         if now < self.end {
             return None;
         }
@@ -318,17 +360,7 @@ impl PlayState {
     }
 
     pub fn scene(&self, sprites: &SpriteSheet) -> Vec<Vertex> {
-        let touched = if self.autoplay.is_some() {
-            [0; 4]
-        } else {
-            self.contacts.sensors().rings
-        };
         let now = self.now();
-        let flashes: Vec<Flash> = self
-            .recent
-            .iter()
-            .map(|e| flash(&self.chart, e, now))
-            .collect();
         let judgement = self
             .session
             .last_event()
@@ -339,20 +371,21 @@ impl PlayState {
             &SceneOptions {
                 note_speed: self.opts.note_speed,
                 movie: self.video_shown.is_some(),
+                // Guest default; the bar-line option is not in the options screen yet.
+                bar_lines: false,
             },
             &LiveState {
                 judged: self.session.judged(),
-                touched,
-                flashes: &flashes,
+                effects: Some(&self.effects),
                 judgement,
-                combo: self.session.combo(),
+                combo: (self.session.combo(), (now - self.combo_at) as f32),
             },
             sprites,
         )
     }
 
-    /// `judge_art`: the playfield draws the judgement word art (no text popup).
-    pub fn hud(&self, judge_art: bool) -> Hud {
+    /// `art`: the playfield draws the judgement word art and the combo counter (no text).
+    pub fn hud(&self, art: bool) -> Hud {
         Hud {
             score: self.session.score(),
             combo: self.session.combo(),
@@ -361,7 +394,7 @@ impl PlayState {
             note_speed: self.opts.note_speed,
             paused: self.paused,
             autoplay: self.autoplay.is_some(),
-            judge_art,
+            art,
         }
     }
 }
@@ -375,20 +408,12 @@ pub fn judge_sprite(j: Judgement) -> JudgeSprite {
     }
 }
 
-/// Hit flash for `e` at chart time `now` over the judged arc (a hold release flashes at the
-/// hold's end node).
-pub fn flash(chart: &Chart, e: &JudgeEvent, now: f64) -> Flash {
-    let note = chart.notes.get(e.note);
-    let arc = match (e.class, note.map(|n| &n.body)) {
-        (JudgeClass::HoldEnd, Some(NoteBody::Hold { nodes })) => nodes.last().map(|n| n.arc),
-        _ => note.map(|n| n.arc),
-    }
-    .unwrap_or(LaneArc { lane: 0, width: 0 });
-    Flash {
-        lane: arc.lane,
-        width: arc.width,
-        kind: judge_sprite(e.judgement),
-        age: (now - e.time) as f32,
+/// Arc where the hit effect for `e` shows: the note's arc. Holds have none: their head pops
+/// when it is pressed, and the E2 frames show nothing when a hold is judged at its end.
+pub fn hit_arc(chart: &Chart, e: &JudgeEvent) -> Option<LaneArc> {
+    match e.class {
+        JudgeClass::Hold | JudgeClass::HoldEnd => None,
+        _ => chart.notes.get(e.note).map(|n| n.arc),
     }
 }
 
@@ -399,7 +424,7 @@ mod tests {
     use wacca_chart::{BeatPos, Bonus, ChartHeader, HoldNode, Note};
 
     #[test]
-    fn flash_covers_the_judged_arc() {
+    fn hit_effects_cover_the_judged_arc() {
         let node = |lane| HoldNode {
             pos: BeatPos::default(),
             time: 0.0,
@@ -434,14 +459,15 @@ mod tests {
             offset: None,
             time: 1.0,
         };
-        let f = flash(&chart, &e(JudgeClass::Hold), 1.1);
-        assert_eq!((f.lane, f.width, f.kind), (10, 4, JudgeSprite::Great));
-        assert!((f.age - 0.1).abs() < 1e-6);
-        assert_eq!(flash(&chart, &e(JudgeClass::HoldEnd), 1.0).lane, 20);
-        // Unknown note index: an empty flash, not a panic.
+        // Holds show nothing when judged (their head popped when pressed).
+        assert_eq!(hit_arc(&chart, &e(JudgeClass::Hold)), None);
+        assert_eq!(hit_arc(&chart, &e(JudgeClass::HoldEnd)), None);
+        let a = hit_arc(&chart, &e(JudgeClass::Touch)).unwrap();
+        assert_eq!((a.lane, a.width), (10, 4));
+        // Unknown note index: no effect, not a panic.
         let mut bad = e(JudgeClass::Touch);
         bad.note = 7;
-        assert_eq!(flash(&chart, &bad, 1.0).width, 0);
+        assert_eq!(hit_arc(&chart, &bad), None);
     }
 
     #[test]

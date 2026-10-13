@@ -290,7 +290,34 @@ impl TextRenderer {
                 color,
             });
         }
+        self.batch(image, start);
+    }
+
+    /// Fill the convex polygon `points` (window pixels, either winding). `colors` holds one
+    /// colour per point (interpolated across the polygon) or a single flat colour.
+    pub fn fill_poly(&mut self, points: &[[f32; 2]], colors: &[Rgba]) {
+        let Some(&flat) = colors.first() else { return };
+        let color = |i: usize| colors.get(i).copied().unwrap_or(flat);
+        let [u, v] = self.white_uv;
+        let start = self.vertices.len() as u32;
+        for i in 1..points.len().saturating_sub(1) {
+            for k in [0, i, i + 1] {
+                self.vertices.push(OverlayVertex {
+                    pos: to_clip(points[k], self.size),
+                    uv: [u, v],
+                    color: color(k),
+                });
+            }
+        }
+        self.batch(None, start);
+    }
+
+    /// Extend the last batch with the vertices pushed since `start`, or open a new one.
+    fn batch(&mut self, image: Option<&str>, start: u32) {
         let end = self.vertices.len() as u32;
+        if end == start {
+            return;
+        }
         match self.batches.last_mut() {
             Some(b) if b.image.as_deref() == image => b.end = end,
             _ => self.batches.push(Batch {

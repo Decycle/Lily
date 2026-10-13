@@ -11,6 +11,7 @@ mod args;
 mod canvas;
 mod category;
 mod chrome;
+mod circle;
 mod gesture;
 mod hitsound;
 mod hud;

@@ -76,6 +76,7 @@ pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
         screen: Screen::Category,
         play: None,
         summary: None,
+        results_at: Instant::now(),
         last_spec: None,
         hits: None,
         preview: PreviewPlayer::default(),
@@ -208,6 +209,7 @@ impl Gfx {
                         self.text.fill(*rect, jacket::placeholder_color(key));
                     }
                 }
+                Item::Poly { points, colors } => self.text.fill_poly(points, colors),
             }
         }
         self.text.render(&mut encoder, &target);
@@ -217,7 +219,8 @@ impl Gfx {
     }
 }
 
-/// Loads each image (`<dir>/<key>.png`) once, on first use.
+/// Loads each image (`<dir>/<key>.png`) once, on first use. Jacket keys (`S03/uT_J_S03_30`)
+/// and UI texture keys (`UI/Textures/...`) never collide.
 struct Images<'a> {
     dir: PathBuf,
     tried: &'a mut HashSet<String>,
@@ -350,6 +353,8 @@ struct App {
     screen: Screen,
     play: Option<PlayState>,
     summary: Option<Summary>,
+    /// When the results screen appeared (its entry animation).
+    results_at: Instant,
     last_spec: Option<PlaySpec>,
     /// Decoded once, at the first play.
     hits: Option<HitSounds>,
@@ -397,7 +402,7 @@ impl App {
             Screen::Results => self
                 .summary
                 .as_ref()
-                .map(|s| results::view(s, area))
+                .map(|s| results::view(s, area, self.results_at.elapsed().as_secs_f32()))
                 .unwrap_or_default(),
             Screen::Play => {
                 let [w, h] = self.size();
@@ -407,12 +412,14 @@ impl App {
                     w,
                     h,
                 };
-                let judge_art = self.gfx.as_ref().is_some_and(|g| {
+                let art = self.gfx.as_ref().is_some_and(|g| {
                     let sprites = g.renderer.sprites();
-                    sprites.get(Sprite::Judge(JudgeSprite::Marvelous)).is_some()
+                    [Sprite::Judge(JudgeSprite::Marvelous), Sprite::Digit(0)]
+                        .into_iter()
+                        .all(|s| sprites.get(s).is_some())
                 });
                 self.play.as_ref().map_or_else(View::default, |p| {
-                    let hud = p.hud(judge_art);
+                    let hud = p.hud(art);
                     hud::view(&hud, &p.spec.title, window, playfield_viewport(w, h))
                 })
             }
@@ -535,6 +542,7 @@ impl App {
             new_best,
             not_saved,
         });
+        self.results_at = Instant::now();
         self.event(event_loop, Event::PlayOver);
     }
 

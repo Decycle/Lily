@@ -3,6 +3,7 @@
 //! Split: [`layout`], [`scene`] and the baking/packing in [`sprites`] are pure (unit-tested);
 //! [`Renderer`] only uploads the sprite atlas and draws the resulting triangle list.
 
+pub mod effects;
 pub mod layout;
 mod renderer;
 pub mod scene;
@@ -11,7 +12,8 @@ pub mod style;
 pub mod text;
 mod video;
 
+pub use effects::Effects;
 pub use layout::{Paint, Vertex};
 pub use renderer::Renderer;
-pub use scene::{Flash, LiveState, SceneOptions, build_scene};
+pub use scene::{LiveState, SceneOptions, build_scene};
 pub use sprites::{JudgeSprite, Sprite, SpriteSheet};

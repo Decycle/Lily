@@ -1,7 +1,6 @@
 //! Display names and colours of game values.
 
 use wacca_chart::Difficulty;
-use wacca_game::grade::{Grade, Lamp};
 use wacca_render::style::Rgba;
 
 pub fn difficulty(d: Difficulty) -> &'static str {
@@ -39,34 +38,6 @@ pub fn level(l: f32) -> String {
     format!("{whole:.0}{plus}")
 }
 
-pub fn grade(g: Grade) -> &'static str {
-    match g {
-        Grade::D => "D",
-        Grade::C => "C",
-        Grade::B => "B",
-        Grade::A => "A",
-        Grade::AA => "AA",
-        Grade::AAA => "AAA",
-        Grade::S => "S",
-        Grade::SPlus => "S+",
-        Grade::SS => "SS",
-        Grade::SsPlus => "SS+",
-        Grade::SSS => "SSS",
-        Grade::SssPlus => "SSS+",
-        Grade::Master => "MASTER",
-    }
-}
-
-pub fn lamp(l: Lamp) -> &'static str {
-    match l {
-        Lamp::Failed => "FAILED",
-        Lamp::Clear => "CLEAR",
-        Lamp::Missless => "MISSLESS",
-        Lamp::FullCombo => "FULL COMBO",
-        Lamp::AllMarvelous => "ALL MARVELOUS",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,10 +54,6 @@ mod tests {
     #[test]
     fn names_and_colours() {
         assert_eq!(difficulty(Difficulty::Expert), "EXPERT");
-        assert_eq!(
-            (grade(Grade::SssPlus), lamp(Lamp::FullCombo)),
-            ("SSS+", "FULL COMBO")
-        );
         // `uMPC_DifficultyColor` NormalFlagL (0.011, 0.202, 1.0) linear.
         assert_eq!(
             difficulty_color(Difficulty::Normal),

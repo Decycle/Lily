@@ -1,24 +1,25 @@
 //! The original menus' coordinate space and a small drawing helper on top of [`View`].
 //!
-//! The game lays its menus out in a 1080 × 1080 UMG canvas centred on the round screen (x right,
-//! y down, origin = circle centre; positions in `docs/research/06-visuals.md` widget dumps). Our
-//! window is landscape, so that square is scaled to the window height and centred — the same
-//! square the playfield uses ([`playfield_viewport`]) — and everything outside the circle is
-//! masked black like on the cabinet. The original 1080 × 1920 portrait frame only adds black
-//! bars above and below the circle, so nothing visible is lost.
+//! The game lays its menus out in 1080 × 1080 UMG panels centred on the round screen (x right,
+//! y down, origin = circle centre; positions in `docs/research/06-visuals.md` widget dumps).
+//! Letterboxing: like the results / options screens ([`crate::circle`]), the original 1080 × 1920
+//! portrait frame is scaled to the window height and centred (black bars left and right); the
+//! circle sits at (540, 900) of that frame. Everything outside the circle is masked black like
+//! on the cabinet.
 
 use std::f32::consts::PI;
 
-use wacca_render::layout::{Rect, playfield_viewport};
+use wacca_render::layout::{Rect, letterbox};
 use wacca_render::style::Rgba;
 use wacca_render::text::Align;
 
-use crate::ui::{Action, Item, View};
+use crate::circle;
+use crate::ui::{self, Action, Item, View};
 
 /// Side of the design canvas.
 pub const DESIGN: f32 = 1080.0;
-/// Radius of the visible circle (measured on real frames: 529 of 540).
-pub const CIRCLE_R: f32 = 529.0;
+/// Radius of the visible circle (measured on real frames).
+pub const CIRCLE_R: f32 = circle::RADIUS;
 /// Exported textures (`wacca-convert --export-ui UI/Textures`), relative to `data/ui`.
 pub const TEX: &str = "UI/Textures/";
 /// Whole texture.
@@ -50,13 +51,14 @@ pub struct Canvas {
 }
 
 impl Canvas {
-    /// The design square scaled into the largest centred square of a `w × h` window.
+    /// The portrait frame scaled to the height of a `w × h` window (see the module docs).
     pub fn fit(w: f32, h: f32) -> Self {
-        let r = playfield_viewport(w, h);
+        let area = letterbox(w, h);
+        let [cx, cy] = ui::canvas(area, circle::CENTER);
         Self {
-            cx: r.x + r.w / 2.0,
-            cy: r.y + r.h / 2.0,
-            scale: r.w / DESIGN,
+            cx,
+            cy,
+            scale: area.h / ui::CANVAS[1],
         }
     }
 
@@ -281,14 +283,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn canvas_maps_the_design_square_to_the_window_height() {
+    fn canvas_maps_the_portrait_frame_to_the_window_height() {
+        // 1920 × 1080: the 9:16 frame is 607.5 wide, scale 1080 / 1920.
         let c = Canvas::fit(1920.0, 1080.0);
-        assert_eq!(c.pt([0.0, 0.0]), [960.0, 540.0]);
-        assert_eq!(c.pt([-540.0, -540.0]), [420.0, 0.0]);
+        assert_eq!(c.scale, 0.5625);
+        assert_eq!(c.pt([0.0, 0.0]), [960.0, 506.25]);
+        assert_eq!(c.pt([-540.0, -900.0]), [656.25, 0.0]);
         let r = c.rect([100.0, 0.0], [200.0, 100.0], [1.0, 0.5]);
-        assert_eq!((r.x, r.y, r.w, r.h), (860.0, 490.0, 200.0, 100.0));
-        let half = Canvas::fit(960.0, 540.0);
-        assert_eq!(half.scale, 0.5);
+        assert_eq!((r.x, r.y, r.w, r.h), (903.75, 478.125, 112.5, 56.25));
     }
 
     #[test]
@@ -299,7 +301,12 @@ mod tests {
 
     #[test]
     fn mirrored_pair_meets_at_the_anchor() {
-        let mut p = Painter::new(Canvas::fit(1080.0, 1080.0));
+        let c = Canvas {
+            cx: 540.0,
+            cy: 540.0,
+            scale: 1.0,
+        };
+        let mut p = Painter::new(c);
         p.mirrored("x", [0.0, 0.0], [100.0, 50.0], 0.5, hex(0xffffff, 1.0));
         let v = p.finish();
         let rects: Vec<_> = v
