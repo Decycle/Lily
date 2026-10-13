@@ -35,10 +35,14 @@ use crate::perf::{Drift, Perf};
 use crate::play::{PlayOptions, PlaySpec, PlayState, VideoSetup, load_chart, movie_path};
 use crate::results::Summary;
 use crate::screen::{self, Event, Next, Screen};
+use crate::select::SongList;
+use crate::setup_backend::Backend;
+use crate::setup_flow::{Input, Reason, Step};
+use crate::setup_task::{Exit, SetupRun};
 use crate::ui::{Action, Item, View, WHITE};
 use crate::{
     calibrate, category, hud, jacket, mode, options, play, preview, record, results, select_ui,
-    title, wipe,
+    setup_task, setup_ui, title, wipe,
 };
 
 /// Contact id used for the mouse (touch ids come from the OS).
@@ -63,12 +67,23 @@ fn gfx_err(e: impl std::fmt::Display) -> ShellError {
     ShellError::Graphics(e.to_string())
 }
 
+/// How setup opens at start.
+#[derive(Debug)]
+pub struct SetupStart {
+    pub reason: Reason,
+    /// Inspect this folder right away (`--setup-source`).
+    pub source: Option<PathBuf>,
+    /// And start (`--setup-start`).
+    pub start: bool,
+}
+
 /// Everything the game needs, prepared by `main`.
 #[derive(Debug)]
 pub struct Setup {
     pub assets: PathBuf,
     pub data: PathBuf,
-    pub bgm: BgmBank,
+    /// `None` until the game files are set up.
+    pub bgm: Option<BgmBank>,
     /// The one output device, opened for the app's lifetime (preview and play share it).
     pub player: Arc<Player>,
     pub se: Option<SeBank>,
@@ -79,6 +94,11 @@ pub struct Setup {
     pub start: Option<PlaySpec>,
     /// Open this menu screen instead of the title (`--screen`).
     pub screen: Option<Screen>,
+    /// Open setup first (game files missing, or `--screen setup`).
+    pub setup: Option<SetupStart>,
+    /// Where setup writes `assets/` and `data/`.
+    pub setup_root: PathBuf,
+    pub backend: Arc<dyn Backend>,
     pub windowed: bool,
     /// External decoder for background movies (`None` = no movies).
     pub ffmpeg: Option<PathBuf>,
@@ -121,6 +141,7 @@ pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
         notes: Vec::new(),
         stage: Stage::default(),
         monitor: None,
+        setup: None,
     };
     EventLoop::new()?.run_app(&mut app)?;
     app.error.map_or(Ok(()), Err)
@@ -484,7 +505,8 @@ impl PreviewPlayer {
             }
         };
         let player = &s.player;
-        player.load(Box::new(s.bgm.open_cue(&cue)?))?;
+        let bgm = s.bgm.as_ref().ok_or("no BGM bank")?;
+        player.load(Box::new(bgm.open_cue(&cue)?))?;
         player.seek(w.begin)?;
         player.set_volume(0.0);
         player.play();
@@ -566,6 +588,8 @@ struct App {
     stage: Stage,
     /// The final check's live monitor (charts without a movie).
     monitor: Option<options::Monitor>,
+    /// First-run setup while [`Screen::Setup`] shows.
+    setup: Option<SetupRun>,
 }
 
 impl App {
@@ -671,6 +695,9 @@ impl App {
                 let pos = self.s.player.position();
                 calibrate::view(&m.calibration, &m.settings, pos, canvas)
             }
+            Screen::Setup => self.setup.as_ref().map_or_else(View::default, |r| {
+                setup_ui::view(canvas, &r.flow, r.now(), since)
+            }),
             Screen::Results => self
                 .summary
                 .as_ref()
@@ -722,6 +749,9 @@ impl App {
                 }
                 if s == Screen::Calibrate {
                     self.start_calibration();
+                }
+                if s == Screen::Setup {
+                    self.open_setup(Reason::Requested);
                 }
                 if wipe::applies(self.screen, s) {
                     self.wipe = Some((self.screen, Instant::now()));
@@ -781,7 +811,12 @@ impl App {
         let player = Arc::clone(&self.s.player);
         let t = Instant::now();
         self.drift.reset();
-        match PlayState::new(spec, opts, player, &self.s.bgm, hits, video).and_then(|mut p| {
+        let Some(bgm) = self.s.bgm.as_ref() else {
+            log::error!("cannot start play: no BGM bank");
+            self.screen = Screen::SongSelect;
+            return;
+        };
+        match PlayState::new(spec, opts, player, bgm, hits, video).and_then(|mut p| {
             p.start()?;
             Ok(p)
         }) {
@@ -909,8 +944,95 @@ impl App {
         }
     }
 
+    /// Shows setup with a fresh flow.
+    fn open_setup(&mut self, reason: Reason) {
+        self.preview.stop(&self.s.player);
+        let owner = self.gfx.as_ref().map_or(0, |g| hwnd(&g.window));
+        self.setup = Some(SetupRun::new(
+            reason,
+            Arc::clone(&self.s.backend),
+            self.s.setup_root.clone(),
+            owner,
+        ));
+        self.screen = Screen::Setup;
+        self.entered = Instant::now();
+    }
+
+    /// Setup ended.
+    fn setup_exit(&mut self, event_loop: &ActiveEventLoop, exit: Exit) {
+        match exit {
+            Exit::Quit => event_loop.exit(),
+            Exit::Left => {
+                self.setup = None;
+                self.event(event_loop, Event::SetupDone);
+            }
+            Exit::Finished => match self.reload() {
+                Ok(()) => {
+                    self.setup = None;
+                    self.event(event_loop, Event::SetupDone);
+                }
+                Err(missing) => {
+                    if let Some(r) = &mut self.setup {
+                        r.flow.step = Step::Failed {
+                            failure: setup_task::still_missing(&missing),
+                            dir: None,
+                        };
+                    }
+                }
+            },
+        }
+    }
+
+    /// Loads the game from the files setup wrote; `Err`: what is still missing.
+    fn reload(&mut self) -> Result<(), Vec<String>> {
+        let root = &self.s.setup_root;
+        let (assets, data) = (root.join("assets"), root.join("data"));
+        let game = crate::load_game(&assets, &data).map_err(|e| vec![e.to_string()])?;
+        let missing = crate::missing_parts(&assets, &data, &game);
+        if !missing.is_empty() {
+            return Err(missing);
+        }
+        if let Some(g) = self.gfx.take() {
+            let window = Arc::clone(&g.window);
+            drop(g);
+            match Gfx::new(window, game.fonts, &data.join("ui")) {
+                Ok(g) => self.gfx = Some(g),
+                Err(e) => return Err(vec![e.to_string()]),
+            }
+        }
+        log::info!("game files ready: {} songs", game.songs.len());
+        self.s.menu.list = SongList::new(game.songs);
+        self.s.menu.category = 0;
+        self.s.bgm = game.bgm;
+        self.s.se = game.se;
+        self.hits = None;
+        self.preview = PreviewPlayer::default();
+        self.images = Images::new(data.clone());
+        (self.s.assets, self.s.data) = (assets, data);
+        Ok(())
+    }
+
+    /// A menu action on the setup screen.
+    fn setup_action(&mut self, event_loop: &ActiveEventLoop, a: Action) {
+        let Some(run) = &mut self.setup else { return };
+        let found = matches!(run.flow.step, Step::Found { .. });
+        let input = match a {
+            Action::Confirm => Input::Confirm,
+            Action::Back => Input::Back,
+            Action::Left | Action::Right | Action::Up | Action::Down if found => Input::Toggle,
+            _ => return,
+        };
+        if let Some(exit) = run.input(input) {
+            self.setup_exit(event_loop, exit);
+        }
+    }
+
     fn action(&mut self, event_loop: &ActiveEventLoop, a: Action) {
         if self.wipe.is_some() {
+            return;
+        }
+        if self.screen == Screen::Setup {
+            self.setup_action(event_loop, a);
             return;
         }
         let (screen, before) = (self.screen, self.wheel_pos());
@@ -979,6 +1101,7 @@ impl App {
             KeyCode::PageDown => Action::Genre(1),
             KeyCode::KeyF => Action::ToggleFilter,
             KeyCode::KeyR => Action::Retry,
+            KeyCode::F2 => Action::Setup,
             _ => return,
         };
         self.action(event_loop, action);
@@ -1084,6 +1207,11 @@ impl App {
             Screen::Title | Screen::ModeSelect | Screen::Category => {
                 self.preview.stop(&self.s.player)
             }
+            Screen::Setup => {
+                if let Some(exit) = self.setup.as_mut().and_then(SetupRun::poll) {
+                    self.setup_exit(event_loop, exit);
+                }
+            }
             Screen::Results | Screen::Calibrate => {}
         }
         let dt = self
@@ -1187,6 +1315,18 @@ impl App {
             ms(t.elapsed()),
             ms(self.s.started.elapsed())
         );
+        if let Some(start) = self.s.setup.take() {
+            self.open_setup(start.reason);
+            if let Some(dir) = start.source
+                && let Some(exit) = self
+                    .setup
+                    .as_mut()
+                    .and_then(|r| r.preselect(dir, start.start))
+            {
+                self.setup_exit(event_loop, exit);
+            }
+            return Ok(());
+        }
         if let Some(s) = self.s.screen.take() {
             if s == Screen::Calibrate {
                 self.start_calibration();
@@ -1210,6 +1350,15 @@ impl App {
             self.start_play(spec);
         }
         Ok(())
+    }
+}
+
+/// The window's `HWND` (0 if unavailable), to own the folder dialog.
+fn hwnd(window: &Window) -> isize {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    match window.window_handle().map(|h| h.as_raw()) {
+        Ok(RawWindowHandle::Win32(h)) => h.hwnd.get(),
+        _ => 0,
     }
 }
 

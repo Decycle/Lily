@@ -1,6 +1,8 @@
 //! WACCA_slim: category → song select (with difficulty) → options → play → results, with save data.
 //!
-//! `wacca-app --assets <dir> [--data data] [--autoplay] [--windowed] [--chart <mer>]` (see [`args::USAGE`]).
+//! `wacca-app [--assets <dir>] [--data data] [--autoplay] [--windowed] [--chart <mer>]` (see
+//! [`args::USAGE`]). Without `--assets` the game files are `assets/` and `data/` next to the
+//! executable ([`paths`]); when they are missing, first-run setup opens ([`setup_flow`]).
 //! Menus: Left/Right wheel, Up/Down or D difficulty, PageUp/PageDown genre, Enter / Esc, tap, drag
 //! or mouse wheel to scroll, S sort, F filter.
 //! Play: Esc give up, Space pause, Up/Down note speed. F11 / Alt+Enter toggles fullscreen.
@@ -18,6 +20,7 @@ mod canvas;
 mod category;
 mod chrome;
 mod circle;
+mod folder_dialog;
 mod gesture;
 mod hitsound;
 mod hud;
@@ -27,6 +30,7 @@ mod menu;
 mod mode;
 mod options;
 mod pacer;
+mod paths;
 mod perf;
 mod play;
 mod preview;
@@ -36,6 +40,10 @@ mod screen;
 mod select;
 mod select_ui;
 mod session;
+mod setup_backend;
+mod setup_flow;
+mod setup_task;
+mod setup_ui;
 mod shell;
 mod title;
 mod touch_mapping;
@@ -53,10 +61,12 @@ use wacca_render::text::{Face, Fonts, TextError};
 
 use crate::args::{Args, ArgsError};
 use crate::menu::Menu;
+use crate::paths::Paths;
 use crate::play::PlaySpec;
 use crate::record::RecordError;
 use crate::select::SongList;
-use crate::shell::{Setup, ShellError};
+use crate::setup_flow::Reason;
+use crate::shell::{Setup, SetupStart, ShellError};
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
@@ -158,8 +168,13 @@ fn settings(saved: &Settings, args: &Args) -> Settings {
 }
 
 /// `--chart`: what to play straight away.
-fn start_spec(args: &Args, chart: &Path, songs: &[Song]) -> Result<PlaySpec, ArgsError> {
-    let r = args::resolve_chart(args, chart)?;
+fn start_spec(
+    args: &Args,
+    assets: &Path,
+    chart: &Path,
+    songs: &[Song],
+) -> Result<PlaySpec, ArgsError> {
+    let r = args::resolve_chart(args, assets, chart)?;
     let song = r
         .folder
         .as_deref()
@@ -175,65 +190,42 @@ fn start_spec(args: &Args, chart: &Path, songs: &[Song]) -> Result<PlaySpec, Arg
             record::default_norma(r.difficulty.unwrap_or(wacca_chart::Difficulty::Expert))
         }),
         chart_path: r.path,
-        movie: play::movie_path(&args.assets, entry.and_then(|e| e.movie.as_deref())),
+        movie: play::movie_path(assets, entry.and_then(|e| e.movie.as_deref())),
     })
 }
 
-fn run(args: &Args, started: std::time::Instant) -> Result<(), Error> {
-    let songs = record::load_songs(&args.data.join("songs.json"))?.unwrap_or_else(|| {
-        log::warn!(
-            "{} missing; run wacca-convert (song select will be empty)",
-            args.data.join("songs.json").display()
-        );
-        Vec::new()
-    });
-    let start = args
-        .chart
-        .as_deref()
-        .map(|c| start_spec(args, c, &songs))
-        .transpose()?;
+/// Game content from `assets` + `data`; what is missing is logged and left out (the caller
+/// checks [`missing_parts`]).
+#[derive(Debug)]
+pub struct Game {
+    pub songs: Vec<Song>,
+    pub bgm: Option<BgmBank>,
+    pub se: Option<SeBank>,
+    pub fonts: Fonts,
+}
 
-    let mut save_path = args.save.clone().or_else(save::default_path);
-    let save = match &save_path {
-        Some(p) => save::load(p).unwrap_or_else(|e| {
-            // Do not overwrite a save we could not read.
-            log::error!("{e}; results will not be saved");
-            save_path = None;
-            SaveData::default()
-        }),
-        None => {
-            log::warn!("%APPDATA% not set; results will not be saved");
-            SaveData::default()
-        }
-    };
-    let menu = Menu {
-        list: SongList::new(songs),
-        category: 0,
-        options: options::OptionsMenu::default(),
-        settings: settings(&save.settings, args),
-        autoplay: args.autoplay,
-        calibration: Default::default(),
-    };
-    let bgm = BgmBank::open(args.assets.join("Sound").join("Bgm"))?;
-    let se = SeBank::open(args.assets.join("Sound").join("Se"))
-        .map_err(|e| log::warn!("SE bank: {e}; no hit sounds"))
-        .ok();
-    let ffmpeg = match wacca_video::find_ffmpeg_from_env() {
-        Ok(p) => {
-            log::info!("ffmpeg: {}", p.display());
-            Some(p)
+/// Loads [`Game`]; only finding no font at all (not even a Windows one) is an error.
+pub fn load_game(assets: &Path, data: &Path) -> Result<Game, TextError> {
+    let list = data.join("songs.json");
+    let songs = match record::load_songs(&list) {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            log::warn!("{} missing (song select will be empty)", list.display());
+            Vec::new()
         }
         Err(e) => {
-            log::warn!("{e}; no background movies");
-            None
+            log::error!("{e}");
+            Vec::new()
         }
     };
-    let fonts = Fonts::load(&pick_fonts(
-        font_candidates(&args.data, &args.assets),
-        Path::exists,
-    ))?;
-    let fonts = match pick_fonts(numeral_candidates(&args.data, &args.assets), Path::exists).first()
-    {
+    let bgm = BgmBank::open(assets.join("Sound").join("Bgm"))
+        .map_err(|e| log::warn!("BGM bank: {e}"))
+        .ok();
+    let se = SeBank::open(assets.join("Sound").join("Se"))
+        .map_err(|e| log::warn!("SE bank: {e}; no hit sounds"))
+        .ok();
+    let fonts = Fonts::load(&pick_fonts(font_candidates(data, assets), Path::exists))?;
+    let fonts = match pick_fonts(numeral_candidates(data, assets), Path::exists).first() {
         Some(p) => fonts.with_numerals(p, NUMERAL_FACE),
         None => fonts,
     };
@@ -245,30 +237,132 @@ fn run(args: &Args, started: std::time::Instant) -> Result<(), Error> {
     ] {
         let ufont = Path::new(file).with_extension("ufont");
         let paths = [
-            args.data.join("fonts").join(file),
-            args.assets.join("UI").join("Font").join(ufont),
+            data.join("fonts").join(file),
+            assets.join("UI").join("Font").join(ufont),
         ];
         if let Some(p) = paths.iter().find(|p| p.exists()) {
             fonts = fonts.with_face(face, p, 0);
         }
     }
+    Ok(Game {
+        songs,
+        bgm,
+        se,
+        fonts,
+    })
+}
+
+/// What keeps the game from starting (empty = playable).
+pub fn missing_parts(assets: &Path, data: &Path, game: &Game) -> Vec<String> {
+    let mut m = paths::missing(assets, data, Path::exists);
+    if m.is_empty() && game.bgm.is_none() {
+        m.push("game audio (the BGM bank cannot be read)".into());
+    }
+    m
+}
+
+fn resolve_paths(args: &Args) -> Paths {
+    let exe = paths::exe_dir();
+    let appdata = std::env::var_os("APPDATA").map(PathBuf::from);
+    paths::resolve(&paths::Inputs {
+        assets: args.assets.as_deref(),
+        data: args.data.as_deref(),
+        save: args.save.as_deref(),
+        portable_flag: args.portable,
+        exe_dir: exe.as_ref().map(|(d, _)| d.as_path()),
+        marker: exe.as_ref().is_some_and(|(_, m)| *m),
+        appdata: appdata.as_deref(),
+    })
+}
+
+fn run(args: &Args, started: std::time::Instant) -> Result<(), Error> {
+    let paths = resolve_paths(args);
+    log::info!(
+        "assets {}, data {}, save {}",
+        paths.assets.display(),
+        paths.data.display(),
+        paths
+            .save
+            .as_ref()
+            .map_or("none".into(), |p| p.display().to_string())
+    );
+    let game = load_game(&paths.assets, &paths.data)?;
+    let missing = missing_parts(&paths.assets, &paths.data, &game);
+    let setup = if !missing.is_empty() {
+        log::warn!("game files missing ({}); opening setup", missing.join(", "));
+        Some(Reason::Missing(missing))
+    } else if args.screen == Some(screen::Screen::Setup) || args.setup_source.is_some() {
+        Some(Reason::Requested)
+    } else {
+        None
+    }
+    .map(|reason| SetupStart {
+        reason,
+        source: args.setup_source.clone(),
+        start: args.setup_start,
+    });
+    let start = args
+        .chart
+        .as_deref()
+        .filter(|_| setup.is_none())
+        .map(|c| start_spec(args, &paths.assets, c, &game.songs))
+        .transpose()?;
+
+    let mut save_path = paths.save.clone();
+    let save = match &save_path {
+        Some(p) => save::load(p).unwrap_or_else(|e| {
+            // Do not overwrite a save we could not read.
+            log::error!("{e}; results will not be saved");
+            save_path = None;
+            SaveData::default()
+        }),
+        None => {
+            log::warn!("no save location (%APPDATA% not set); results will not be saved");
+            SaveData::default()
+        }
+    };
+    let menu = Menu {
+        list: SongList::new(game.songs),
+        category: 0,
+        options: options::OptionsMenu::default(),
+        settings: settings(&save.settings, args),
+        autoplay: args.autoplay,
+        calibration: Default::default(),
+    };
+    // A portable folder may carry its own `ffmpeg.exe` next to the executable.
+    let local_ffmpeg = paths::exe_dir()
+        .map(|(d, _)| d.join("ffmpeg.exe"))
+        .filter(|p| p.is_file() && std::env::var_os("WACCA_FFMPEG").is_none());
+    let ffmpeg = match local_ffmpeg.map_or_else(wacca_video::find_ffmpeg_from_env, Ok) {
+        Ok(p) => {
+            log::info!("ffmpeg: {}", p.display());
+            Some(p)
+        }
+        Err(e) => {
+            log::warn!("{e}; no background movies");
+            None
+        }
+    };
     shell::run(
         Setup {
-            assets: args.assets.clone(),
-            data: args.data.clone(),
-            bgm,
+            assets: paths.assets.clone(),
+            data: paths.data.clone(),
+            bgm: game.bgm,
             player: Arc::new(Player::new()?),
-            se,
+            se: game.se,
             save_path,
             save,
             menu,
             start,
-            screen: args.screen,
+            screen: args.screen.filter(|s| *s != screen::Screen::Setup),
+            setup,
+            setup_root: paths.setup_root.clone(),
+            backend: Arc::new(setup_backend::Stub),
             windowed: args.windowed,
             ffmpeg,
             started,
         },
-        fonts,
+        game.fonts,
     )?;
     Ok(())
 }
@@ -311,7 +405,7 @@ mod tests {
                 .map(String::from),
         )
         .unwrap();
-        let s = start_spec(&a, a.chart.as_deref().unwrap(), &[]).unwrap();
+        let s = start_spec(&a, Path::new("A"), a.chart.as_deref().unwrap(), &[]).unwrap();
         assert_eq!((s.title.as_str(), s.song_id), ("S00-003", None));
         assert_eq!(
             s.norma,

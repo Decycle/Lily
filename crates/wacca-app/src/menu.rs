@@ -62,6 +62,7 @@ impl Menu {
                 return Some(Event::Confirm);
             }
             (Screen::Results, Retry) => return Some(Event::Retry),
+            (Screen::Title, Setup) => return Some(Event::Setup),
             (Screen::Category, Confirm) => {
                 let empty = list.genres().is_empty();
                 self.move_category(0, true);

@@ -1,6 +1,8 @@
 //! The core loop as a state machine, following the original:
 //! Title → ModeSelect → Category (genre folder) → SongSelect (song + difficulty) → Options → Play
-//! → Results → SongSelect. The timing check opens from (and returns to) Options.
+//! → Results → SongSelect. The timing check opens from (and returns to) Options. First-run setup
+//! ([`crate::setup_flow`], its own steps) opens instead of the title when game files are missing,
+//! or from the title, and ends on the title.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
@@ -13,6 +15,8 @@ pub enum Screen {
     Calibrate,
     Play,
     Results,
+    /// First-run setup.
+    Setup,
 }
 
 /// Things that move between screens.
@@ -25,6 +29,10 @@ pub enum Event {
     Retry,
     /// Open the timing check.
     Calibrate,
+    /// Open setup from the title.
+    Setup,
+    /// Setup finished or was left.
+    SetupDone,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,6 +61,8 @@ pub fn next(screen: Screen, event: Event) -> Next {
         (Play, PlayOver) => Next::Go(Results),
         (Results, Confirm | Back) => Next::Go(SongSelect),
         (Results, Retry) => Next::Go(Play),
+        (Title, Event::Setup) => Next::Go(Screen::Setup),
+        (Screen::Setup, SetupDone) => Next::Go(Title),
         _ => Next::Stay,
     }
 }
@@ -67,7 +77,7 @@ pub fn time_limit(screen: Screen) -> Option<f32> {
         Screen::Category | Screen::SongSelect => Some(99.0),
         Screen::Options => Some(25.0),
         Screen::Results => Some(15.0),
-        Screen::Title | Screen::Calibrate | Screen::Play => None,
+        Screen::Title | Screen::Calibrate | Screen::Play | Screen::Setup => None,
     }
 }
 
@@ -150,6 +160,19 @@ mod tests {
         assert_eq!(next(c, Event::Confirm), Next::Go(Screen::Options));
         assert_eq!(next(c, Event::Back), Next::Go(Screen::Options));
         assert_eq!(next(Screen::SongSelect, Event::Calibrate), Next::Stay);
+    }
+
+    #[test]
+    fn setup_opens_from_and_returns_to_the_title() {
+        assert_eq!(next(Screen::Title, Event::Setup), Next::Go(Screen::Setup));
+        assert_eq!(
+            next(Screen::Setup, Event::SetupDone),
+            Next::Go(Screen::Title)
+        );
+        // Its own steps handle Confirm / Back.
+        assert_eq!(next(Screen::Setup, Event::Back), Next::Stay);
+        assert_eq!(next(Screen::ModeSelect, Event::Setup), Next::Stay);
+        assert_eq!(time_limit(Screen::Setup), None);
     }
 
     #[test]

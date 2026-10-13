@@ -93,6 +93,15 @@ pub fn view(c: Canvas, t: f32) -> View {
         p.fill([0.0, 0.0], [1080.0, 1080.0], MID, hex(0x4a10d0, a));
     }
     p.button([0.0, 0.0], [1080.0, 1080.0], Action::Confirm);
+    // Not in the original: re-run first-run setup (add videos, repair).
+    p.text(
+        "SETUP",
+        [0.0, -470.0],
+        14.0,
+        hex(0xffffff, 0.7),
+        Align::Center,
+    );
+    p.button([0.0, -470.0], [220.0, 70.0], Action::Setup);
     p.circle_mask();
     p.finish()
 }
