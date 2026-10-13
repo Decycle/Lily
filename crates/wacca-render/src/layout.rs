@@ -179,7 +179,7 @@ pub fn polar(radius: f32, lane: f32) -> [f32; 2] {
 }
 
 /// Quad `p` (corners in order) with texture coordinates `(s along, t across)` per corner.
-fn push_quad(out: &mut Vec<Vertex>, p: [[f32; 2]; 4], st: [[f32; 2]; 4], paint: &Paint) {
+pub(crate) fn push_quad(out: &mut Vec<Vertex>, p: [[f32; 2]; 4], st: [[f32; 2]; 4], paint: &Paint) {
     for i in [0, 1, 2, 0, 2, 3] {
         out.push(paint.vertex(p[i], paint.uv_at(st[i][0], st[i][1])));
     }

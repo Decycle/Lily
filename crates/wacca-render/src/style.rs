@@ -46,16 +46,24 @@ pub const TITLE_COLOR: Rgba = [1.0, 0.55, 0.85, 1.0];
 /// Longest title arc (degrees); longer titles are squeezed.
 pub const TITLE_MAX_DEG: f32 = 26.0;
 
-/// Clear gauge: horizontal bar above the combo (E2: y 93 px above the centre, 275 px wide,
-/// ~5 px tall), dark track, pink fill from the left, a marker at the norma line.
-pub const GAUGE_Y: f32 = 0.32;
-pub const GAUGE_HALF_W: f32 = 0.471;
-pub const GAUGE_HALF_H: f32 = 0.008;
-pub const GAUGE_TRACK: Rgba = [0.30, 0.25, 0.36, 0.9];
-pub const GAUGE_FILL: Rgba = [1.0, 0.45, 0.80, 1.0];
-pub const GAUGE_CORE: Rgba = [1.0, 0.85, 0.95, 1.0];
-pub const GAUGE_MARK: Rgba = [0.90, 0.10, 0.60, 1.0];
-pub const GAUGE_MARK_HALF: f32 = 0.009;
+/// Clear gauge above the combo, opaque (E3 Fragile frame at 34.4 s, per-pixel, 675 px view):
+/// rows 243–247 (centre 92 px above the view centre), x 198.5–477; 1 px border rows
+/// (141, 63, 159) over the track, (154, 45, 161) over the fill; interior track (42, 45, 57),
+/// fill (255, 149, 218); a 2 px norma mark (251, 2, 168) followed by a gradient from
+/// (213, 55, 141) to the track over 18 px; slanted end caps (131, 0, 160), 5 px.
+pub const GAUGE_Y: f32 = 92.0 / 291.8;
+pub const GAUGE_HALF_W: f32 = 139.25 / 291.8;
+pub const GAUGE_HALF_H: f32 = 2.5 / 291.8;
+/// Half height of the interior (between the border rows).
+pub const GAUGE_INNER_HALF_H: f32 = 1.5 / 291.8;
+pub const GAUGE_BORDER: Rgba = [0.553, 0.247, 0.624, 1.0];
+pub const GAUGE_TRACK: Rgba = [0.165, 0.176, 0.224, 1.0];
+pub const GAUGE_FILL_BORDER: Rgba = [0.604, 0.176, 0.631, 1.0];
+pub const GAUGE_FILL: Rgba = [1.0, 0.584, 0.855, 1.0];
+pub const GAUGE_MARK: Rgba = [0.984, 0.008, 0.659, 1.0];
+pub const GAUGE_MARK_W: f32 = 2.0 / 291.8;
+pub const GAUGE_NORMA_FADE: (Rgba, f32) = ([0.835, 0.216, 0.553, 1.0], 18.0 / 291.8);
+pub const GAUGE_CAP: (Rgba, f32) = ([0.514, 0.0, 0.627, 1.0], 5.0 / 291.8);
 
 /// Touch guide (option, off by default): faint depth-ring circles and pressed sensors.
 pub const TOUCH_GUIDE_RING: Rgba = [0.80, 0.85, 1.0, 0.18];

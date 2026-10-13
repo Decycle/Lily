@@ -292,23 +292,73 @@ fn push_touch_guide(out: &mut Vec<Vertex>, pressed: &[u64; style::SENSOR_DEPTHS]
 /// Clear gauge bar above the combo: dark track, pink fill from the left with a light core,
 /// diamond end marks and a mark at the norma line.
 fn push_gauge(out: &mut Vec<Vertex>, (fill, norma): (f32, f32)) {
-    let (hw, hh, y) = (style::GAUGE_HALF_W, style::GAUGE_HALF_H, style::GAUGE_Y);
-    push_rect(out, [0.0, y], [hw, hh], &Paint::flat(style::GAUGE_TRACK));
-    let f = fill.clamp(0.0, 1.0) * hw;
+    let (hw, hh, ih, y) = (
+        style::GAUGE_HALF_W,
+        style::GAUGE_HALF_H,
+        style::GAUGE_INNER_HALF_H,
+        style::GAUGE_Y,
+    );
+    // Horizontal span `x0..x1` of the bar, full height (border colour) and interior.
+    let span =
+        |out: &mut Vec<Vertex>, x0: f32, x1: f32, border: style::Rgba, inner: style::Rgba| {
+            let (c, w) = ([(x0 + x1) / 2.0, y], (x1 - x0) / 2.0);
+            push_rect(out, c, [w, hh], &Paint::flat(border));
+            push_rect(out, c, [w, ih], &Paint::flat(inner));
+        };
+    span(out, -hw, hw, style::GAUGE_BORDER, style::GAUGE_TRACK);
+    let x_norma = (norma.clamp(0.0, 1.0) * 2.0 - 1.0) * hw;
+    // The norma mark and its fade towards the track (in steps).
+    let (fade, len) = style::GAUGE_NORMA_FADE;
+    const STEPS: usize = 6;
+    let x0 = x_norma + style::GAUGE_MARK_W;
+    for k in 0..STEPS {
+        let t = (k as f32 + 0.5) / STEPS as f32;
+        let c: style::Rgba =
+            std::array::from_fn(|i| fade[i] + (style::GAUGE_TRACK[i] - fade[i]) * t);
+        let a = x0 + len * k as f32 / STEPS as f32;
+        let b = (x0 + len * (k + 1) as f32 / STEPS as f32).min(hw);
+        if a < b {
+            push_rect(
+                out,
+                [(a + b) / 2.0, y],
+                [(b - a) / 2.0, ih],
+                &Paint::flat(c),
+            );
+        }
+    }
+    let f = fill.clamp(0.0, 1.0) * 2.0 * hw;
     if f > 0.0 {
-        push_rect(out, [f - hw, y], [f, hh], &Paint::flat(style::GAUGE_FILL));
-        push_rect(
+        span(
             out,
-            [f - hw, y],
-            [f, hh * 0.3],
-            &Paint::flat(style::GAUGE_CORE),
+            -hw,
+            f - hw,
+            style::GAUGE_FILL_BORDER,
+            style::GAUGE_FILL,
         );
     }
-    let m = style::GAUGE_MARK_HALF;
-    let x_norma = (norma.clamp(0.0, 1.0) * 2.0 - 1.0) * hw;
-    for x in [-hw, hw, x_norma] {
-        let paint = Paint::flat(style::GAUGE_MARK);
-        push_oriented_rect(out, [x, y], [m, m], [1.0, 1.0], &paint);
+    let m = style::GAUGE_MARK_W / 2.0;
+    push_rect(
+        out,
+        [x_norma + m, y],
+        [m, ih],
+        &Paint::flat(style::GAUGE_MARK),
+    );
+    // Slanted end caps (parallelograms leaning right).
+    let (cap, w) = style::GAUGE_CAP;
+    for (x, dir) in [(-hw, 1.0), (hw, -1.0)] {
+        let paint = Paint::flat(cap);
+        let lean = 0.6 * w;
+        crate::layout::push_quad(
+            out,
+            [
+                [x, y - hh],
+                [x + dir * w, y - hh],
+                [x + dir * w + lean, y + hh],
+                [x + lean, y + hh],
+            ],
+            [[0.0; 2]; 4],
+            &paint,
+        );
     }
 }
 
@@ -698,12 +748,21 @@ mod tests {
         assert!(cx(style::SCORE_LABEL_COLOR) < 0.0);
         assert!(cx([0.1, 0.4, 1.0, 1.0]) > 0.0);
         assert!(cx(style::TITLE_COLOR) > cx([0.1, 0.4, 1.0, 1.0]));
-        // Gauge: track, half fill (and its core), three marks.
+        // Gauge: track, half fill from the left, the norma mark at 70 %, two end caps.
         assert_eq!(count(&v, style::GAUGE_TRACK), 6);
         let fill: Vec<_> = v.iter().filter(|p| p.color == style::GAUGE_FILL).collect();
         assert_eq!(fill.len(), 6);
         assert!(fill.iter().all(|p| p.pos[0] <= 1e-5));
-        assert_eq!(count(&v, style::GAUGE_MARK), 3 * 6);
+        let mark: Vec<_> = v.iter().filter(|p| p.color == style::GAUGE_MARK).collect();
+        assert_eq!(mark.len(), 6);
+        let x = 0.4 * style::GAUGE_HALF_W;
+        assert!(
+            mark.iter()
+                .all(|p| (p.pos[0] - x).abs() <= style::GAUGE_MARK_W + 1e-5)
+        );
+        assert_eq!(count(&v, style::GAUGE_CAP.0), 2 * 6);
+        let y = |p: &&Vertex| (p.pos[1] - style::GAUGE_Y).abs() <= style::GAUGE_HALF_H + 1e-5;
+        assert!(fill.iter().chain(&mark).all(y));
     }
 
     #[test]
