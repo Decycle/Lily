@@ -13,7 +13,7 @@ use std::f32::consts::PI;
 
 use wacca_render::layout::{PORTRAIT_FRAME, PORTRAIT_RING_CENTER, Rect, ring};
 use wacca_render::style::Rgba;
-use wacca_render::text::Align;
+use wacca_render::text::{Align, Face};
 
 use crate::circle;
 use crate::ui::{Action, Item, View};
@@ -319,6 +319,27 @@ impl Painter {
         let m = self.c.place(at);
         let p = m.pt([at[0], at[1] - px * 0.58]);
         self.layer(at).numerals(s, p, px * m.scale, color, align);
+    }
+
+    /// One line in the `Kakugo_kana` face at UMG font `size`, vertically centred on `at[1]`,
+    /// left-aligned, with `spacing` design units added after each character (UMG letter
+    /// spacing). Advances are estimated at 0.5 em (the condensed C60 Latin is about that).
+    pub fn kakugo(&mut self, s: &str, at: [f32; 2], size: f32, spacing: f32, color: Rgba) {
+        let px = font_px(size);
+        let m = self.c.place(at);
+        let mut x = at[0];
+        for ch in s.chars() {
+            let p = m.pt([x, at[1] - px * 0.62]);
+            self.layer(at).text_face(
+                ch.to_string(),
+                p,
+                px * m.scale,
+                color,
+                Align::Left,
+                Face::Kakugo,
+            );
+            x += px * if ch.is_ascii() { 0.5 } else { 1.0 } + spacing;
+        }
     }
 
     /// One line centred on `at`, turned by `degrees` (clockwise).

@@ -49,7 +49,7 @@ use std::sync::Arc;
 use wacca_audio::{BgmBank, Player, SeBank};
 use wacca_game::catalog::Song;
 use wacca_game::save::{self, SaveData, Settings};
-use wacca_render::text::{Fonts, TextError};
+use wacca_render::text::{Face, Fonts, TextError};
 
 use crate::args::{Args, ArgsError};
 use crate::menu::Menu;
@@ -235,6 +235,18 @@ fn run(args: &Args, started: std::time::Instant) -> Result<(), Error> {
     let fonts = match pick_fonts(numeral_candidates(&args.data, &args.assets), Path::exists).first()
     {
         Some(p) => fonts.with_numerals(p, NUMERAL_FACE),
+        None => fonts,
+    };
+    // `Kakugo_kana` (player name): `TT_UDKakugoC60-B`.
+    let kakugo = [
+        args.data.join("fonts").join("TT_UDKakugoC60-B.ttf"),
+        args.assets
+            .join("UI")
+            .join("Font")
+            .join("TT_UDKakugoC60-B.ufont"),
+    ];
+    let fonts = match kakugo.iter().find(|p| p.exists()) {
+        Some(p) => fonts.with_face(Face::Kakugo, p, 0),
         None => fonts,
     };
     shell::run(

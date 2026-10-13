@@ -143,6 +143,28 @@ impl View {
         });
     }
 
+    /// One line in `face`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn text_face(
+        &mut self,
+        text: impl Into<String>,
+        at: [f32; 2],
+        px: f32,
+        color: Rgba,
+        align: Align,
+        face: Face,
+    ) {
+        self.items.push(Item::Text {
+            text: text.into(),
+            at,
+            px,
+            color,
+            align,
+            max_width: None,
+            face,
+        });
+    }
+
     pub fn poly(&mut self, points: Vec<[f32; 2]>, colors: Vec<Rgba>) {
         self.items.push(Item::Poly { points, colors });
     }

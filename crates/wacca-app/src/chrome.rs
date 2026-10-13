@@ -93,8 +93,10 @@ impl Default for Player {
 }
 
 /// Plate label grey (`Title`, `Lv.`, `RP`).
-const PLATE_LABEL: Rgba = hex(0x8a8a90, 1.0);
-const PLATE_INK: Rgba = hex(0x13142d, 1.0);
+const PLATE_LABEL: Rgba = hex(0x8f8f8f, 1.0);
+/// `t_v_lv` / `t_v_wp` (linear 0.070) and the name (`TextBlock_5`, linear (0.0065, 0.007, 0.026)).
+const VALUE_INK: Rgba = hex(0x4b4b4b, 1.0);
+const NAME_INK: Rgba = hex(0x15162c, 1.0);
 
 /// `BP_Circle_user`: plate `uT_US_1` hanging from the top, title line, level and RP, user icon,
 /// name and rating. Text positions measured on `runs/e3/*/nav-08-mode-select.png`.
@@ -110,22 +112,19 @@ pub fn user_plate(p: &mut Painter, who: &Player) {
         0.0,
         WHITE,
     );
-    // Guest icon: a black "C" in a ring.
-    // UNVERIFIED: the real ring is a pink → blue → yellow gradient; drawn in the accent pink.
-    let at = [-247.0, -360.0];
-    p.tex("uT_CMen256_00", at, [118.0, 118.0], hex(0xdddddd, 1.0));
-    p.tex("uT_CMen256_00", at, [104.0, 104.0], PINK);
-    p.tex("uT_CMen256_00", at, [84.0, 84.0], WHITE);
-    p.text(
-        "C",
-        [at[0], at[1] + 4.0],
-        50.0,
-        hex(0x111111, 1.0),
-        Align::Center,
+    // The guest's user icon (the "C" in the gradient ring), measured on the E3 frames.
+    p.image(
+        "UI/Textures/USERICON/S01/uT_UICN_S01_00_001",
+        [-249.0, -360.0],
+        [130.0, 130.0],
+        MID,
+        full,
+        0.0,
+        WHITE,
     );
-    p.text(&who.name, [-161.0, -350.0], 22.0, PLATE_INK, Align::Left);
+    p.kakugo(&who.name, [-159.0, -350.0], 20.0, 4.0, NAME_INK);
     let title = hex(0xc4c4cc, 1.0);
-    p.text("Title", [-232.0, -459.0], 7.0, title, Align::Left);
+    p.text("Title", [-232.0, -459.0], 9.0, title, Align::Left);
     p.text_fit(
         who.title.clone(),
         [-193.0, -459.0],
@@ -134,8 +133,8 @@ pub fn user_plate(p: &mut Painter, who: &Player) {
         Align::Left,
         Some(330.0),
     );
-    p.text("Lv.", [-188.0, -413.0], 6.0, PLATE_LABEL, Align::Left);
-    let ink = PLATE_INK;
+    p.text("Lv.", [-190.0, -413.0], 9.0, PLATE_LABEL, Align::Left);
+    let ink = VALUE_INK;
     p.text(
         who.level.to_string(),
         [-104.0, -412.0],
@@ -143,13 +142,13 @@ pub fn user_plate(p: &mut Painter, who: &Player) {
         ink,
         Align::Right,
     );
-    p.text("RP", [-80.0, -413.0], 6.0, PLATE_LABEL, Align::Left);
+    p.text("RP", [-82.0, -413.0], 9.0, PLATE_LABEL, Align::Left);
     p.text(who.rp.to_string(), [5.0, -412.0], 15.0, ink, Align::Right);
-    p.text("Rate:", [308.0, -342.0], 7.0, WHITE, Align::Center);
+    p.text("Rate:", [308.0, -342.0], 9.0, WHITE, Align::Center);
     p.numerals(
         who.rate.to_string(),
-        [340.0, -317.0],
-        22.0,
+        [345.0, -318.0],
+        28.0,
         ink,
         Align::Right,
     );
