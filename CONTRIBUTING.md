@@ -6,7 +6,7 @@
 |---|---|---|
 | `wacca-chart` | `.mer` model, parser, tempo/scroll timing | — |
 | `wacca-game` | rules, judgement engine, score/gauge/grade/rating, save data, song catalog types | chart |
-| `wacca-ue4` | UE 4.19 cooked package reader (DataTables, textures, widgets) | — |
+| `wacca-ue4` | UE 4.19 cooked package reader (DataTables, textures) | — |
 | `wacca-audio` | CRI @UTF/ACB/AFS2, HCA/ADX decode, audio output + clock | — |
 | `wacca-render` | wgpu playfield/notes/effects | chart |
 | `wacca-video` | `.usm` demux, background-movie decode via an external `ffmpeg` process (`WACCA_FFMPEG`, `PATH` or winget) | — |
