@@ -517,7 +517,7 @@ pub enum SpriteError {
     },
 }
 
-fn read_png(path: &Path) -> Result<Image, SpriteError> {
+pub(crate) fn read_png(path: &Path) -> Result<Image, SpriteError> {
     let bytes = std::fs::read(path).map_err(|source| SpriteError::Io {
         path: path.to_path_buf(),
         source,

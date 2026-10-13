@@ -10,13 +10,13 @@ use std::f32::consts::TAU;
 
 use wacca_chart::{Chart, HoldNode, LANES, MaskDir, MaskEvent};
 
+use crate::camera;
 use crate::style::{SCREEN_EDGE, SENSOR_DEPTHS, SENSOR_INNER, SENSOR_OUTER, VIEW_EXTENT};
 
-/// Seconds a note is visible at note speed 1.0. Measured on the real game: 3.29 ± 0.01 s (09, same-method comparison).
-pub const APPROACH_SECS: f64 = 3.29;
-/// Perspective constant `k` of [`depth_to_radius`]. Measured on the real game: 0.750 (09 §E2);
-/// the community formula `3.325x / (13.825 − 10.5x)` is the same curve with k = 0.7595.
-pub const PERSPECTIVE_K: f32 = 0.750;
+/// Seconds from spawn (scale 0) to the judgement line (scale 1) at note speed 1.0: exactly 10/3 s
+/// (RenderDoc note matrices, doc 11 §2.4: ds/dt = 0.45/s at speed 1.5). E2's 3.29 s came from
+/// fitting the note's outer edge with a 2D curve (doc 09); see [`crate::camera`].
+pub const APPROACH_SECS: f64 = 10.0 / 3.0;
 /// Mask sweep: one lane per `1000/60/2` ms (01 §4).
 pub const MASK_SECS_PER_LANE: f64 = 1.0 / 120.0;
 /// Hold bodies are sampled at this time step between nodes (bounded by [`HOLD_MAX_SAMPLES`]).
@@ -137,11 +137,12 @@ pub struct Rect {
     pub h: f32,
 }
 
-/// Perspective radius for a depth: `r(x) = x(1 − k) / (1 − kx)` with `x = 1 − depth`, so the
-/// centre is 0 and the judgement line is 1 ([`PERSPECTIVE_K`]).
+/// Screen radius of the hold-body circle (`camera::HOLD_RADIUS_CM` on the note plane) at `depth`
+/// through the game's camera ([`crate::camera`]): 0 at spawn, ≈ 1.05 on the line (the note band,
+/// 0.97–1.10, straddles the rim's inner edge at 1).
 pub fn depth_to_radius(depth: f32) -> f32 {
-    let x = 1.0 - depth.clamp(0.0, 1.0);
-    x * (1.0 - PERSPECTIVE_K) / (1.0 - PERSPECTIVE_K * x)
+    let s = camera::note_scale(depth.clamp(0.0, 1.0));
+    camera::project_radius(s, camera::HOLD_RADIUS_CM, 0.0)
 }
 
 /// Unclamped depth of chart time `t` when the scroll position is `now_dist` (= `chart.dist_at(view now)`).
@@ -509,16 +510,18 @@ mod tests {
 
     #[test]
     fn radius_curve_endpoints_and_monotonic() {
-        assert!(close(depth_to_radius(0.0), 1.0));
+        // 172.5 cm at 190 cm from the camera, NDC 1 = VIEW_EXTENT.
+        let e = VIEW_EXTENT;
+        assert!(close(depth_to_radius(0.0), e * 172.5 / 190.0));
         assert!(close(depth_to_radius(1.0), 0.0));
         let rs: Vec<f32> = (0..=100)
             .map(|i| depth_to_radius(i as f32 / 100.0))
             .collect();
         assert!(rs.windows(2).all(|w| w[1] < w[0]));
-        // Perspective: halfway in depth is much closer to the centre than halfway in radius.
+        // Perspective: halfway in time is much closer to the centre than halfway in radius
+        // (s 0.5: 86.25 cm at 490 cm).
+        assert!(close(depth_to_radius(0.5), e * 86.25 / 490.0));
         assert!(depth_to_radius(0.5) < 0.25);
-        // Measured k = 0.75: halfway in depth sits at radius 0.5·0.25/0.625 = 0.2.
-        assert!(close(depth_to_radius(0.5), 0.2));
     }
 
     #[test]
@@ -637,8 +640,9 @@ mod tests {
         // depth = t - 1: visible part is t in 1..2.
         push_hold_body(&mut v, &nodes, |t| t - 1.0, &Paint::flat([1.0; 4]));
         let r: Vec<f32> = v.iter().map(|p| p.pos[0].hypot(p.pos[1])).collect();
-        assert!(r.iter().all(|r| (-1e-4..=1.0 + 1e-4).contains(r)));
-        assert!(r.iter().any(|r| close(*r, 1.0)) && r.iter().any(|r| close(*r, 0.0)));
+        let line = depth_to_radius(0.0);
+        assert!(r.iter().all(|r| (-1e-4..=line + 1e-4).contains(r)));
+        assert!(r.iter().any(|r| close(*r, line)) && r.iter().any(|r| close(*r, 0.0)));
         // Entirely past the line: nothing.
         let mut v = Vec::new();
         push_hold_body(&mut v, &nodes, |t| t - 10.0, &Paint::flat([1.0; 4]));

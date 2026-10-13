@@ -6,7 +6,9 @@
 //!
 //! `WACCA_SHOT=<out.png>@<seconds>` renders that one moment (1024x1024, as after a perfect play
 //! up to it: hit effects, judgement, combo, score row) to a PNG without opening a window.
-//! `WACCA_SHOT_BARS=1` adds bar lines, `WACCA_SHOT_TITLE` the song title on the rim.
+//! `WACCA_SHOT_BARS=1` adds bar lines, `WACCA_SHOT_TITLE` the song title on the rim. Notes are the
+//! game's 3D meshes when `data/meshes` exists (`wacca-convert --meshes`); `WACCA_SHOT_2D=1` forces
+//! the 2D notes.
 
 use std::error::Error;
 use std::sync::Arc as Shared;
@@ -17,7 +19,8 @@ use wacca_chart::{
     ScrollSegment, SlideDir, SnapDir,
 };
 use wacca_render::{
-    Effects, JudgeSprite, LiveState, Renderer, RimState, SceneOptions, build_scene,
+    Effects, JudgeSprite, LiveState, Renderer, RimState, SceneOptions, build_mesh_notes,
+    build_scene_into,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -104,7 +107,7 @@ impl Gfx {
         }
     }
 
-    fn draw(&mut self, scene: &[wacca_render::Vertex]) {
+    fn draw(&mut self, chart: &Chart, now: f64, opts: &SceneOptions) {
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(e) => {
@@ -120,7 +123,25 @@ impl Gfx {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         let size = [self.config.width, self.config.height];
-        self.renderer.render(&mut encoder, &view, size, scene);
+        let (mut scene, mut notes) = (Vec::new(), Vec::new());
+        let live = LiveState::default();
+        let opts = SceneOptions {
+            mesh_notes: self.renderer.note_meshes().is_some(),
+            ..*opts
+        };
+        if let Some(meshes) = self.renderer.note_meshes() {
+            build_mesh_notes(&mut notes, meshes, chart, now, &opts, &live);
+        }
+        let split = build_scene_into(
+            &mut scene,
+            chart,
+            now,
+            &opts,
+            &live,
+            self.renderer.sprites(),
+        );
+        self.renderer
+            .render_with_notes(&mut encoder, &view, size, &scene, split, &notes);
         self.queue.submit([encoder.finish()]);
         self.window.pre_present_notify();
         frame.present();
@@ -225,14 +246,7 @@ impl ApplicationHandler for App {
                     self.clock = Clock::start(LEAD_IN);
                 }
                 if let Some(gfx) = &mut self.gfx {
-                    let scene = build_scene(
-                        &self.chart,
-                        self.clock.now(),
-                        &self.opts,
-                        &LiveState::default(),
-                        gfx.renderer.sprites(),
-                    );
-                    gfx.draw(&scene);
+                    gfx.draw(&self.chart, self.clock.now(), &self.opts);
                 }
             }
             _ => {}
@@ -327,11 +341,17 @@ fn snapshot(
         movie: false,
         bar_lines: flag("WACCA_SHOT_BARS"),
         touch_guide: false,
+        mesh_notes: renderer.note_meshes().is_some() && !flag("WACCA_SHOT_2D"),
     };
-    let scene = build_scene(chart, at, &opts, &live, renderer.sprites());
+    let mut notes = Vec::new();
+    if let Some(meshes) = renderer.note_meshes().filter(|_| opts.mesh_notes) {
+        build_mesh_notes(&mut notes, meshes, chart, at, &opts, &live);
+    }
+    let mut scene = Vec::new();
+    let split = build_scene_into(&mut scene, chart, at, &opts, &live, renderer.sprites());
     let mut encoder = device.create_command_encoder(&Default::default());
     let view = target.create_view(&Default::default());
-    renderer.render(&mut encoder, &view, [SIDE, SIDE], &scene);
+    renderer.render_with_notes(&mut encoder, &view, [SIDE, SIDE], &scene, split, &notes);
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("snapshot readback"),
         size: u64::from(SIDE * SIDE * 4),

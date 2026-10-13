@@ -184,8 +184,9 @@ pub const SENSOR_OUTER: f32 = 1.15;
 /// Depth rings (= `wacca_game::input::DEPTHS`).
 pub const SENSOR_DEPTHS: usize = 4;
 pub const LANE_LINE_HALF_WIDTH: f32 = 0.002;
-/// Playfield-space radius mapped to the edge of the square viewport (room for the ring).
-pub const VIEW_EXTENT: f32 = 1.17;
+/// Playfield-space radius mapped to the edge of the square viewport: the game's view is a
+/// 675 px square (NDC 1 = 337.5 px, doc 11 §2.2) whose rim inner edge (radius 1) is at 291.8 px (E2).
+pub const VIEW_EXTENT: f32 = 337.5 / 291.8;
 /// Playfield-space radius of the rim's outer edge: the edge of the visible round screen.
 pub const SCREEN_EDGE: f32 = 1.0 + JUDGE_BAND_WIDTH + RIM_WIDTH;
 

@@ -1,16 +1,18 @@
-//! UE4 4.19 cooked package reader (DataTables, textures). Spec: docs/research/02-data-tables.md, 06-visuals.md
+//! UE4 4.19 cooked package reader (DataTables, textures, static meshes). Spec: docs/research/02-data-tables.md, 06-visuals.md
 #![cfg_attr(test, allow(clippy::unwrap_used))] // tests may unwrap (CONTRIBUTING)
 
 mod bcn;
 mod datatable;
 #[cfg(test)]
 mod fixture;
+mod mesh;
 mod package;
 mod property;
 mod reader;
 mod texture;
 
 pub use datatable::{DataTable, read_datatable};
+pub use mesh::{MeshSection, StaticMesh, read_static_mesh};
 pub use property::{Text, Value};
 pub use texture::{PixelFormat, Texture, read_texture2d};
 
@@ -52,6 +54,8 @@ pub enum Ue4Error {
     BadBulkOffset(i64),
     #[error("mip payload is in the .ubulk file, which was not given")]
     MissingBulkFile,
+    #[error("no static mesh LOD0 buffers found")]
+    NotAStaticMesh,
     #[error("mip payload too small: need {need} bytes, have {len}")]
     MipTooSmall { need: usize, len: usize },
 }

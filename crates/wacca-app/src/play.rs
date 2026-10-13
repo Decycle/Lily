@@ -17,7 +17,8 @@ use wacca_game::rules::{JudgeClass, JudgeEvent, Judgement};
 use wacca_render::effects::hold_arc_at;
 use wacca_render::layout::Rect;
 use wacca_render::{
-    Effects, JudgeSprite, LiveState, RimState, SceneOptions, SpriteSheet, Vertex, build_scene_into,
+    Effects, JudgeSprite, LiveState, MeshVertex, NoteMeshes, RimState, SceneOptions, SpriteSheet,
+    Vertex, build_mesh_notes, build_scene_into,
 };
 use wacca_video::{Frame, VideoPlayer};
 
@@ -368,40 +369,47 @@ impl PlayState {
         self.player.pause();
     }
 
-    /// The playfield now, into `out` (reused across frames).
-    pub fn scene(&self, sprites: &SpriteSheet, out: &mut Vec<Vertex>) {
+    /// The playfield now, into `out` (reused across frames); with `meshes` the notes go to `notes`
+    /// (3D) and the returned index splits `out` around them (see `build_scene_into`).
+    pub fn scene(
+        &self,
+        sprites: &SpriteSheet,
+        meshes: Option<&NoteMeshes>,
+        out: &mut Vec<Vertex>,
+        notes: &mut Vec<MeshVertex>,
+    ) -> usize {
         let now = self.now();
         let judgement = self
             .session
             .last_event()
             .map(|e| (judge_sprite(e.judgement), (now - e.time) as f32));
-        build_scene_into(
-            out,
-            &self.chart,
-            now,
-            &SceneOptions {
-                note_speed: self.opts.note_speed,
-                movie: self.video_shown.is_some(),
-                bar_lines: self.opts.bar_lines,
-                touch_guide: self.opts.touch_guide,
-            },
-            &LiveState {
-                judged: self.session.judged(),
-                effects: Some(&self.effects),
-                judgement,
-                combo: (self.session.combo(), (now - self.combo_at) as f32),
-                rim: Some(RimState {
-                    score: self.session.score(),
-                    progress: progress(now, self.end),
-                    difficulty_color: labels::difficulty_color(
-                        self.spec.difficulty.unwrap_or(Difficulty::Normal),
-                    ),
-                }),
-                gauge: Some((self.session.gauge() as f32, self.spec.norma)),
-                pressed: self.pressed,
-            },
-            sprites,
-        )
+        let opts = SceneOptions {
+            note_speed: self.opts.note_speed,
+            movie: self.video_shown.is_some(),
+            bar_lines: self.opts.bar_lines,
+            touch_guide: self.opts.touch_guide,
+            mesh_notes: meshes.is_some(),
+        };
+        let live = LiveState {
+            judged: self.session.judged(),
+            effects: Some(&self.effects),
+            judgement,
+            combo: (self.session.combo(), (now - self.combo_at) as f32),
+            rim: Some(RimState {
+                score: self.session.score(),
+                progress: progress(now, self.end),
+                difficulty_color: labels::difficulty_color(
+                    self.spec.difficulty.unwrap_or(Difficulty::Normal),
+                ),
+            }),
+            gauge: Some((self.session.gauge() as f32, self.spec.norma)),
+            pressed: self.pressed,
+        };
+        notes.clear();
+        if let Some(meshes) = meshes {
+            build_mesh_notes(notes, meshes, &self.chart, now, &opts, &live);
+        }
+        build_scene_into(out, &self.chart, now, &opts, &live, sprites)
     }
 
     /// `art`: the playfield draws the judgement word art and the combo counter (no text).
