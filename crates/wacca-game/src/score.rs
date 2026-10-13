@@ -80,6 +80,16 @@ pub struct Counts {
 }
 
 impl Counts {
+    /// Count one judgement (not FAST/LATE).
+    fn add(&mut self, j: Judgement) {
+        match j {
+            Judgement::Marvelous => self.marvelous += 1,
+            Judgement::Great => self.great += 1,
+            Judgement::Good => self.good += 1,
+            Judgement::Miss => self.miss += 1,
+        }
+    }
+
     /// Notes judged better than Miss.
     pub fn hits(&self) -> u32 {
         self.marvelous + self.great + self.good
@@ -98,6 +108,9 @@ pub struct PlayTally {
     gauge_max: i64,
     bonus_effect: bool,
     counts: Counts,
+    /// R notes of the chart and their judgements (results "R-Notes" column).
+    r_total: u32,
+    r_counts: Counts,
     /// Σ weight × rate (tenths).
     points: u64,
     /// Σ weight of judged notes.
@@ -124,6 +137,9 @@ impl PlayTally {
             gauge_max,
             bonus_effect,
             counts: Counts::default(),
+            r_total: u32::try_from(notes.iter().filter(|&&(_, b)| b == Bonus::R).count())
+                .unwrap_or(u32::MAX),
+            r_counts: Counts::default(),
             points: 0,
             judged_weight: 0,
             combo: 0,
@@ -138,11 +154,9 @@ impl PlayTally {
         self.judged_weight += w;
 
         let c = &mut self.counts;
-        match e.judgement {
-            Judgement::Marvelous => c.marvelous += 1,
-            Judgement::Great => c.great += 1,
-            Judgement::Good => c.good += 1,
-            Judgement::Miss => c.miss += 1,
+        c.add(e.judgement);
+        if e.bonus == Bonus::R {
+            self.r_counts.add(e.judgement);
         }
         // FAST/LATE is shown for non-Marvelous hits only; chains are excluded (COMMUNITY).
         if !matches!(e.judgement, Judgement::Marvelous | Judgement::Miss)
@@ -223,11 +237,14 @@ impl PlayTally {
         let gauge = self.gauge();
         // Compared in f32 so a gauge exactly on the line (e.g. 0.55) clears against an f32 norma.
         let lamp = Lamp::of(unjudged == 0, gauge as f32 >= norma, &counts);
+        let mut r_counts = self.r_counts;
+        r_counts.miss += self.r_total.saturating_sub(r_counts.judged());
         PlayResult {
             score,
             grade: Grade::of(score, counts.hits()),
             lamp,
             counts,
+            r_counts,
             max_combo: self.max_combo,
             total_notes: self.total_notes,
             gauge,
@@ -320,6 +337,19 @@ mod tests {
         ));
         t.apply(&touch(Judgement::Miss));
         assert_eq!(t.score(), 666_666);
+    }
+
+    #[test]
+    fn r_notes_are_counted_separately() {
+        let r = (JudgeClass::Touch, Bonus::R);
+        let mut t = PlayTally::new(&[r, r, r, (JudgeClass::Touch, Bonus::None)], true);
+        t.apply(&ev(r.0, r.1, Judgement::Great, Some(0.01)));
+        t.apply(&touch(Judgement::Marvelous));
+        let res = t.finish(0.0);
+        // one R note judged Great, the two never judged (give-up) count as misses
+        assert_eq!((res.r_counts.great, res.r_counts.miss), (1, 2));
+        assert_eq!(res.r_counts.marvelous, 0);
+        assert_eq!(res.counts.marvelous, 1);
     }
 
     #[test]

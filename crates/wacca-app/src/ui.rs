@@ -4,7 +4,7 @@
 
 use wacca_render::layout::Rect;
 use wacca_render::style::Rgba;
-use wacca_render::text::Align;
+use wacca_render::text::{Align, Face};
 
 pub const WHITE: Rgba = [1.0, 1.0, 1.0, 1.0];
 pub const GREY: Rgba = [0.65, 0.65, 0.72, 1.0];
@@ -45,6 +45,7 @@ pub enum Item {
         color: Rgba,
         align: Align,
         max_width: Option<f32>,
+        face: Face,
     },
     /// One line turned by `angle` radians (clockwise) about `at` (anchor x per `align`, top).
     TurnedText {
@@ -73,6 +74,13 @@ pub enum Item {
         rect: Rect,
         uv: [f32; 4],
         angle: f32,
+        tint: Rgba,
+    },
+    /// Part of an exported UI texture on a convex polygon: one texture coordinate per point.
+    ImagePoly {
+        key: String,
+        points: Vec<[f32; 2]>,
+        uvs: Vec<[f32; 2]>,
         tint: Rgba,
     },
 }
@@ -109,6 +117,27 @@ impl View {
             color,
             align,
             max_width,
+            face: Face::Ui,
+        });
+    }
+
+    /// One line in the game's numeral face (counters, scores).
+    pub fn numerals(
+        &mut self,
+        text: impl Into<String>,
+        at: [f32; 2],
+        px: f32,
+        color: Rgba,
+        align: Align,
+    ) {
+        self.items.push(Item::Text {
+            text: text.into(),
+            at,
+            px,
+            color,
+            align,
+            max_width: None,
+            face: Face::Numerals,
         });
     }
 

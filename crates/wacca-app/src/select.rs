@@ -110,6 +110,11 @@ impl SongList {
         self.wanted
     }
 
+    /// Every song of the catalog (with a chart), in catalog order.
+    pub fn songs(&self) -> &[Song] {
+        &self.songs
+    }
+
     pub fn genre(&self) -> Option<i8> {
         self.genre
     }

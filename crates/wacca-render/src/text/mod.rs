@@ -10,6 +10,6 @@ mod gpu;
 pub mod layout;
 
 pub(crate) use atlas::Shelves;
-pub use fonts::{Fonts, TextError};
+pub use fonts::{Face, Fonts, TextError};
 pub use gpu::TextRenderer;
 pub use layout::Align;

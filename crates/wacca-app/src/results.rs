@@ -1,7 +1,8 @@
 //! Results screen (`docs/research/05-save-and-song-select.md` §4), laid out like the game's
-//! `BP_Result_score` on the round screen: jacket block on the left, judgement / FAST-LATE / COMBO
-//! panels and the score on the right, the rank band below, GO at the bottom. Positions, colours
-//! and timings are measured from the E2 recordings (`runs/e2/*/video.mkv`, end of the song).
+//! `BP_Result_score` on the round screen: player plate on top, jacket block on the left,
+//! judgement / R-note / FAST-LATE / COMBO panels and the score on the right, the rank band below,
+//! the rating strip and GO at the bottom. Positions, colours and timings are measured from the E2
+//! recordings (`runs/e2/*/video.mkv`, end of the song).
 
 use wacca_chart::Difficulty;
 use wacca_game::grade::{Grade, Lamp, PlayResult};
@@ -10,7 +11,6 @@ use wacca_render::style::Rgba;
 use wacca_render::text::Align;
 
 use crate::circle::{self, Canvas, INK, PINK, ease, font_tex, slab};
-use crate::hud::format_score;
 use crate::labels;
 use crate::ui::{Action, Item, View, WHITE};
 
@@ -18,17 +18,40 @@ use crate::ui::{Action, Item, View, WHITE};
 #[derive(Clone, Debug, PartialEq)]
 pub struct Summary {
     pub title: String,
+    pub artist: String,
     pub jacket: String,
     pub difficulty: Option<Difficulty>,
     pub level: Option<f32>,
     pub result: PlayResult,
     /// Played to the end (not given up).
     pub completed: bool,
-    /// Best score before this play, if the chart was played before.
-    pub previous_best: Option<u32>,
     pub new_best: bool,
     /// Why the play was not saved (autoplay, unknown song, write error).
     pub not_saved: Option<String>,
+    /// Name on the player plate (save settings).
+    pub player: String,
+    pub rating: Rating,
+}
+
+/// Player rating ([`wacca_game::rating::save_rating`]) before and after one play.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Rating {
+    pub before: f64,
+    pub after: f64,
+}
+
+impl Rating {
+    /// Rating as the game prints it: whole points, rounded down (E2: an A on a level-1 chart,
+    /// 0.8, shows 0; MASTER, 4.0, shows 4).
+    pub fn shown(r: f64) -> u32 {
+        r.max(0.0).floor() as u32
+    }
+
+    /// Shown gain of this play, if any (the `+4` under the up-arrow).
+    pub fn gain(&self) -> Option<u32> {
+        let (b, a) = (Self::shown(self.before), Self::shown(self.after));
+        (a > b).then(|| a - b)
+    }
 }
 
 // Entry animation, seconds after the screen appears (E2 recording).
@@ -43,20 +66,16 @@ const FOOTER_AT: f32 = 5.0;
 const PANEL: Rgba = [0.95, 0.95, 0.94, 1.0];
 const PANEL_LOW: Rgba = [0.86, 0.86, 0.87, 1.0];
 const DARK: Rgba = [0.24, 0.24, 0.25, 0.95];
+const TAB: Rgba = [0.42, 0.42, 0.47, 1.0];
 const GREY_TEXT: Rgba = [0.45, 0.44, 0.48, 1.0];
+const TITLE: Rgba = [0.95, 0.10, 0.55, 1.0];
+const R_NOTE: Rgba = [0.98, 0.22, 0.52, 1.0];
+const GAIN: Rgba = [1.0, 0.86, 0.20, 1.0];
 /// Left boundary of the right-hand panels: x at `y = 638`, leaning with [`circle::SLANT`].
 const LIST_X: f32 = 470.0;
 const LIST_TOP: f32 = 638.0;
-
-/// `+12,345` / `-500` against the previous best.
-pub fn best_diff(score: u32, previous: Option<u32>) -> Option<String> {
-    let p = previous?;
-    Some(if score >= p {
-        format!("+{}", format_score(score - p))
-    } else {
-        format!("-{}", format_score(p - score))
-    })
-}
+/// Rank band: top-left corner x, y, top width, height.
+const BAND: [f32; 4] = [255.0, 985.0, 745.0, 243.0];
 
 /// Zero-padded counter as the game prints it (`0011`, `0135862`).
 pub fn padded(n: u32, digits: usize) -> String {
@@ -106,22 +125,30 @@ pub fn rank_art(g: Grade) -> Vec<&'static str> {
     }
 }
 
-/// Rank band colours (top, bottom) per grade family.
-// UNVERIFIED: only B (cyan) and MASTER (rainbow) were seen in E2; the others follow the letters.
-fn band_colors(g: Grade) -> [Rgba; 4] {
-    let pair = |t: Rgba, b: Rgba| [t, t, b, b];
+/// Look of the rank band (materials `uM_RTrate{M,S,A,B,C,D}*`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Band {
+    /// A triangle-pattern texture (`uT_RTrate*BG00`) on a pale base.
+    Pattern(&'static str, Rgba),
+    /// A vertical gradient (top, bottom) crossed by the faint X shapes of `uT_RTrateBBG00`.
+    Crossed(Rgba, Rgba),
+}
+
+fn band(g: Grade) -> Band {
     match g {
-        Grade::D => pair([0.62, 0.63, 0.66, 1.0], [0.38, 0.39, 0.43, 1.0]),
-        Grade::C => pair([0.30, 0.55, 1.0, 1.0], [0.10, 0.30, 0.85, 1.0]),
-        Grade::B => pair([0.21, 0.84, 0.93, 1.0], [0.08, 0.55, 0.80, 1.0]),
-        Grade::A | Grade::AA | Grade::AAA => pair([1.0, 0.88, 0.35, 1.0], [0.95, 0.60, 0.10, 1.0]),
-        Grade::Master => [
-            [1.0, 0.45, 0.80, 1.0],
-            [0.45, 0.85, 1.0, 1.0],
-            [1.0, 0.85, 0.30, 1.0],
-            [1.0, 0.35, 0.55, 1.0],
-        ],
-        _ => pair([1.0, 0.55, 0.85, 1.0], [0.92, 0.18, 0.62, 1.0]),
+        Grade::Master => Band::Pattern("uT_RTrateMBG00", [1.0, 0.90, 0.96, 1.0]),
+        // UNVERIFIED: no S-family result was recorded; the S material uses this texture.
+        Grade::S | Grade::SPlus | Grade::SS | Grade::SsPlus | Grade::SSS | Grade::SssPlus => {
+            Band::Pattern("uT_RTrateSBG00", [1.0, 0.93, 0.88, 1.0])
+        }
+        // A and B measured in E2 (runs -235920, -234221).
+        Grade::A | Grade::AA | Grade::AAA => {
+            Band::Crossed([0.97, 0.95, 0.45, 1.0], [0.91, 0.86, 0.09, 1.0])
+        }
+        Grade::B => Band::Crossed([0.27, 0.85, 0.92, 1.0], [0.03, 0.47, 0.75, 1.0]),
+        // UNVERIFIED: C and D not recorded; colours follow their letters.
+        Grade::C => Band::Crossed([0.45, 0.62, 1.0, 1.0], [0.12, 0.30, 0.85, 1.0]),
+        Grade::D => Band::Crossed([0.66, 0.67, 0.70, 1.0], [0.38, 0.39, 0.43, 1.0]),
     }
 }
 
@@ -166,12 +193,18 @@ fn mid(y: f32, px: f32) -> f32 {
     y - 0.58 * px
 }
 
+/// Texture key of a root `UI/Textures` image.
+fn ui_tex(name: &str) -> String {
+    format!("UI/Textures/{name}")
+}
+
 /// Results for `s`, `t` seconds after the screen appeared.
 pub fn view(s: &Summary, area: Rect, t: f32) -> View {
     let mut v = View::default();
     let c = Canvas::new(area);
     circle::background(&mut v, &c);
     let e = ease(t, INFO_AT, SLIDE);
+    header(&mut v, &c.moved([0.0, -120.0 * (1.0 - e)], e), s);
     info(&mut v, &c.moved([700.0 * (1.0 - e), 0.0], e), s);
     let e = ease(t, LIST_AT, SLIDE);
     let d = 420.0 * (1.0 - e);
@@ -181,7 +214,71 @@ pub fn view(s: &Summary, area: Rect, t: f32) -> View {
     v
 }
 
-/// Jacket, difficulty tag, title and lamp.
+/// Regular polygon approximating a circle (for the player icon).
+fn round(center: [f32; 2], r: f32) -> Vec<[f32; 2]> {
+    (0..32)
+        .map(|i| {
+            let a = i as f32 / 32.0 * std::f32::consts::TAU;
+            [center[0] + r * a.cos(), center[1] + r * a.sin()]
+        })
+        .collect()
+}
+
+/// Player plate: title and level bars, icon, name and the rating box (no credit display).
+fn header(v: &mut View, c: &Canvas, s: &Summary) {
+    c.panel(
+        v,
+        &slab(330.0, 420.0, 600.0, 44.0),
+        &[[0.30, 0.30, 0.33, 0.95]],
+    );
+    c.text(
+        v,
+        "Title",
+        [312.0, 434.0],
+        14.0,
+        [0.70, 0.70, 0.73, 1.0],
+        Align::Left,
+    );
+    c.panel(
+        v,
+        &slab(352.0, 467.0, 580.0, 32.0),
+        &[[0.17, 0.17, 0.19, 0.97]],
+    );
+    let plate = [0.90, 0.90, 0.91, 1.0];
+    let plate_low = [0.78, 0.78, 0.80, 1.0];
+    c.panel(
+        v,
+        &slab(285.0, 512.0, 475.0, 76.0),
+        &[plate, plate, plate_low, plate_low],
+    );
+    c.panel(
+        v,
+        &slab(762.0, 512.0, 160.0, 76.0),
+        &[[0.32, 0.32, 0.34, 0.95]],
+    );
+    c.spaced(v, &s.player, [380.0, mid(550.0, 28.0)], 28.0, 21.0, INK);
+    c.panel(v, &round([292.0, 548.0], 68.0), &[WHITE]);
+    c.panel(v, &round([292.0, 548.0], 56.0), &[PINK]);
+    c.panel(v, &round([292.0, 548.0], 46.0), &[WHITE]);
+    c.panel(
+        v,
+        &slab(830.0, 551.0, 60.0, 13.0),
+        &[[0.20, 0.20, 0.22, 1.0]],
+    );
+    c.text(v, "Rate:", [852.0, 551.0], 12.0, WHITE, Align::Center);
+    c.panel(v, &slab(822.0, 565.0, 100.0, 32.0), &[WHITE]);
+    let after = Rating::shown(s.rating.after).to_string();
+    c.numerals(
+        v,
+        &after,
+        [884.0, mid(582.0, 30.0)],
+        30.0,
+        INK,
+        Align::Right,
+    );
+}
+
+/// Jacket, difficulty tag, title, artist and lamp.
 fn info(v: &mut View, c: &Canvas, s: &Summary) {
     c.panel(v, &slab(-200.0, 612.0, 545.0, 210.0), &[DARK]);
     v.fill(c.rect(102.0, 614.0, 208.0, 208.0), [0.0, 0.0, 0.0, c.alpha]);
@@ -212,19 +309,31 @@ fn info(v: &mut View, c: &Canvas, s: &Summary) {
             );
         }
     }
+    // Title and artist end on the same right edge (E2 frames).
     c.panel(v, &slab(0.0, 822.0, 335.0, 24.0), &[WHITE]);
-    c.text_fit(
+    c.fit(
         v,
         &s.title,
-        [215.0, 824.0],
-        20.0,
-        [0.95, 0.10, 0.55, 1.0],
+        [274.0, 825.0],
+        18.0,
+        TITLE,
         250.0,
+        Align::Right,
     );
     c.panel(
         v,
         &slab(0.0, 848.0, 320.0, 24.0),
         &[[0.30, 0.29, 0.34, 0.95]],
+    );
+    let artist = [0.80, 0.80, 0.84, 1.0];
+    c.fit(
+        v,
+        &s.artist,
+        [276.0, 852.0],
+        14.0,
+        artist,
+        240.0,
+        Align::Right,
     );
     c.panel(v, &slab(0.0, 878.0, 300.0, 54.0), &[[0.0, 0.0, 0.0, 0.35]]);
     let (art, size, right) = lamp_art(s.result.lamp);
@@ -242,23 +351,39 @@ fn info(v: &mut View, c: &Canvas, s: &Summary) {
     }
 }
 
-/// Judgement rows, FAST/LATE, COMBO and the score.
+/// Column tab above the list (`R-Notes`, `Rate`).
+fn tab(v: &mut View, c: &Canvas, label: &str, x: f32, w: f32) {
+    c.panel(v, &slab(x, 616.0, w, 20.0), &[TAB]);
+    c.text(
+        v,
+        label,
+        [x + w / 2.0 - 6.0, 617.0],
+        15.0,
+        WHITE,
+        Align::Center,
+    );
+}
+
+/// Judgement rows with their R-note counts, FAST/LATE, COMBO and the score.
 fn list(v: &mut View, c: &Canvas, s: &Summary, t: f32) {
     let r = &s.result;
     let n = &r.counts;
+    let rn = &r.r_counts;
     let left = |y: f32| LIST_X - (y - LIST_TOP) * circle::SLANT;
     c.panel(
         v,
         &slab(left(LIST_TOP), LIST_TOP - 4.0, 900.0, 164.0),
         &[circle::NAVY],
     );
-    let tab = [0.42, 0.42, 0.47, 1.0];
-    c.panel(v, &slab(890.0, 616.0, 92.0, 20.0), &[tab]);
-    c.text(v, "Rate", [930.0, 617.0], 15.0, WHITE, Align::Center);
-    for (i, count) in [n.marvelous, n.great, n.good, n.miss]
-        .into_iter()
-        .enumerate()
-    {
+    tab(v, c, "R-Notes", 782.0, 74.0);
+    tab(v, c, "Rate", 886.0, 92.0);
+    let rows = [
+        (n.marvelous, rn.marvelous),
+        (n.great, rn.great),
+        (n.good, rn.good),
+        (n.miss, rn.miss),
+    ];
+    for (i, (count, r_count)) in rows.into_iter().enumerate() {
         let y = LIST_TOP + 40.0 * i as f32;
         let ym = y + 18.0;
         c.panel(
@@ -269,7 +394,7 @@ fn list(v: &mut View, c: &Canvas, s: &Summary, t: f32) {
         let (art, l) = JUDGE_ART[i];
         let (w, h) = (155.0, 39.0);
         c.image(v, font_tex(art), [468.0 - l * w + w / 2.0, ym], [w, h], 1.0);
-        c.spaced(
+        c.counter(
             v,
             &padded(count, 4),
             [645.0, mid(ym, 32.0)],
@@ -277,10 +402,12 @@ fn list(v: &mut View, c: &Canvas, s: &Summary, t: f32) {
             27.0,
             INK,
         );
-        c.spaced(
+        let r_text = format!("({})", padded(r_count, 4));
+        c.counter(v, &r_text, [783.0, mid(ym + 2.0, 18.0)], 18.0, 12.0, R_NOTE);
+        c.counter(
             v,
             &rate(count, r.total_notes),
-            [893.0, mid(ym, 18.0)],
+            [893.0, mid(ym + 2.0, 18.0)],
             18.0,
             13.7,
             INK,
@@ -295,7 +422,7 @@ fn list(v: &mut View, c: &Canvas, s: &Summary, t: f32) {
         [88.0, 22.0],
         1.0,
     );
-    c.spaced(
+    c.counter(
         v,
         &padded(n.fast, 4),
         [478.0, mid(819.0, 26.0)],
@@ -310,7 +437,7 @@ fn list(v: &mut View, c: &Canvas, s: &Summary, t: f32) {
         [88.0, 22.0],
         1.0,
     );
-    c.spaced(
+    c.counter(
         v,
         &padded(n.late, 4),
         [668.0, mid(819.0, 26.0)],
@@ -327,7 +454,7 @@ fn list(v: &mut View, c: &Canvas, s: &Summary, t: f32) {
         [124.0, 31.0],
         1.0,
     );
-    c.spaced(
+    c.counter(
         v,
         &padded(r.max_combo, 4),
         [552.0, mid(862.0, 32.0)],
@@ -344,7 +471,7 @@ fn list(v: &mut View, c: &Canvas, s: &Summary, t: f32) {
         new_record(v, &c.moved([0.0, 0.0], ease(t, COUNT_AT + COUNT_LEN, 0.2)));
     }
     let score = padded(shown_score(r.score, t), 7);
-    c.spaced(v, &score, [590.0, mid(950.0, 66.0)], 66.0, 60.0, INK);
+    c.counter(v, &score, [590.0, mid(950.0, 66.0)], 66.0, 60.0, INK);
 }
 
 /// "New Record!!" from its letter textures, letters overlapping like the game's word.
@@ -369,17 +496,30 @@ fn new_record(v: &mut View, c: &Canvas) {
 
 /// Rank band with the grade letters stamped in.
 fn rank(v: &mut View, c: &Canvas, g: Grade, t: f32) {
-    let band = ease(t, RANK_AT, 0.15);
-    if band <= 0.0 {
+    let shown = ease(t, RANK_AT, 0.15);
+    if shown <= 0.0 {
         return;
     }
-    let mut colors = band_colors(g);
-    for col in &mut colors {
-        col[3] *= band;
+    let c = c.moved([0.0, 0.0], shown);
+    let [x, y, w, h] = BAND;
+    let shape = slab(x, y, w, h);
+    let left = x - h * circle::SLANT;
+    match band(g) {
+        Band::Pattern(key, base) => {
+            c.panel(v, &shape, &[base]);
+            // Tiles of the 2:1 texture as tall as the band (E2: triangles ≈ 21 canvas units).
+            c.tiled(v, ui_tex(key), &shape, [left, y, 2.0 * h, h], false, 1.0);
+        }
+        Band::Crossed(top, bottom) => {
+            c.panel(v, &shape, &[top, top, bottom, bottom]);
+            // The "\" shapes plus their mirror image cross twice, 320 units apart (E2).
+            // UNVERIFIED: the material's blend; drawn as a faint shade.
+            let tile = [left + 74.0, y - 64.0, w, w / 2.0];
+            for flip in [false, true] {
+                c.tiled(v, ui_tex("uT_RTrateBBG00"), &shape, tile, flip, 0.10);
+            }
+        }
     }
-    c.panel(v, &slab(255.0, 985.0, 745.0, 255.0), &colors);
-    let shine = [1.0, 1.0, 1.0, 0.18 * band];
-    c.panel(v, &slab(255.0, 985.0, 745.0, 60.0), &[shine]);
     let stamp = ease(t, RANK_AT + 0.1, 0.4);
     let letters = rank_art(g);
     let (size, pitch) = if g == Grade::Master {
@@ -395,36 +535,54 @@ fn rank(v: &mut View, c: &Canvas, g: Grade, t: f32) {
     }
 }
 
-/// Best-score strip, RETRY tab and GO.
+/// Rating strip (rating, up-arrow and gain), RETRY tab and GO.
 fn footer(v: &mut View, c: &Canvas, s: &Summary) {
-    let r = &s.result;
+    let grey = [0.84, 0.84, 0.86, 1.0];
     c.panel(
         v,
         &slab(150.0, 1240.0, 750.0, 50.0),
-        &[
-            [0.92, 0.92, 0.92, 1.0],
-            [0.92; 4],
-            [0.75, 0.75, 0.77, 1.0],
-            [0.75, 0.75, 0.77, 1.0],
-        ],
+        &[grey, [0.92; 4], [0.75, 0.75, 0.77, 1.0], grey],
     );
-    c.spaced(v, "BEST", [160.0, 1256.0], 17.0, 15.0, GREY_TEXT);
-    let best = s.previous_best.map_or("-".to_string(), format_score);
-    c.text(
+    c.panel(v, &slab(545.0, 1240.0, 400.0, 50.0), &[WHITE]);
+    c.spaced(
         v,
-        &best,
-        [470.0, mid(1265.0, 34.0)],
-        34.0,
-        INK,
+        "Rate:",
+        [200.0, mid(1270.0, 16.0)],
+        16.0,
+        13.0,
+        GREY_TEXT,
+    );
+    let after = Rating::shown(s.rating.after).to_string();
+    let grey_ink = [0.38, 0.38, 0.42, 1.0];
+    c.numerals(
+        v,
+        &after,
+        [440.0, mid(1266.0, 42.0)],
+        42.0,
+        grey_ink,
         Align::Right,
     );
-    let right = match (&s.not_saved, best_diff(r.score, s.previous_best)) {
-        (Some(why), _) => Some((why.clone(), 20.0, PINK)),
-        (None, Some(d)) => Some((d, 34.0, if s.new_best { PINK } else { INK })),
-        (None, None) => None,
-    };
-    if let Some((text, px, col)) = right {
-        c.text(v, &text, [800.0, mid(1265.0, px)], px, col, Align::Right);
+    if let Some(gain) = s.rating.gain() {
+        c.image(
+            v,
+            ui_tex("uT_RTrateUP00"),
+            [462.0, 1266.0],
+            [40.0, 40.0],
+            1.0,
+        );
+        c.panel(v, &slab(372.0, 1289.0, 76.0, 18.0), &[DARK]);
+        let text = format!("+{gain}");
+        c.numerals(
+            v,
+            &text,
+            [418.0, mid(1298.0, 22.0)],
+            22.0,
+            GAIN,
+            Align::Center,
+        );
+    }
+    if let Some(why) = &s.not_saved {
+        c.text(v, why, [800.0, mid(1265.0, 20.0)], 20.0, PINK, Align::Right);
     }
     circle::side_tab(v, c, "RETRY", 700.0, [0.50, 0.75, 1.0, 0.9], Action::Retry);
     circle::go_button(v, c, Action::Confirm);
@@ -442,9 +600,10 @@ mod tests {
         h: 1600.0,
     };
 
-    fn summary(new_best: bool, previous_best: Option<u32>) -> Summary {
+    fn summary(new_best: bool) -> Summary {
         Summary {
             title: "Song".into(),
+            artist: "Artist".into(),
             jacket: "J".into(),
             difficulty: Some(Difficulty::Expert),
             level: Some(12.7),
@@ -460,14 +619,23 @@ mod tests {
                     fast: 4,
                     late: 3,
                 },
+                r_counts: Counts {
+                    marvelous: 7,
+                    miss: 1,
+                    ..Counts::default()
+                },
                 max_combo: 60,
                 total_notes: 100,
                 gauge: 0.85,
             },
             completed: true,
-            previous_best,
             new_best,
             not_saved: None,
+            player: "PLAYER".into(),
+            rating: Rating {
+                before: 1203.9,
+                after: 1210.2,
+            },
         }
     }
 
@@ -475,7 +643,7 @@ mod tests {
         v.items
             .iter()
             .filter_map(|i| match i {
-                Item::Image { key, .. } => Some(key.as_str()),
+                Item::Image { key, .. } | Item::ImagePoly { key, .. } => Some(key.as_str()),
                 _ => None,
             })
             .collect()
@@ -487,10 +655,14 @@ mod tests {
     }
 
     #[test]
-    fn diff_against_previous_best() {
-        assert_eq!(best_diff(950_000, Some(900_000)).unwrap(), "+50,000");
-        assert_eq!(best_diff(900_000, Some(950_000)).unwrap(), "-50,000");
-        assert_eq!(best_diff(1, None), None);
+    fn rating_is_shown_in_whole_points() {
+        assert_eq!(Rating::shown(0.8), 0);
+        assert_eq!(Rating::shown(4.0), 4);
+        assert_eq!(Rating::shown(-1.0), 0);
+        let r = |before, after| Rating { before, after };
+        assert_eq!(r(0.2, 4.0).gain(), Some(4));
+        assert_eq!(r(0.2, 0.8).gain(), None);
+        assert_eq!(r(5.0, 5.0).gain(), None);
     }
 
     #[test]
@@ -515,14 +687,14 @@ mod tests {
 
     #[test]
     fn settled_screen_shows_counts_score_rank_and_record() {
-        let v = view(&summary(true, Some(940_000)), AREA, 10.0);
+        let v = view(&summary(true), AREA, 10.0);
         let text = joined(&v);
         for want in [
-            "Song", "EXPERT", "12+", "0090", "0005", "0002", "0003", "090.0%",
+            "Song", "Artist", "PLAYER", "EXPERT", "12+", "0090", "0005", "0002", "0003", "090.0%",
         ] {
             assert!(text.contains(want), "{want} missing from {text}");
         }
-        for want in ["0004", "0060", "0950000", "940,000", "+10,000"] {
+        for want in ["0004", "0060", "0950000", "(0007)", "(0001)", "1210", "+7"] {
             assert!(text.contains(want), "{want} missing from {text}");
         }
         let img = images(&v);
@@ -532,6 +704,8 @@ mod tests {
             "UI/Textures/FONT/uT_FTrateST00",
             "UI/Textures/FONT/uT_FTnewrecord_00",
             "UI/Textures/FONT/uT_FTcombo00",
+            "UI/Textures/uT_RTrateSBG00",
+            "UI/Textures/uT_RTrateUP00",
         ] {
             assert!(img.contains(&want), "{want} missing from {img:?}");
         }
@@ -545,10 +719,42 @@ mod tests {
     }
 
     #[test]
+    fn counters_use_the_numeral_face() {
+        use wacca_render::text::Face;
+        let v = view(&summary(false), AREA, 10.0);
+        let face = |want: &str| {
+            v.items.iter().find_map(|i| match i {
+                Item::Text { text, face, .. } if text == want => Some(*face),
+                _ => None,
+            })
+        };
+        assert_eq!(face("9"), Some(Face::Numerals));
+        assert_eq!(face("Song"), Some(Face::Ui));
+    }
+
+    #[test]
+    fn bands_follow_the_grade_family() {
+        let keys = |g: Grade| {
+            let mut s = summary(false);
+            s.result.grade = g;
+            images(&view(&s, AREA, 10.0))
+                .into_iter()
+                .filter(|k| k.contains("RTrate") && k.contains("BG"))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        };
+        assert!(keys(Grade::Master).iter().all(|k| k.ends_with("MBG00")));
+        assert!(!keys(Grade::Master).is_empty());
+        assert!(keys(Grade::B).iter().all(|k| k.ends_with("BBG00")));
+        assert!(!keys(Grade::A).is_empty());
+    }
+
+    #[test]
     fn animation_hides_rank_until_stamped_and_counts_score() {
-        let s = summary(false, Some(990_000));
+        let s = summary(false);
         let early = view(&s, AREA, 0.0);
         assert!(!images(&early).iter().any(|k| k.contains("uT_FTrate")));
+        assert!(!images(&early).iter().any(|k| k.contains("BG00")));
         assert!(joined(&early).contains("0000000"));
         assert!(!images(&early).iter().any(|k| k.contains("newrecord")));
         let late = view(&s, AREA, 10.0);
@@ -556,15 +762,19 @@ mod tests {
     }
 
     #[test]
-    fn give_up_and_not_saved_are_shown() {
-        let mut s = summary(false, Some(990_000));
+    fn give_up_not_saved_and_no_gain_are_shown() {
+        let mut s = summary(false);
         s.completed = false;
         s.result.lamp = Lamp::Failed;
         s.not_saved = Some("AUTOPLAY: NOT SAVED".into());
+        s.rating = Rating {
+            before: 3.0,
+            after: 3.0,
+        };
         let v = view(&s, AREA, 10.0);
         let t = v.texts();
         assert!(t.contains(&"GIVEN UP") && t.contains(&"AUTOPLAY: NOT SAVED"));
-        assert!(t.contains(&"990,000"));
         assert!(images(&v).contains(&"UI/Textures/FONT/uT_FTclear_095"));
+        assert!(!images(&v).iter().any(|k| k.contains("RTrateUP")));
     }
 }

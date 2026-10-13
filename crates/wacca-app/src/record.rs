@@ -126,6 +126,7 @@ mod tests {
             grade: Grade::SS,
             lamp: Lamp::Clear,
             counts: Counts::default(),
+            r_counts: Counts::default(),
             max_combo: 10,
             total_notes: 10,
             gauge: 0.9,

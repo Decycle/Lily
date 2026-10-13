@@ -98,6 +98,8 @@ pub struct PlayResult {
     pub grade: Grade,
     pub lamp: Lamp,
     pub counts: Counts,
+    /// Judgements of R notes only (`fast`/`late` unused).
+    pub r_counts: Counts,
     pub max_combo: u32,
     pub total_notes: u32,
     /// Final gauge fill, 0..=1.
