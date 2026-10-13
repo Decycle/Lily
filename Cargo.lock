@@ -2142,6 +2142,7 @@ dependencies = [
  "env_logger",
  "log",
  "png",
+ "pollster",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -2150,6 +2151,7 @@ dependencies = [
  "wacca-game",
  "wacca-render",
  "wacca-video",
+ "wgpu",
 ]
 
 [[package]]

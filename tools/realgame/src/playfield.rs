@@ -258,6 +258,42 @@ pub fn nearest_run(runs: &[(f64, f64)], expected: f64, tolerance: f64) -> Option
         .min_by(|a, b| (a - expected).abs().total_cmp(&(b - expected).abs()))
 }
 
+/// The time shift from `deltas` under which most `(tau, runs)` samples have a run edge within 3 px + 4 % of the
+/// radius `model` predicts (its own `delta` replaced); returns `(delta, matches)`. Used per song segment to check
+/// that the game's visual clock keeps a constant offset to the audio.
+pub fn best_delta(
+    samples: &[(f64, &[(f64, f64)])],
+    model: &Approach,
+    deltas: &[f64],
+) -> Option<(f64, usize)> {
+    deltas
+        .iter()
+        .map(|&delta| {
+            let m = Approach { delta, ..*model };
+            let n = samples
+                .iter()
+                .filter(|(tau, runs)| {
+                    model_radius(*tau, &m)
+                        .filter(|&e| e >= 20.0)
+                        .is_some_and(|e| runs.iter().any(|r| (r.1 - e).abs() <= 3.0 + 0.04 * e))
+                })
+                .count();
+            (delta, n)
+        })
+        .filter(|&(_, n)| n > 0)
+        .max_by_key(|&(_, n)| n)
+}
+
+/// Indices `i` where `values[i + 1]` differs from `values[i]` by more than `limit`.
+pub fn jumps(values: &[f64], limit: f64) -> Vec<usize> {
+    values
+        .windows(2)
+        .enumerate()
+        .filter(|(_, w)| (w[1] - w[0]).abs() > limit)
+        .map(|(i, _)| i)
+        .collect()
+}
+
 /// Evenly spaced grid `from..=to`.
 pub fn grid(from: f64, to: f64, step: f64) -> Vec<f64> {
     let n = ((to - from) / step).round() as usize;
@@ -340,6 +376,27 @@ mod tests {
             Some(60.0)
         );
         assert_eq!(nearest_run(&[(10.0, 20.0)], 55.0, 10.0), None);
+    }
+
+    #[test]
+    fn segment_delta_and_jumps() {
+        let m = Approach {
+            t: 2.2,
+            k: 0.75,
+            r: 290.0,
+            delta: 0.0,
+        };
+        let shifted = Approach { delta: -0.09, ..m };
+        let runs: Vec<(f64, Vec<(f64, f64)>)> = (1..150)
+            .map(|i| 0.01 * f64::from(i))
+            .filter_map(|tau| model_radius(tau, &shifted).map(|r| (tau, vec![(r - 10.0, r)])))
+            .collect();
+        let samples: Vec<(f64, &[(f64, f64)])> =
+            runs.iter().map(|(t, r)| (*t, r.as_slice())).collect();
+        let (d, n) = best_delta(&samples, &m, &grid(-0.3, 0.3, 0.01)).unwrap();
+        assert!((d + 0.09).abs() < 0.006 && n > 100, "{d} {n}");
+        assert_eq!(best_delta(&[], &m, &[0.0]), None);
+        assert_eq!(jumps(&[-0.085, -0.085, 0.03, 0.03], 0.03), [1]);
     }
 
     #[test]
