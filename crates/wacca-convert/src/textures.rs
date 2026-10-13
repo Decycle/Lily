@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use wacca_ue4::{PixelFormat, Texture, Ue4Error};
 
@@ -88,24 +89,41 @@ fn export_texture(uasset: &Path, png_path: &Path) -> Result<PixelFormat, Error> 
     Ok(texture.format)
 }
 
-/// Exports `(uasset, png)` pairs on all cores.
-pub fn export_all(jobs: &[(PathBuf, PathBuf)]) -> Summary {
+/// Exports `(uasset, png)` pairs on all cores. `progress(done, total)` is polled from the calling
+/// thread about every 100 ms; returning `false` stops the workers and makes this return `None`.
+pub fn export_all(
+    jobs: &[(PathBuf, PathBuf)],
+    progress: &mut dyn FnMut(usize, usize) -> bool,
+) -> Option<Summary> {
     let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
     let chunk = jobs.len().div_ceil(threads).max(1);
     let mut summary = Summary::default();
+    let done = AtomicUsize::new(0);
+    let cancel = AtomicBool::new(false);
     std::thread::scope(|s| {
+        let (done, cancel) = (&done, &cancel);
         let handles: Vec<_> = jobs
             .chunks(chunk)
             .map(|jobs| {
                 s.spawn(move || {
                     let mut sum = Summary::default();
                     for (src, dst) in jobs {
+                        if cancel.load(Ordering::Relaxed) {
+                            break;
+                        }
                         sum.record(src, export_texture(src, dst));
+                        done.fetch_add(1, Ordering::Relaxed);
                     }
                     sum
                 })
             })
             .collect();
+        while !handles.iter().all(|h| h.is_finished()) {
+            if !progress(done.load(Ordering::Relaxed), jobs.len()) {
+                cancel.store(true, Ordering::Relaxed);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
         for h in handles {
             match h.join() {
                 Ok(part) => summary.add(part),
@@ -113,7 +131,10 @@ pub fn export_all(jobs: &[(PathBuf, PathBuf)]) -> Summary {
             }
         }
     });
-    summary
+    if cancel.load(Ordering::Relaxed) || !progress(jobs.len(), jobs.len()) {
+        return None;
+    }
+    Some(summary)
 }
 
 /// `S03/uT_J_S03_30` → (`<assets>/UI/Textures/JACKET/S03/uT_J_S03_30.uasset`, `<out>/jackets/S03/uT_J_S03_30.png`).
@@ -216,6 +237,19 @@ mod tests {
         assert!(!is_plain_relative(Path::new("../x")));
         assert!(!is_plain_relative(Path::new("")));
         assert!(!is_plain_relative(Path::new("/abs")));
+    }
+
+    #[test]
+    fn export_all_reports_progress_and_cancels() {
+        let jobs = vec![(PathBuf::from("missing.uasset"), PathBuf::from("x.png")); 3];
+        let mut seen = Vec::new();
+        let s = export_all(&jobs, &mut |d, t| {
+            seen.push((d, t));
+            true
+        })
+        .unwrap();
+        assert_eq!((s.failed, seen.last()), (3, Some(&(3, 3))));
+        assert!(export_all(&jobs, &mut |_, _| false).is_none());
     }
 
     #[test]
