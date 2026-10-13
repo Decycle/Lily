@@ -11,7 +11,7 @@ use std::f32::consts::TAU;
 use wacca_chart::{Chart, HoldNode, LANES, MaskDir, MaskEvent};
 
 use crate::camera;
-use crate::style::{SENSOR_DEPTHS, SENSOR_INNER, SENSOR_OUTER};
+use crate::style::{SCREEN_EDGE, SENSOR_DEPTHS, SENSOR_INNER, SENSOR_OUTER, VIEW_EXTENT};
 
 /// Seconds from spawn (scale 0) to the judgement line (scale 1) at note speed 1.0: exactly 10/3 s
 /// (RenderDoc note matrices, doc 11 §2.4: ds/dt = 0.45/s at speed 1.5). E2's 3.29 s came from
@@ -423,15 +423,49 @@ pub fn letterbox(w: f32, h: f32) -> Rect {
     }
 }
 
-/// Square viewport for the playfield: the largest square centred in the `w × h` window (full
-/// height on a landscape screen). Touch input maps through the same rectangle.
+/// The original portrait frame (1080 × 1920, see [`letterbox`]) and the centre of the round
+/// screen in it (measured on real frames).
+pub const PORTRAIT_FRAME: [f32; 2] = [1080.0, 1920.0];
+pub const PORTRAIT_RING_CENTER: [f32; 2] = [540.0, 900.0];
+
+/// Square viewport for the playfield, shared by play and the menus (via [`ring`]); touch input
+/// maps through the same rectangle. Landscape window: the full height, centred. Portrait
+/// window: the round screen of the original 9:16 frame ([`letterbox`]), as wide as the frame.
 pub fn playfield_viewport(w: f32, h: f32) -> Rect {
-    let side = w.min(h);
+    if w >= h {
+        return Rect {
+            x: (w - h) / 2.0,
+            y: 0.0,
+            w: h,
+            h,
+        };
+    }
+    let frame = letterbox(w, h);
+    let s = frame.w / PORTRAIT_FRAME[0];
+    let side = frame.w;
+    let [cx, cy] = PORTRAIT_RING_CENTER;
     Rect {
-        x: (w - side) / 2.0,
-        y: (h - side) / 2.0,
+        x: frame.x + cx * s - side / 2.0,
+        y: frame.y + cy * s - side / 2.0,
         w: side,
         h: side,
+    }
+}
+
+/// The visible round screen in window pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ring {
+    pub center: [f32; 2],
+    pub radius: f32,
+}
+
+/// The round screen of a `w × h` window: the outer edge of the play screen's rim
+/// ([`SCREEN_EDGE`] in [`playfield_viewport`]). The menus draw their circle on it.
+pub fn ring(w: f32, h: f32) -> Ring {
+    let vp = playfield_viewport(w, h);
+    Ring {
+        center: [vp.x + vp.w / 2.0, vp.y + vp.h / 2.0],
+        radius: vp.w / 2.0 * SCREEN_EDGE / VIEW_EXTENT,
     }
 }
 
@@ -477,7 +511,7 @@ mod tests {
     #[test]
     fn radius_curve_endpoints_and_monotonic() {
         // 172.5 cm at 190 cm from the camera, NDC 1 = VIEW_EXTENT.
-        let e = crate::style::VIEW_EXTENT;
+        let e = VIEW_EXTENT;
         assert!(close(depth_to_radius(0.0), e * 172.5 / 190.0));
         assert!(close(depth_to_radius(1.0), 0.0));
         let rs: Vec<f32> = (0..=100)
@@ -687,7 +721,8 @@ mod tests {
                 h: 1600.0
             }
         );
-        // Playfield square: full width in portrait, full height in landscape.
+        // Playfield square: full height in landscape; in portrait the round screen of the 9:16
+        // frame (centre at 900 / 1920 of its height).
         let p = playfield_viewport(1920.0, 1200.0);
         assert_eq!(
             p,
@@ -703,11 +738,25 @@ mod tests {
             p,
             Rect {
                 x: 0.0,
-                y: 350.0,
+                y: 300.0,
                 w: 900.0,
                 h: 900.0
             }
         );
+        // Wider than 9:16 but still portrait: the frame is height-fitted.
+        let p = playfield_viewport(900.0, 1200.0);
+        assert_eq!((p.x, p.w, p.y + p.h / 2.0), (112.5, 675.0, 562.5));
+    }
+
+    #[test]
+    fn ring_is_the_rim_edge_of_the_playfield() {
+        let r = ring(1920.0, 1200.0);
+        assert_eq!(r.center, [960.0, 600.0]);
+        assert!((r.radius - 600.0 * SCREEN_EDGE / VIEW_EXTENT).abs() < 1e-3);
+        // Inside the viewport, a few percent short of its edge.
+        assert!(r.radius < 600.0 && r.radius > 570.0);
+        let r = ring(900.0, 1600.0);
+        assert_eq!(r.center, [450.0, 750.0]);
     }
 
     #[test]

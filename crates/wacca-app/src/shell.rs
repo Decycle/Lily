@@ -11,7 +11,7 @@ use wacca_audio::{BgmBank, DEFAULT_SE_SET, HitSounds, Player, SeBank};
 use wacca_game::grade::PlayResult;
 use wacca_game::rating;
 use wacca_game::save::{self, SaveData};
-use wacca_render::layout::{Rect, letterbox, playfield_viewport};
+use wacca_render::layout::{Rect, playfield_viewport};
 use wacca_render::text::{Fonts, TextRenderer};
 use wacca_render::{JudgeSprite, MeshVertex, Renderer, Sprite, SpriteSheet, Vertex};
 use winit::application::ApplicationHandler;
@@ -73,6 +73,8 @@ pub struct Setup {
     pub menu: Menu,
     /// Play this right away (`--chart`).
     pub start: Option<PlaySpec>,
+    /// Open this menu screen instead of the title (`--screen`).
+    pub screen: Option<Screen>,
     pub windowed: bool,
     /// External decoder for background movies (`None` = no movies).
     pub ffmpeg: Option<PathBuf>,
@@ -522,12 +524,6 @@ impl App {
         self.gfx.as_ref().map_or([1.0, 1.0], Gfx::size)
     }
 
-    /// The 9:16 menu area.
-    fn area(&self) -> Rect {
-        let [w, h] = self.size();
-        letterbox(w, h)
-    }
-
     fn view(&self) -> View {
         let [w, h] = self.size();
         let Some((from, at)) = self.wipe else {
@@ -543,7 +539,6 @@ impl App {
     }
 
     fn screen_view(&self, screen: Screen) -> View {
-        let area = self.area();
         let m = &self.s.menu;
         let [w, h] = self.size();
         let canvas = Canvas::fit(w, h);
@@ -557,16 +552,16 @@ impl App {
             Screen::SongSelect => select_ui::view(canvas, &m.list, self.wheel, &self.s.save),
             Screen::Options => {
                 let title = m.list.current().map_or("", |s| s.title.as_str());
-                options::view(&m.options, &m.settings, m.autoplay, title, area)
+                options::view(&m.options, &m.settings, m.autoplay, title, canvas)
             }
             Screen::Calibrate => {
                 let pos = self.s.player.position();
-                calibrate::view(&m.calibration, &m.settings, pos, area)
+                calibrate::view(&m.calibration, &m.settings, pos, canvas)
             }
             Screen::Results => self
                 .summary
                 .as_ref()
-                .map(|s| results::view(s, area, self.results_at.elapsed().as_secs_f32()))
+                .map(|s| results::view(s, canvas, self.results_at.elapsed().as_secs_f32()))
                 .unwrap_or_default(),
             Screen::Play => {
                 let [w, h] = self.size();
@@ -1056,6 +1051,12 @@ impl App {
             ms(t.elapsed()),
             ms(self.s.started.elapsed())
         );
+        if let Some(s) = self.s.screen.take() {
+            if s == Screen::Calibrate {
+                self.start_calibration();
+            }
+            self.screen = s;
+        }
         if let Some(spec) = self.s.start.take() {
             self.start_play(spec);
         }

@@ -238,6 +238,7 @@ fn run(args: &Args, started: std::time::Instant) -> Result<(), Error> {
             save,
             menu,
             start,
+            screen: args.screen,
             windowed: args.windowed,
             ffmpeg,
             started,
