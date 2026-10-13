@@ -4,7 +4,7 @@
 //! on the real frames (`runs/e2/*/nav-*.png`, 0.625 px per unit, centre (337.5, 563)).
 
 use wacca_render::style::Rgba;
-use wacca_render::text::Align;
+use wacca_render::text::{Align, Face};
 
 use crate::canvas::{MID, Painter, hex};
 use crate::ui::Action;
@@ -27,6 +27,7 @@ pub enum Icon {
     Right,
     Left,
     Plus,
+    Options,
 }
 
 impl Icon {
@@ -38,6 +39,7 @@ impl Icon {
             Icon::Right => (0.0, 3.0),
             Icon::Left => (1.0, 3.0),
             Icon::Plus => (2.0, 3.0),
+            Icon::Options => (1.0, 1.0),
         }
     }
 
@@ -59,30 +61,9 @@ pub fn icon(p: &mut Painter, icon: Icon, at: [f32; 2], side: f32, degrees: f32) 
     );
 }
 
-/// Grid background behind the menus (the blue tile pattern of the select screens).
-// UNVERIFIED: approximates the `uM_WCbg000`-style material backdrop with flat tiles.
+/// Backdrop of the select menus: the animated `uM_WCbg000` material (BP_Select01).
 pub fn background(p: &mut Painter) {
-    p.fill([0.0, 0.0], [1080.0, 1080.0], MID, hex(0x2f5bcf, 1.0));
-    let line = hex(0x1f0a5c, 0.85);
-    let cell = 22.0;
-    for i in -25..=25 {
-        let x = i as f32 * cell;
-        p.fill([x, 0.0], [3.0, 1080.0], MID, line);
-        p.fill([0.0, x], [1080.0, 3.0], MID, line);
-    }
-    // Darker purple towards the rim, as on the frames.
-    p.fill(
-        [0.0, -540.0],
-        [1080.0, 250.0],
-        [0.5, 0.0],
-        hex(0x2a0a6a, 0.55),
-    );
-    p.fill(
-        [0.0, 540.0],
-        [1080.0, 120.0],
-        [0.5, 1.0],
-        hex(0x3a0a70, 0.6),
-    );
+    p.backdrop();
 }
 
 /// What the user plate shows (from the save: settings, play count, RP and rating).
@@ -112,8 +93,10 @@ impl Default for Player {
 }
 
 /// Plate label grey (`Title`, `Lv.`, `RP`).
-const PLATE_LABEL: Rgba = hex(0x8a8a90, 1.0);
-const PLATE_INK: Rgba = hex(0x13142d, 1.0);
+const PLATE_LABEL: Rgba = hex(0x8f8f8f, 1.0);
+/// `t_v_lv` / `t_v_wp` (linear 0.070) and the name (`TextBlock_5`, linear (0.0065, 0.007, 0.026)).
+const VALUE_INK: Rgba = hex(0x4b4b4b, 1.0);
+const NAME_INK: Rgba = hex(0x15162c, 1.0);
 
 /// `BP_Circle_user`: plate `uT_US_1` hanging from the top, title line, level and RP, user icon,
 /// name and rating. Text positions measured on `runs/e3/*/nav-08-mode-select.png`.
@@ -129,22 +112,19 @@ pub fn user_plate(p: &mut Painter, who: &Player) {
         0.0,
         WHITE,
     );
-    // Guest icon: a black "C" in a ring.
-    // UNVERIFIED: the real ring is a pink → blue → yellow gradient; drawn in the accent pink.
-    let at = [-247.0, -360.0];
-    p.tex("uT_CMen256_00", at, [118.0, 118.0], hex(0xdddddd, 1.0));
-    p.tex("uT_CMen256_00", at, [104.0, 104.0], PINK);
-    p.tex("uT_CMen256_00", at, [84.0, 84.0], WHITE);
-    p.text(
-        "C",
-        [at[0], at[1] + 4.0],
-        50.0,
-        hex(0x111111, 1.0),
-        Align::Center,
+    // The guest's user icon (the "C" in the gradient ring), measured on the E3 frames.
+    p.image(
+        "UI/Textures/USERICON/S01/uT_UICN_S01_00_001",
+        [-249.0, -360.0],
+        [130.0, 130.0],
+        MID,
+        full,
+        0.0,
+        WHITE,
     );
-    p.text(&who.name, [-161.0, -350.0], 22.0, PLATE_INK, Align::Left);
+    p.kakugo(&who.name, [-159.0, -350.0], 20.0, 4.0, NAME_INK);
     let title = hex(0xc4c4cc, 1.0);
-    p.text("Title", [-232.0, -459.0], 7.0, title, Align::Left);
+    p.text("Title", [-232.0, -459.0], 9.0, title, Align::Left);
     p.text_fit(
         who.title.clone(),
         [-193.0, -459.0],
@@ -153,8 +133,8 @@ pub fn user_plate(p: &mut Painter, who: &Player) {
         Align::Left,
         Some(330.0),
     );
-    p.text("Lv.", [-188.0, -413.0], 6.0, PLATE_LABEL, Align::Left);
-    let ink = PLATE_INK;
+    p.text("Lv.", [-190.0, -413.0], 9.0, PLATE_LABEL, Align::Left);
+    let ink = VALUE_INK;
     p.text(
         who.level.to_string(),
         [-104.0, -412.0],
@@ -162,26 +142,31 @@ pub fn user_plate(p: &mut Painter, who: &Player) {
         ink,
         Align::Right,
     );
-    p.text("RP", [-80.0, -413.0], 6.0, PLATE_LABEL, Align::Left);
+    p.text("RP", [-82.0, -413.0], 9.0, PLATE_LABEL, Align::Left);
     p.text(who.rp.to_string(), [5.0, -412.0], 15.0, ink, Align::Right);
-    p.text("Rate:", [308.0, -342.0], 7.0, WHITE, Align::Center);
+    p.text("Rate:", [308.0, -342.0], 9.0, WHITE, Align::Center);
     p.numerals(
         who.rate.to_string(),
-        [340.0, -317.0],
-        22.0,
+        [345.0, -318.0],
+        28.0,
         ink,
         Align::Right,
     );
 }
 
-/// The arcade's menu countdown: two pink digits above GO (`LimitationTimeTable`; E3 frames,
-/// centre (0, 450)). Only drawn with the `menu_timers` setting.
+/// The arcade's menu countdown (`BP_Time02`): two pink `SHINBI` digits, UMG size 25 with a
+/// 1-unit violet outline, above GO (`LimitationTimeTable`; E3 frames, centre (0, 450)). Only
+/// drawn with the `menu_timers` setting.
 pub fn countdown(p: &mut Painter, secs: u32) {
     let text = format!("{:02}", secs.min(99));
-    let (at, px) = ([0.0, 449.0], 34.0);
-    let rim = hex(0xffffff, 0.8);
-    p.numerals(text.clone(), [at[0], at[1] + 1.5], px, rim, Align::Center);
-    p.numerals(text, at, px, hex(0xff14b4, 1.0), Align::Center);
+    let (at, size) = ([0.0, 449.0], 25.0);
+    let style = (Align::Center, Face::Shinbi);
+    // Outline (linear (0.227, 0, 0.352)) as offset copies.
+    let rim = hex(0x8300a0, 1.0);
+    for (dx, dy) in [(-1.5, 0.0), (1.5, 0.0), (0.0, -1.5), (0.0, 1.5)] {
+        p.text_face(text.clone(), [at[0] + dx, at[1] + dy], size, rim, style);
+    }
+    p.text_face(text, at, size, PINK, style);
 }
 
 /// Which rim buttons a screen shows.
@@ -211,7 +196,7 @@ fn wedge(p: &mut Painter, degrees: f32, radius: f32, size: [f32; 2], tint: Rgba)
 pub fn go(p: &mut Painter) {
     wedge(p, 0.0, 480.0, [230.0, 110.0], DECIDE_BTN);
     icon(p, Icon::Go, [-20.0, 487.0], 40.0, 0.0);
-    p.text("GO", [22.0, 487.0], 22.0, WHITE, Align::Center);
+    p.text("GO", [22.0, 487.0], 27.0, WHITE, Align::Center);
     p.button([0.0, 480.0], [200.0, 90.0], Action::Confirm);
 }
 
@@ -226,22 +211,31 @@ pub fn retry_tab(p: &mut Painter) {
     p.button([190.0, 452.0], [130.0, 90.0], Action::Retry);
 }
 
+/// The DIFFICULTY button on the left rim.
+pub fn difficulty(p: &mut Painter) {
+    icon(p, Icon::Plus, [-492.0, -2.0], 30.0, 0.0);
+    p.text_turned("DIFFICULTY", [-488.0, 63.0], 13.0, WHITE, 90.0);
+    p.button([-480.0, 50.0], [70.0, 140.0], Action::Difficulty);
+}
+
+/// The BACK wedge, lower left.
+pub fn back(p: &mut Painter) {
+    wedge(p, 51.0, 470.0, [170.0, 110.0], hex(0x6a1fb0, 0.9));
+    icon(p, Icon::Back, [-380.0, 310.0], 34.0, 0.0);
+    p.text_turned("BACK", [-352.0, 336.0], 12.0, WHITE, 51.0);
+    p.button([-365.0, 325.0], [110.0, 90.0], Action::Back);
+}
+
 /// The buttons around the rim: DIFFICULTY (left), BACK, SORT, the two arrows and GO.
 pub fn rim(p: &mut Painter, b: RimButtons) {
     go(p);
     for d in [27.0, -27.0] {
         wedge(p, d, 470.0, [190.0, 120.0], hex(0x1a4fb8, 0.9));
     }
-    if b.back {
-        wedge(p, 51.0, 470.0, [170.0, 110.0], hex(0x6a1fb0, 0.9));
-    }
     if b.sort.is_some() {
         wedge(p, -46.0, 470.0, [170.0, 110.0], MENU_BTN);
     }
-
-    icon(p, Icon::Plus, [-492.0, -2.0], 30.0, 0.0);
-    p.text_turned("DIFFICULTY", [-488.0, 63.0], 13.0, WHITE, 90.0);
-    p.button([-480.0, 50.0], [70.0, 140.0], Action::Difficulty);
+    difficulty(p);
 
     icon(p, Icon::Left, [-223.0, 438.0], 36.0, 45.0);
     p.button([-223.0, 438.0], [110.0, 90.0], Action::Left);
@@ -249,9 +243,7 @@ pub fn rim(p: &mut Painter, b: RimButtons) {
     p.button([222.0, 437.0], [110.0, 90.0], Action::Right);
 
     if b.back {
-        icon(p, Icon::Back, [-380.0, 310.0], 34.0, 0.0);
-        p.text_turned("BACK", [-352.0, 336.0], 12.0, WHITE, 51.0);
-        p.button([-365.0, 325.0], [110.0, 90.0], Action::Back);
+        back(p);
     }
     if let Some(order) = b.sort {
         icon(p, Icon::Sort, [348.0, 341.0], 34.0, 0.0);

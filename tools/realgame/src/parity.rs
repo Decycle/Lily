@@ -257,6 +257,15 @@ pub fn margin_frames(
         Some(Probe::HoldRelease { ms }) => {
             (ms - clock_f * FRAME_SECS * 1000.0 - allowance - hold_end).abs()
         }
+        // A held chain contact (E5): its release against the window edges (`offset_f` is its onset).
+        Some(Probe::Press { from_ms, to_ms }) => {
+            edges(table, class)
+                .iter()
+                .map(|e| ((offset_f + (to_ms - from_ms) / (FRAME_SECS * 1000.0)) - e).abs())
+                .fold(f64::INFINITY, f64::min)
+                * FRAME_SECS
+                * 1000.0
+        }
         _ => f64::INFINITY,
     } / (FRAME_SECS * 1000.0);
     window.min(rule)
@@ -316,6 +325,11 @@ pub fn probe_text(p: Option<Probe>) -> String {
         Some(Probe::HoldRelease { ms }) => format!("release {ms:.0} ms before end"),
         Some(Probe::SlideJump { lanes }) => format!("jump {lanes:.1} lanes"),
         Some(Probe::SnapMove { from, to }) => format!("ring {from}→{to}"),
+        Some(Probe::Press { from_ms, to_ms }) => format!(
+            "press {:+.1}..{:+.1} f",
+            from_ms / (FRAME_SECS * 1000.0),
+            to_ms / (FRAME_SECS * 1000.0)
+        ),
     }
 }
 

@@ -15,13 +15,13 @@ Priority: **1) play area — fully faithful visual + control port**, 2) menus, 3
 - [x] Extract + disassemble the game's compiled shaders (d3dcompiler_47 `D3DDisassemble`), map shader → element (doc 11 §1)
 - [x] RenderDoc capture of a real gameplay frame (draw order, blend states, constants, meshes) — 16 captures, exact camera/transforms, port spec (doc 11 §2–3)
 - [x] Real note meshes in our renderer (601 meshes; real camera; ported note shader; bar lines) — ring/lanes in progress
-- [~] Port key shaders to WGSL — done: notes (all types, R aura, sync band), hold ribbons + end caps, chevrons, snap arrows, guide lanes + ring, movie, colour pipeline (1–3/255 vs RenderDoc frames); sync connector (opaque, from assets + KING frames); in progress: hit effects
-- [ ] Side-by-side audit vs real frames: every difference fixed or listed
+- [x] Port key shaders to WGSL — done: notes (all types, R aura, sync band), hold ribbons + end caps, chevrons, snap arrows, guide lanes + ring, movie, colour pipeline (1–3/255 vs RenderDoc frames); sync connector (opaque, from assets + KING frames), hit effects (Cascade particle systems + 8 ported Vfx materials)
+- [~] Side-by-side audit vs real frames: every difference fixed or listed (final audit running → doc 13)
 
 ## 1. Play area: controls
 - [x] E3: real judgement windows per class, hold drop, slide/snap thresholds (doc 10; chord rule + snap-out + Hard not measured)
 - [x] Apply E3 to the judge engine (175 ms drop, HoldEnd free window, missed+dropped = Miss; autoplay perfect on all 1,247 charts, mirrored too)
-- [~] KING capture: Miss / snap / R / bonus references captured (runs/e2/20261013-043842); matching in progress
+- [x] KING capture: Miss / snap / R / bonus references captured and used (R aura, sync band, snap arrows, effects); E4/E5 parity: 0 disagreements >1 frame from an edge on 1,267 real notes
 - [x] Performance + latency (dGPU, 120 Hz, low-latency audio, input timestamps) — frame pacing: display wait 7.0→1.5 ms/frame; async image decode; F3 overlay
 - [x] Timing calibration screen (unit-tested; live tap check blocked by permission system → user to try by hand)
 

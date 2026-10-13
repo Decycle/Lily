@@ -251,6 +251,7 @@ pub fn view(s: &Summary, menu: crate::canvas::Canvas, t: f32) -> View {
     let mut v = View::default();
     let c = Canvas::new(menu);
     circle::background(&mut v, &c);
+    ring(&mut v, &c);
     let e = ease(t, INFO_AT, SLIDE);
     info(&mut v, &c.moved([700.0 * (1.0 - e), 0.0], e), s);
     let e = ease(t, LIST_AT, SLIDE);
@@ -269,6 +270,38 @@ pub fn view(s: &Summary, menu: crate::canvas::Canvas, t: f32) -> View {
     v.items.extend(top.items);
     v.buttons.extend(top.buttons);
     v
+}
+
+/// Bands of the ring art behind the panels (`uM_Ring01` / `BP_Circle_Text` in `BP_Result`):
+/// (inner, outer radius in canvas units, colour), measured on the E3 result frames along the
+/// rim left of GO: a dark band (behind the ring letters), the teal ring, a dark purple rim.
+// UNVERIFIED: the ring's letters (grey with a pink outline, mostly hidden by the panels) are
+// left out, and the colours are the B-grade frame's (the ring may follow the grade).
+const RING: [(f32, f32, Rgba); 3] = [
+    (260.0, 442.0, [0.086, 0.090, 0.133, 1.0]),
+    (442.0, 502.0, [0.055, 0.608, 0.525, 1.0]),
+    (502.0, 540.0, [0.239, 0.184, 0.282, 1.0]),
+];
+
+/// The ring art, only between the two pink stripes of [`circle::background`].
+fn ring(v: &mut View, c: &Canvas) {
+    let between = slab(607.0, 380.0, 738.0, 1100.0);
+    const SEGMENTS: usize = 72;
+    let [cx, cy] = circle::CENTER;
+    for (r0, r1, color) in RING {
+        for i in 0..SEGMENTS {
+            let a = |k: usize| k as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+            let at = |r: f32, k: usize| [cx + r * a(k).cos(), cy + r * a(k).sin()];
+            let quad = [at(r0, i), at(r0, i + 1), at(r1, i + 1), at(r1, i)];
+            // Clockwise on screen, like the clip polygon.
+            let quad: Vec<_> = quad.iter().rev().map(|&p| (p, color)).collect();
+            let part = circle::clip(&quad, &between);
+            if part.len() >= 3 {
+                let pts: Vec<_> = part.iter().map(|&(p, _)| p).collect();
+                c.panel(v, &pts, &[color]);
+            }
+        }
+    }
 }
 
 /// Jacket, difficulty tag, title, artist and lamp.

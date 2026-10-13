@@ -36,8 +36,8 @@ const fn row(m: (f64, f64), g: (f64, f64), gd: (f64, f64)) -> JudgeWindows {
 
 impl JudgeTable {
     /// `JudgeParameterTable` of WACCA Reverse 3.07.01 (`docs/research/02-data-tables.md` §2).
-    /// `AdjustRateFront/Rear` (Chain front = 20 %) is not applied: the real game's chain early
-    /// window is ≈ 4 f, not 0.8 f. Touch / hold / chain / slide windows are confirmed in
+    /// `AdjustRateFront/Rear` (Chain front = 20 %) is not applied: the real game's chain window
+    /// is ≈ ±4 f on any touch, not 0.8 or 3.2 f early (doc 10 §9). Touch / hold / chain / slide windows are confirmed in
     /// continuous time (`docs/research/10-e3-judge-results.md` §0, §6.4); snap windows are
     /// consistent with the few measured samples.
     pub fn reverse() -> Self {

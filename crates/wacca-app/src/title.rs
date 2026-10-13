@@ -65,8 +65,8 @@ pub fn view(c: Canvas, t: f32) -> View {
     );
     p.image(
         "UI/Textures/LOGO/uT_LG04",
-        [0.0, 6.0],
-        [1060.0, 265.0],
+        [0.0, -5.0],
+        [993.0, 248.0],
         MID,
         FULL,
         0.0,
@@ -195,8 +195,8 @@ fn arc_text(p: &mut Painter, s: &str, r: f32, start: f32, advance: f32, size: f3
 fn plate(p: &mut Painter) {
     p.tex_ex(
         "uT_CMfukidasi00",
-        [-360.0, 344.0],
-        [1000.0, 230.0],
+        [-344.0, 320.0],
+        [860.0, 198.0],
         [0.0, 0.5],
         FULL,
         0.0,
@@ -205,12 +205,12 @@ fn plate(p: &mut Painter) {
     let ink = hex(PLATE_TEXT, 1.0);
     p.text(
         "Touch the glowing area",
-        [57.0, 310.0],
-        21.0,
+        [76.0, 299.0],
+        16.0,
         ink,
         Align::Center,
     );
-    p.text("to start!", [57.0, 346.0], 21.0, ink, Align::Center);
+    p.text("to start!", [76.0, 329.0], 16.0, ink, Align::Center);
 }
 
 /// The glowing START area at the bottom of the rim (the decide wedge of `BP_Circle_menu_btn`).
@@ -219,13 +219,13 @@ fn start_button(p: &mut Painter) {
     for _ in 0..2 {
         p.tex(
             "uT_CMbtn005",
-            [0.0, 455.0],
-            [270.0, 270.0],
+            [0.0, 440.0],
+            [300.0, 300.0],
             hex(START_BTN, 1.0),
         );
     }
-    chrome::icon(p, Icon::Go, [-60.0, 491.0], 44.0, 0.0);
-    p.text("START", [25.0, 491.0], 26.0, WHITE, Align::Center);
+    chrome::icon(p, Icon::Go, [-60.0, 475.0], 44.0, 0.0);
+    p.text("START", [19.0, 475.0], 32.0, WHITE, Align::Center);
 }
 
 #[cfg(test)]

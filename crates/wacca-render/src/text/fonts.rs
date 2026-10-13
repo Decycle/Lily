@@ -18,13 +18,29 @@ pub enum Face {
     Ui,
     /// The numeral face of [`Fonts::with_numerals`] for the characters it has, else [`Face::Ui`].
     Numerals,
+    /// The `Kakugo_kana` UMG font (player name) of [`Fonts::with_face`], else [`Face::Ui`].
+    Kakugo,
+    /// `SHINBI` (menu countdown digits) of [`Fonts::with_face`], else [`Face::Ui`].
+    Shinbi,
+}
+
+impl Face {
+    /// Slot in [`Fonts`]'s special faces (`None` for the fallback chain).
+    fn slot(self) -> Option<usize> {
+        match self {
+            Face::Ui => None,
+            Face::Numerals => Some(0),
+            Face::Kakugo => Some(1),
+            Face::Shinbi => Some(2),
+        }
+    }
 }
 
 /// Loaded fonts in priority order (never empty), plus an optional numeral face.
 pub struct Fonts {
     faces: Vec<(PathBuf, FontVec)>,
-    /// Index into `faces` of the numeral face (kept last, out of the fallback chain).
-    numerals: Option<usize>,
+    /// Indices into `faces` of the special faces ([`Face::slot`]), kept after the fallback chain.
+    special: [Option<usize>; 3],
 }
 
 impl std::fmt::Debug for Fonts {
@@ -61,33 +77,55 @@ impl Fonts {
         );
         Ok(Self {
             faces,
-            numerals: None,
+            special: [None; 3],
         })
     }
 
     /// Use face `index` of `path` for [`Face::Numerals`] (skipped with a warning if unreadable).
-    pub fn with_numerals(mut self, path: &Path, index: u32) -> Self {
+    pub fn with_numerals(self, path: &Path, index: u32) -> Self {
+        self.with_face(Face::Numerals, path, index)
+    }
+
+    /// Use face `index` of `path` for `face` (not [`Face::Ui`]; skipped with a warning if
+    /// unreadable).
+    pub fn with_face(mut self, face: Face, path: &Path, index: u32) -> Self {
+        let Some(slot) = face.slot() else {
+            return self;
+        };
         match load_face(path, index) {
             Some(f) => {
-                log::info!("numerals: {} #{index}", path.display());
+                log::info!("{face:?}: {} #{index}", path.display());
                 self.faces.push((path.to_path_buf(), f));
-                self.numerals = Some(self.faces.len() - 1);
+                self.special[slot] = Some(self.faces.len() - 1);
             }
-            None => log::warn!("numeral font {} #{index} not loaded", path.display()),
+            None => log::warn!("{face:?} font {} #{index} not loaded", path.display()),
         }
         self
     }
 
+    /// End of the fallback chain in `faces`.
+    fn chain_len(&self) -> usize {
+        self.special
+            .iter()
+            .flatten()
+            .copied()
+            .min()
+            .unwrap_or(self.faces.len())
+    }
+
+    fn special(&self, face: Face) -> Option<usize> {
+        face.slot().and_then(|s| self.special[s])
+    }
+
     /// Face index and glyph of `c`; the first face's missing-glyph box if no face has it.
     fn lookup(&self, c: char, face: Face) -> (usize, GlyphId) {
-        if let (Face::Numerals, Some(n)) = (face, self.numerals) {
+        if let Some(n) = self.special(face) {
             let g = self.faces[n].1.glyph_id(c);
             if g.0 != 0 {
                 return (n, g);
             }
         }
-        let chain = self.numerals.unwrap_or(self.faces.len());
-        self.faces[..chain]
+        self.faces[..self.chain_len()]
             .iter()
             .enumerate()
             .map(|(i, (_, f))| (i, f.glyph_id(c)))
@@ -107,10 +145,7 @@ impl Fonts {
 
     /// Distance from the top of a line to its baseline at `px`.
     pub fn ascent(&self, px: f32, face: Face) -> f32 {
-        let i = match face {
-            Face::Numerals => self.numerals.unwrap_or(0),
-            Face::Ui => 0,
-        };
+        let i = self.special(face).unwrap_or(0);
         self.face(i).as_scaled(PxScale::from(px)).ascent()
     }
 
