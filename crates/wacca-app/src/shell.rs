@@ -1160,6 +1160,13 @@ impl App {
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
+        // Setup results first: finishing it rebuilds the graphics, which must not happen while
+        // a swap-chain image is held.
+        if self.screen == Screen::Setup
+            && let Some(exit) = self.setup.as_mut().and_then(SetupRun::poll)
+        {
+            self.setup_exit(event_loop, exit);
+        }
         let start = Instant::now();
         // Acquire first: with vsync it waits for the display, and the frame should show the
         // song time after that wait, not before it.
@@ -1208,12 +1215,7 @@ impl App {
             Screen::Title | Screen::ModeSelect | Screen::Category => {
                 self.preview.stop(&self.s.player)
             }
-            Screen::Setup => {
-                if let Some(exit) = self.setup.as_mut().and_then(SetupRun::poll) {
-                    self.setup_exit(event_loop, exit);
-                }
-            }
-            Screen::Results | Screen::Calibrate => {}
+            Screen::Results | Screen::Calibrate | Screen::Setup => {}
         }
         let dt = self
             .last_frame
