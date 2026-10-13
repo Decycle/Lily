@@ -6,7 +6,7 @@ use std::path::{Component, Path, PathBuf};
 
 use wacca_ue4::{PixelFormat, Texture, Ue4Error};
 
-use crate::Error;
+use crate::{Error, io_err, read};
 
 /// Encodes an RGBA8 texture as PNG.
 pub fn encode_png(t: &Texture) -> Result<Vec<u8>, png::EncodingError> {
@@ -69,13 +69,6 @@ impl fmt::Display for Summary {
     }
 }
 
-fn read(path: &Path) -> Result<Vec<u8>, Error> {
-    std::fs::read(path).map_err(|source| Error::Io {
-        path: path.to_owned(),
-        source,
-    })
-}
-
 /// Decodes `uasset` (+ `.uexp`, optional `.ubulk`) and writes it as `png`.
 fn export_texture(uasset: &Path, png_path: &Path) -> Result<PixelFormat, Error> {
     let ua = read(uasset)?;
@@ -97,7 +90,7 @@ fn export_texture(uasset: &Path, png_path: &Path) -> Result<PixelFormat, Error> 
 
 /// Exports `(uasset, png)` pairs on all cores.
 pub fn export_all(jobs: &[(PathBuf, PathBuf)]) -> Summary {
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
     let chunk = jobs.len().div_ceil(threads).max(1);
     let mut summary = Summary::default();
     std::thread::scope(|s| {
@@ -156,12 +149,8 @@ pub fn dir_jobs(
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), Error> {
-    let io = |source| Error::Io {
-        path: dir.to_owned(),
-        source,
-    };
-    for entry in std::fs::read_dir(dir).map_err(io)? {
-        let path = entry.map_err(io)?.path();
+    for entry in std::fs::read_dir(dir).map_err(io_err(dir))? {
+        let path = entry.map_err(io_err(dir))?.path();
         if path.is_dir() {
             walk(&path, out)?;
         } else if path.extension().is_some_and(|e| e == "uasset") {

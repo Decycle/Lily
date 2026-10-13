@@ -47,8 +47,8 @@ fn movie(base: &str, column: &str) -> Option<String> {
     (!name.is_empty() && name != "-").then(|| name.to_owned())
 }
 
-pub fn chart_path(folder: &str, d: Difficulty) -> String {
-    format!("MusicData/{folder}/{folder}_{:02}.mer", d as u8)
+fn chart_path(folder: &str, d: Difficulty) -> String {
+    format!("MusicData/{folder}/{}", d.chart_file_name(folder))
 }
 
 /// One table row → song; `Ok(None)` if it has no playable chart.
