@@ -9,7 +9,7 @@ param(
   [double]$Wait = 7,
   [string]$Save = "runs/parity-save.json",
   [string]$Data = "data",
-  [string]$Assets = "C:\Users\<user>\OneDrive\Documents\WACCA\WACCA_slim\assets"
+  [string]$Assets = "assets"
 )
 Add-Type -AssemblyName System.Drawing
 Add-Type @"

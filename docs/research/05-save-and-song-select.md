@@ -26,7 +26,7 @@ bests. Out of scope: multiplayer, credits, bingo, sugoroku, gates, trophies/titl
   - `assets/Table/*`, parsed in `docs/research/tables/`: ClearRateTable, GameScoreTable,
     UserRateCoefficientTable, UserRateTargetTable, UserRateStepTable, MusicParameterTable,
     UnlockInfernoTable, UnlockMusicTable, JudgeLineSettingTable, RhythmGameRuleTable, and others.
-  - English strings: `C:\Games\WACCA\WindowsNoEditor\Mercury\Content\Message\MusicSearchMessage.uexp`,
+  - English strings: `<game>\WindowsNoEditor\Mercury\Content\Message\MusicSearchMessage.uexp`,
     `MusicSelectOptionMenuMessage.uexp`, `ResultMessage.uexp`.
 
 ---

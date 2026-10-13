@@ -24,7 +24,7 @@ necessary, keep the change minimal, and say so in the PR.
   (tests may unwrap). Malformed-but-recoverable data → `log::warn!` and continue.
 - **Debuggable:** `Debug` on all public types; `log` for diagnostics (no `println!` in libs).
 - **Tests:** every behaviour gets a unit test with a small inline fixture. Tests that need the real game files read
-  the assets path from the `WACCA_ASSETS` env var (e.g. `C:\Users\<user>\OneDrive\Documents\WACCA\WACCA_slim\assets`)
+  the assets path from the `WACCA_ASSETS` env var (e.g. `WACCA_ASSETS=assets` when the game's `Content` folder is copied to `assets/`)
   and are `#[ignore]` so `cargo test` passes on a clean checkout; run them with `cargo test -- --ignored`.
 - **Never commit game data.** `assets/`, `data/`, extracted samples and table dumps stay out of git. Fixtures must be
   tiny, hand-written, or synthetic.

@@ -16,17 +16,17 @@ Sources
   `waccon-io/include/waccon/shared_memory.h`, `waccon-io/src/mercuryio.c`, `waccon-io/src/waccon_state.c`,
   `waccon-io/README.md`, `IO_REFACTOR.md`, `Waccon-Server/WconProtocol.cs`, `SharedMemoryBridge.cs`,
   `WacconServer.cs`, `Waccon-Server/README.md`.
-- [W2] Installed copies: `C:\Games\WACCA\Waccon\web\controller.js` (bundled controller, WCON encoder),
-  `Waccon\appsettings.json`, `Waccon\overlay_config.json`, `C:\Games\WACCA\bin\waccon_io.dll` (strings).
+- [W2] Installed copies (`<game>` = the install folder of the game): `<game>\Waccon\web\controller.js` (bundled controller, WCON encoder),
+  `Waccon\appsettings.json`, `Waccon\overlay_config.json`, `<game>\bin\waccon_io.dll` (strings).
 - [S1] segatools source (develop): https://gitea.tendokyu.moe/TeamTofuShop/segatools —
   `games/mercuryhook/touch.c`, `touch.h`, `io4.c`, `mercury-dll.c`, `games/mercuryio/mercuryio.c`, `config.c`,
   `common/util/fg-detect.c`, `common/board/io4.c`.
 - [S2] capnhook `iobuf_write` (used by segatools for the emulated serial buffers):
   https://github.com/decafcode/capnhook/blob/master/hook/iobuf.c (segatools pins the fork
   https://gitea.tendokyu.moe/TeamTofuShop/capnhook).
-- [G1] `C:\Games\WACCA\bin\segatools.ini`, `launch.bat`, `config.json`; `C:\Users\<user>\OneDrive\Desktop\Play WACCA.bat`.
-- [G2] `C:\Games\WACCA\WindowsNoEditor\Mercury\Config\Default{Engine,Game,GameUserSettings,Hardware,Input}.ini`
-  (and the diffs against `C:\Games\WACCA\_original_backups\`).
+- [G1] `<game>\bin\segatools.ini`, `launch.bat`, `config.json`; a desktop shortcut batch file that runs `launch.bat`.
+- [G2] `<game>\WindowsNoEditor\Mercury\Config\Default{Engine,Game,GameUserSettings,Hardware,Input}.ini`
+  (and the diffs against `<game>\_original_backups\`).
 - [G3] Strings in `Mercury-Win64-Shipping.exe` (via `tools/research/grep_strings.py`): `ReplayManager.cpp`,
   `UReplayData{InputDataArray,FrameNum}`, `%sReplayData/%s/%02d/`, `bReplaySave`, `RhythmGameUserOption`
   fields (`bAutoPlay`, `AutoPlayJudgeType`, `StartBarNum`, `DebugPlaySpeed`, `bDebugMetronome`,
@@ -34,7 +34,7 @@ Sources
   imports `timeBeginPeriod`/`timeEndPeriod`.
 - [G4] `Content/Message/TestModeMessage.uexp` (test-menu strings), `Content/Table/DemoMusicTable` (parsed with
   `tools/research/ue4_datatable.py`), `Content/Map/*.umap` and `Content/Tools/BP_DevelopmentMenu.uasset` listing.
-- [G5] Game-written files under `C:\Games\WACCA\bin\appdata\SDFE\Saved\` (`Logs\MercuryLogs\...`, `Config\...`).
+- [G5] Game-written files under `<game>\bin\appdata\SDFE\Saved\` (`Logs\MercuryLogs\...`, `Config\...`).
 - [M1] timeBeginPeriod (per-process since Windows 10 2004):
   https://learn.microsoft.com/en-us/windows/win32/api/timeapi/nf-timeapi-timebeginperiod
 - [M2] Windows.Graphics.Capture `Direct3D11CaptureFrame.SystemRelativeTime` ("QPC time at which the compositor
@@ -159,7 +159,7 @@ a reversed ring order would invert snap directions and is easy to see in the tes
 | Effort | small | small (prototype here) | medium (C/Rust DLL, chaining to waccon for normal play) | small, but useless for exact cells |
 
 Recommendation: **(b)**. It is the same record the Server writes, adds nothing between us and the DLL, gives a
-per-edge acknowledgement, and needs no change under `C:\Games\WACCA`. The remaining latency and jitter (UART
+per-edge acknowledgement, and needs no change under `<game>`. The remaining latency and jitter (UART
 buffer, game read cadence, 16.7 ms frame quantisation) are identical for (a)–(c) because they live downstream of
 the DLL, so (c) only helps if E1 shows the DLL loop itself is slow or jittery (> 2 ms). (a) is the fallback
 if a direct mapping is ever refused (e.g. an ABI change; the harness checks magic/version/size first, as the DLL does).

@@ -3,7 +3,7 @@
 //!
 //! `run_experiment --script <taps.json> [--nav <nav.json>] [--start-nav <nav.json>] [--sync-chart <mer>]
 //!  [--assets DIR] [--input-lead-ms N] [--predict-start-ms N] [--sync-timeout-s 90] [--ffmpeg <path>] [--keep-game] [--no-video]
-//!  [--settle-s 30] [--lead-ms 1000] [--tail-ms 2000] [--out-dir runs] [--game-dir C:\Games\WACCA\bin]`
+//!  [--settle-s 30] [--lead-ms 1000] [--tail-ms 2000] [--out-dir runs] [--game-dir <game>\bin]`
 //!
 //! `--nav` runs a navigation script ([`wacca_realgame::nav`], e.g. `scripts/nav-input-test.nav.json`) before
 //! recording: operator buttons and touches through the shared buffer, screen checks on grabbed frames (saved as

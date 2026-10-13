@@ -12,7 +12,7 @@ Each claim is marked with one of these sources:
 
 | Tag | Source |
 |---|---|
-| **[GAME]** | Unreal reflection strings from the original binary `C:\Games\WACCA\WindowsNoEditor\Mercury\Binaries\Win64\Mercury-Win64-Shipping.exe`, extracted with `grep_strings.py`. These are the game's own enum and field names. UE reflection lists enum members in declaration order, and the numeric values below match the data exactly. |
+| **[GAME]** | Unreal reflection strings from the original binary (`<game>` = install folder) `<game>\WindowsNoEditor\Mercury\Binaries\Win64\Mercury-Win64-Shipping.exe`, extracted with `grep_strings.py`. These are the game's own enum and field names. UE reflection lists enum members in declaration order, and the numeric values below match the data exactly. |
 | **[DATA]** | Statistics over all 1,247 charts (`mer_stats.py`, `mer_holds.py`) |
 | **[MM]** | MercuryMapper, the community chart editor for "Mercury" (WACCA's internal name): https://github.com/Yasu3D/MercuryMapper. Files used: `Data/FormatHandler.cs` (MerHandler), `Data/ChartElement.cs`, `Data/Chart.cs`, `Enums/*.cs`, `Rendering/RenderEngine.cs` |
 | **[MP]** | MercuryPlayer / MercuryPlayerPlus, a browser chart player: https://github.com/WenqiOfficial/MercuryPlayerPlus (`main.js`), originally https://yellowberryhn.github.io/MercuryPlayer/ |
