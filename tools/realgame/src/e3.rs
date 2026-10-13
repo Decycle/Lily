@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use wacca_chart::{Arc, Chart, LANES, Note, NoteBody, SlideDir};
 use wacca_game::input::{DEPTHS, InputFrame};
 use wacca_game::judge::{Judge, JudgeTable};
-use wacca_game::rules::{FRAME_SECS, Judgement};
+use wacca_game::rules::{FRAME_SECS, JudgeEvent, Judgement};
 
 /// Note classes probed separately (snap in/out and slide cw/ccw share one probe list).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -368,7 +368,17 @@ pub fn contacts(chart: &Chart, probes: &[(usize, Probe)], on: f64, min_gap: f64)
 
 /// Our judge's verdict per note for a tap script, the clock running one second past the last edge.
 pub fn predict(chart: &Chart, taps: &[Tap]) -> Vec<Option<Judgement>> {
-    let mut frames = timeline::expand(taps);
+    judge_frames(chart, timeline::expand(taps))
+        .into_iter()
+        .map(|e| e.map(|e| e.judgement))
+        .collect()
+}
+
+/// Our judge's event per note for an edge list, the clock running one second past the last edge. Held states
+/// are repeated every ¼ frame ([`crate::parity::densify`]): the game feeds the judge every frame, and chains and
+/// hold bodies are only checked on the frames the judge sees.
+pub fn judge_frames(chart: &Chart, frames: Vec<InputFrame>) -> Vec<Option<JudgeEvent>> {
+    let mut frames = crate::parity::densify(&frames, FRAME_SECS / 4.0);
     if let Some(&last) = frames.last() {
         frames.push(InputFrame {
             time: last.time + 1.0,
@@ -381,7 +391,7 @@ pub fn predict(chart: &Chart, taps: &[Tap]) -> Vec<Option<Judgement>> {
     events.extend(judge.finish());
     for e in events {
         if let Some(slot) = out.get_mut(e.note) {
-            *slot = Some(e.judgement);
+            *slot = Some(e);
         }
     }
     out
