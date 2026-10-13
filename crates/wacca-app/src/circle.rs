@@ -402,7 +402,10 @@ mod tests {
         assert_eq!(c.p([440.0, 0.0]), [270.0, 0.0]);
         let mut v = View::default();
         c.image(&mut v, font_tex("x"), [540.0, 960.0], [100.0, 50.0], 1.0);
-        let crate::ui::Item::Image { key, tint, rect } = &v.items[0] else {
+        let crate::ui::Item::Image {
+            key, tint, rect, ..
+        } = &v.items[0]
+        else {
             panic!()
         };
         assert_eq!((key.as_str(), tint[3]), ("UI/Textures/FONT/x", 0.5));
@@ -419,8 +422,20 @@ mod tests {
         };
         let mut v = View::default();
         // 300 wide around the centre, tiles 200 wide from x = 400: [400, 600) and [600, 800).
-        let poly = [[450.0, 880.0], [750.0, 880.0], [750.0, 920.0], [450.0, 920.0]];
-        Canvas::new(area).tiled(&mut v, "k".into(), &poly, [400.0, 880.0, 200.0, 40.0], true, 1.0);
+        let poly = [
+            [450.0, 880.0],
+            [750.0, 880.0],
+            [750.0, 920.0],
+            [450.0, 920.0],
+        ];
+        Canvas::new(area).tiled(
+            &mut v,
+            "k".into(),
+            &poly,
+            [400.0, 880.0, 200.0, 40.0],
+            true,
+            1.0,
+        );
         assert_eq!(v.items.len(), 2);
         for item in &v.items {
             let Item::ImagePoly { points, uvs, .. } = item else {
@@ -434,7 +449,10 @@ mod tests {
                     600.0
                 };
                 // flipped: u = 1 - (x - tile x) / w
-                assert!((uv[0] - (1.0 - (p[0] - x) / 200.0)).abs() < 1e-4, "{p:?} {uv:?}");
+                assert!(
+                    (uv[0] - (1.0 - (p[0] - x) / 200.0)).abs() < 1e-4,
+                    "{p:?} {uv:?}"
+                );
                 assert!((uv[1] - (p[1] - 880.0) / 40.0).abs() < 1e-4);
             }
         }

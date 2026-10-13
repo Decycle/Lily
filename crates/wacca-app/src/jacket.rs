@@ -1,14 +1,9 @@
 //! Song jackets: `data/jackets/<JacketAssetName>.png` (from `wacca-convert --textures`), or a
 //! coloured placeholder square derived from the asset name.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use wacca_render::style::Rgba;
-
-/// `<data>/jackets/<key>.png`, e.g. key `S03/uT_J_S03_30`.
-pub fn path(data: &Path, key: &str) -> PathBuf {
-    data.join("jackets").join(format!("{key}.png"))
-}
 
 /// Stable, distinct-ish colour per jacket (FNV-1a hash → hue).
 pub fn placeholder_color(key: &str) -> Rgba {
@@ -49,13 +44,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn path_and_placeholder_are_stable() {
-        assert_eq!(
-            path(Path::new("data"), "S03/uT_J_S03_30"),
-            Path::new("data")
-                .join("jackets")
-                .join("S03/uT_J_S03_30.png")
-        );
+    fn placeholder_is_stable() {
         let a = placeholder_color("S03/uT_J_S03_30");
         assert_eq!(a, placeholder_color("S03/uT_J_S03_30"));
         assert_ne!(a, placeholder_color("S03/uT_J_S03_31"));

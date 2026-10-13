@@ -272,6 +272,7 @@ fn render_ours(
         &SceneOptions {
             note_speed: speed,
             movie: false,
+            bar_lines: false,
         },
         &LiveState::default(),
         &SpriteSheet::default(),

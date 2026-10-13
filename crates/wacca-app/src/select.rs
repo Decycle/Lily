@@ -1,16 +1,12 @@
-//! Song list (sort, filter, cursor, difficulty) and the song-select / difficulty screens
-//! (`docs/research/05-save-and-song-select.md` §3).
+//! Song list: genre folder, sort, filter, cursor and difficulty (`docs/research/05-save-and-song-select.md`
+//! §3). The screens drawing it are `category` and `select_ui`.
 
 use std::cmp::Ordering;
 
 use wacca_chart::Difficulty;
 use wacca_game::catalog::{ChartEntry, Song};
+use wacca_game::grade::{Grade, Lamp};
 use wacca_game::save::SaveData;
-use wacca_render::layout::Rect;
-use wacca_render::text::Align;
-
-use crate::labels;
-use crate::ui::{Action, GREY, HIGHLIGHT, PANEL, View, WHITE, row};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sort {
@@ -46,6 +42,27 @@ pub fn effective(song: &Song, wanted: Difficulty) -> Option<&ChartEntry> {
         .or_else(|| song.charts.iter().max_by_key(|c| c.difficulty))
 }
 
+/// Personal bests over a folder at one difficulty, as on the category screen: songs with at
+/// least each lamp / grade, out of `total` songs that have the chart.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FolderStats {
+    pub total: usize,
+    /// CLEAR, Missless, Full Combo.
+    pub lamps: [usize; 3],
+    /// S, SS, SSS, then S+, SS+, SSS+.
+    pub grades: [usize; 6],
+}
+
+pub const STAT_LAMPS: [Lamp; 3] = [Lamp::Clear, Lamp::Missless, Lamp::FullCombo];
+pub const STAT_GRADES: [Grade; 6] = [
+    Grade::S,
+    Grade::SS,
+    Grade::SSS,
+    Grade::SPlus,
+    Grade::SsPlus,
+    Grade::SssPlus,
+];
+
 #[derive(Debug)]
 pub struct SongList {
     songs: Vec<Song>,
@@ -56,6 +73,8 @@ pub struct SongList {
     /// Show only songs that have the wanted difficulty.
     only_available: bool,
     wanted: Difficulty,
+    /// Genre folder (`None` = all songs).
+    genre: Option<i8>,
 }
 
 impl SongList {
@@ -68,7 +87,8 @@ impl SongList {
             cursor: 0,
             sort: Sort::Title,
             only_available: false,
-            wanted: Difficulty::Expert,
+            wanted: Difficulty::Normal,
+            genre: None,
         };
         list.refresh();
         list
@@ -86,10 +106,6 @@ impl SongList {
         self.sort
     }
 
-    pub fn only_available(&self) -> bool {
-        self.only_available
-    }
-
     pub fn wanted(&self) -> Difficulty {
         self.wanted
     }
@@ -99,8 +115,41 @@ impl SongList {
         &self.songs
     }
 
+    pub fn genre(&self) -> Option<i8> {
+        self.genre
+    }
+
+    /// Genres that have songs, ascending (test songs with a negative genre are left out).
+    pub fn genres(&self) -> Vec<i8> {
+        let mut g: Vec<i8> = self
+            .songs
+            .iter()
+            .map(|s| s.genre)
+            .filter(|&g| g >= 0)
+            .collect();
+        g.sort_unstable();
+        g.dedup();
+        g
+    }
+
+    /// Show only `genre` (or everything), keeping the current song if it is still shown.
+    pub fn set_genre(&mut self, genre: Option<i8>) {
+        if self.genre != genre {
+            self.genre = genre;
+            self.refresh();
+        }
+    }
+
     pub fn song_at(&self, i: usize) -> Option<&Song> {
         self.order.get(i).map(|&s| &self.songs[s])
+    }
+
+    /// The song `k` places from the cursor, wrapping around.
+    pub fn around(&self, k: i32) -> Option<&Song> {
+        let len = self.order.len() as i64;
+        (len > 0)
+            .then(|| (self.cursor as i64 + i64::from(k)).rem_euclid(len) as usize)
+            .and_then(|i| self.song_at(i))
     }
 
     pub fn current(&self) -> Option<&Song> {
@@ -113,17 +162,11 @@ impl SongList {
         Some((s, effective(s, self.wanted)?))
     }
 
-    /// Move the cursor by `n` rows, wrapping around.
+    /// Move the cursor by `n` songs, wrapping around.
     pub fn move_by(&mut self, n: i32) {
         let len = self.order.len() as i64;
         if len > 0 {
             self.cursor = (self.cursor as i64 + i64::from(n)).rem_euclid(len) as usize;
-        }
-    }
-
-    pub fn select(&mut self, i: usize) {
-        if i < self.order.len() {
-            self.cursor = i;
         }
     }
 
@@ -132,8 +175,7 @@ impl SongList {
         let Some((song, entry)) = self.chart() else {
             return;
         };
-        let mut have: Vec<_> = song.charts.iter().map(|c| c.difficulty).collect();
-        have.sort();
+        let have = sorted_difficulties(song);
         let Some(pos) = have.iter().position(|&d| d == entry.difficulty) else {
             return;
         };
@@ -141,6 +183,29 @@ impl SongList {
         if let Some(&d) = usize::try_from(next).ok().and_then(|n| have.get(n)) {
             self.set_difficulty(d);
         }
+    }
+
+    /// The DIFFICULTY button: the next existing difficulty of the current song, wrapping from
+    /// the highest back to the lowest.
+    pub fn cycle_difficulty(&mut self) {
+        let Some((song, entry)) = self.chart() else {
+            return;
+        };
+        let have = sorted_difficulties(song);
+        let next = have
+            .iter()
+            .copied()
+            .find(|&d| d > entry.difficulty)
+            .or(have.first().copied());
+        if let Some(d) = next {
+            self.set_difficulty(d);
+        }
+    }
+
+    /// The DIFFICULTY button with no song in view: the next difficulty, wrapping.
+    pub fn cycle_wanted(&mut self) {
+        let next = Difficulty::ALL.into_iter().find(|&d| d > self.wanted);
+        self.set_difficulty(next.unwrap_or(Difficulty::Normal));
     }
 
     /// Set the wanted difficulty (kept when changing songs).
@@ -161,12 +226,34 @@ impl SongList {
         self.refresh();
     }
 
+    /// Bests over the songs of `genre` at difficulty `d`.
+    pub fn stats(&self, genre: i8, d: Difficulty, save: &SaveData) -> FolderStats {
+        let mut st = FolderStats::default();
+        for s in self.songs.iter().filter(|s| s.genre == genre) {
+            if s.chart(d).is_none() {
+                continue;
+            }
+            st.total += 1;
+            let Some(r) = save.record(s.id, d).filter(|r| r.play_count > 0) else {
+                continue;
+            };
+            for (n, &l) in st.lamps.iter_mut().zip(&STAT_LAMPS) {
+                *n += usize::from(r.best_lamp >= l);
+            }
+            for (n, &g) in st.grades.iter_mut().zip(&STAT_GRADES) {
+                *n += usize::from(r.best_grade.is_some_and(|b| b >= g));
+            }
+        }
+        st
+    }
+
     /// Rebuild the visible order, keeping the current song selected if still visible.
     fn refresh(&mut self) {
         let keep = self.current().map(|s| s.id);
         let wanted = self.wanted;
         let songs = &self.songs;
         let mut order: Vec<usize> = (0..songs.len())
+            .filter(|&i| self.genre.is_none_or(|g| songs[i].genre == g))
             .filter(|&i| !self.only_available || songs[i].chart(wanted).is_some())
             .collect();
         let level = |s: &Song| effective(s, wanted).map_or(0.0, |c| c.level);
@@ -194,269 +281,18 @@ impl SongList {
     }
 }
 
-/// Rows shown in the song list.
-const LIST_ROWS: usize = 9;
-
-/// Song-select screen inside the 9:16 `area`.
-pub fn select_view(list: &SongList, save: &SaveData, area: Rect) -> View {
-    let u = area.w / 100.0;
-    let mut v = View::default();
-    let cx = area.x + area.w / 2.0;
-    v.text_in(
-        "SONG SELECT",
-        [cx, area.y + 3.0 * u],
-        6.0 * u,
-        WHITE,
-        Align::Center,
-        None,
-    );
-
-    // Sort / filter buttons.
-    let bar = |n: f32| Rect {
-        x: area.x + 3.0 * u + n * 47.0 * u,
-        y: area.y + 12.0 * u,
-        w: 46.0 * u,
-        h: 8.0 * u,
-    };
-    let filter = if list.only_available() {
-        labels::difficulty(list.wanted())
-    } else {
-        "ALL"
-    };
-    for (n, text, action) in [
-        (
-            0.0,
-            format!("SORT: {}", list.sort().label()),
-            Action::NextSort,
-        ),
-        (1.0, format!("SHOW: {filter}"), Action::ToggleFilter),
-    ] {
-        let r = bar(n);
-        v.fill(r, PANEL);
-        v.text_in(
-            text,
-            [r.x + r.w / 2.0, r.y + 2.0 * u],
-            4.0 * u,
-            WHITE,
-            Align::Center,
-            None,
-        );
-        v.button(r, action);
-    }
-
-    // Difficulty: ◀ NAME ▶.
-    let d = list.chart().map_or(list.wanted(), |(_, c)| c.difficulty);
-    let dy = area.y + 22.0 * u;
-    v.text_in(
-        format!("◀  {}  ▶", labels::difficulty(d)),
-        [cx, dy],
-        5.5 * u,
-        labels::difficulty_color(d),
-        Align::Center,
-        None,
-    );
-    let half = |x| Rect {
-        x,
-        y: dy,
-        w: area.w / 2.0,
-        h: 8.0 * u,
-    };
-    v.button(half(area.x), Action::Left);
-    v.button(half(cx), Action::Right);
-
-    // List, centred on the cursor and wrapping when it is longer than the screen.
-    let top = area.y + 32.0 * u;
-    let h = 12.0 * u;
-    let n = list.len();
-    if n == 0 {
-        v.text_in(
-            "NO SONGS",
-            [cx, top + h],
-            5.0 * u,
-            GREY,
-            Align::Center,
-            None,
-        );
-    }
-    let shown = n.min(LIST_ROWS);
-    let first = if n > LIST_ROWS {
-        (list.cursor() + n - LIST_ROWS / 2) % n
-    } else {
-        0
-    };
-    for k in 0..shown {
-        let i = (first + k) % n;
-        let Some(song) = list.song_at(i) else {
-            continue;
-        };
-        let r = row(area, top, h, k);
-        v.fill(r, if i == list.cursor() { HIGHLIGHT } else { PANEL });
-        let j = Rect {
-            x: r.x + 0.5 * u,
-            y: r.y + 0.5 * u,
-            w: r.h - u,
-            h: r.h - u,
-        };
-        v.items.push(crate::ui::Item::Jacket {
-            rect: j,
-            key: song.jacket.clone(),
-        });
-        let tx = j.x + j.w + 2.0 * u;
-        let text_w = r.x + r.w - tx - 16.0 * u;
-        v.text_in(
-            &song.title,
-            [tx, r.y + 1.0 * u],
-            4.2 * u,
-            WHITE,
-            Align::Left,
-            Some(text_w),
-        );
-        if let Some(c) = effective(song, list.wanted()) {
-            v.text_in(
-                labels::record(save.record(song.id, c.difficulty)),
-                [tx, r.y + 6.2 * u],
-                3.2 * u,
-                GREY,
-                Align::Left,
-                Some(text_w),
-            );
-            v.text_in(
-                labels::level(c.level),
-                [r.x + r.w - 2.0 * u, r.y + 2.5 * u],
-                6.0 * u,
-                labels::difficulty_color(c.difficulty),
-                Align::Right,
-                None,
-            );
-        }
-        v.button(r, Action::Pick(i));
-    }
-
-    let foot = area.y + area.h - 7.0 * u;
-    v.text_in(
-        "↑↓ song   ←→ difficulty   Enter select   Esc quit",
-        [cx, foot],
-        3.0 * u,
-        GREY,
-        Align::Center,
-        Some(area.w - 4.0 * u),
-    );
-    v
-}
-
-/// Difficulty screen: the four slots of the current song.
-pub fn difficulty_view(list: &SongList, save: &SaveData, area: Rect) -> View {
-    let u = area.w / 100.0;
-    let mut v = View::default();
-    let cx = area.x + area.w / 2.0;
-    let Some((song, chosen)) = list.chart() else {
-        return v;
-    };
-    let j = Rect {
-        x: cx - 25.0 * u,
-        y: area.y + 6.0 * u,
-        w: 50.0 * u,
-        h: 50.0 * u,
-    };
-    v.items.push(crate::ui::Item::Jacket {
-        rect: j,
-        key: song.jacket.clone(),
-    });
-    let max = Some(area.w - 6.0 * u);
-    v.text_in(
-        &song.title,
-        [cx, area.y + 60.0 * u],
-        6.0 * u,
-        WHITE,
-        Align::Center,
-        max,
-    );
-    v.text_in(
-        &song.artist,
-        [cx, area.y + 68.0 * u],
-        4.0 * u,
-        GREY,
-        Align::Center,
-        max,
-    );
-    v.text_in(
-        format!("BPM {}", song.bpm),
-        [cx, area.y + 74.0 * u],
-        3.5 * u,
-        GREY,
-        Align::Center,
-        None,
-    );
-    let top = area.y + 82.0 * u;
-    let h = 14.0 * u;
-    for (k, d) in Difficulty::ALL.into_iter().enumerate() {
-        let Some(c) = song.chart(d) else { continue };
-        let r = row(area, top, h, k);
-        v.fill(
-            r,
-            if d == chosen.difficulty {
-                HIGHLIGHT
-            } else {
-                PANEL
-            },
-        );
-        let color = labels::difficulty_color(d);
-        v.fill(Rect { w: 1.5 * u, ..r }, color);
-        v.text(
-            labels::difficulty(d),
-            [r.x + 4.0 * u, r.y + 1.5 * u],
-            5.0 * u,
-            color,
-        );
-        v.text(
-            labels::record(save.record(song.id, d)),
-            [r.x + 4.0 * u, r.y + 8.0 * u],
-            3.5 * u,
-            GREY,
-        );
-        v.text_in(
-            format!("{} ({:.1})", labels::level(c.level), c.level),
-            [r.x + r.w - 2.0 * u, r.y + 3.0 * u],
-            6.0 * u,
-            color,
-            Align::Right,
-            None,
-        );
-        v.button(r, Action::Pick(k));
-    }
-    buttons(&mut v, area, "BACK", "NEXT");
-    v
-}
-
-/// Back / confirm buttons at the bottom of `area`.
-pub fn buttons(v: &mut View, area: Rect, back: &str, confirm: &str) {
-    let u = area.w / 100.0;
-    let y = area.y + area.h - 16.0 * u;
-    for (n, text, action) in [(0.0, back, Action::Back), (1.0, confirm, Action::Confirm)] {
-        let r = Rect {
-            x: area.x + 4.0 * u + n * 48.0 * u,
-            y,
-            w: 44.0 * u,
-            h: 11.0 * u,
-        };
-        v.fill(r, if n > 0.0 { HIGHLIGHT } else { PANEL });
-        v.text_in(
-            text,
-            [r.x + r.w / 2.0, r.y + 3.0 * u],
-            5.0 * u,
-            WHITE,
-            Align::Center,
-            None,
-        );
-        v.button(r, action);
-    }
+fn sorted_difficulties(song: &Song) -> Vec<Difficulty> {
+    let mut have: Vec<_> = song.charts.iter().map(|c| c.difficulty).collect();
+    have.sort();
+    have
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use wacca_game::save::ChartRecord;
 
-    fn chart(d: Difficulty, level: f32) -> ChartEntry {
+    pub fn chart(d: Difficulty, level: f32) -> ChartEntry {
         ChartEntry {
             difficulty: d,
             level,
@@ -466,12 +302,12 @@ mod tests {
         }
     }
 
-    fn song(id: u32, reading: &str, version: u8, charts: Vec<ChartEntry>) -> Song {
+    pub fn song(id: u32, reading: &str, version: u8, charts: Vec<ChartEntry>) -> Song {
         Song {
             id,
             folder: format!("S00-{id:03}"),
             title: reading.to_uppercase(),
-            artist: String::new(),
+            artist: format!("artist {id}"),
             reading: reading.into(),
             bpm: "150".into(),
             genre: 0,
@@ -483,7 +319,7 @@ mod tests {
         }
     }
 
-    fn list() -> SongList {
+    pub fn list() -> SongList {
         use Difficulty::*;
         SongList::new(vec![
             song(1, "c", 1, vec![chart(Normal, 3.0), chart(Expert, 12.0)]),
@@ -493,7 +329,10 @@ mod tests {
                 3,
                 vec![chart(Hard, 8.0), chart(Expert, 13.7), chart(Inferno, 14.0)],
             ),
-            song(3, "b", 2, vec![chart(Expert, 11.0)]),
+            Song {
+                genre: 2,
+                ..song(3, "b", 2, vec![chart(Expert, 11.0)])
+            },
             song(4, "z", 5, vec![]),
         ])
     }
@@ -505,6 +344,7 @@ mod tests {
     #[test]
     fn sorts_and_drops_chartless_songs() {
         let mut l = list();
+        l.set_difficulty(Difficulty::Expert);
         assert_eq!(ids(&l), [2, 3, 1]);
         l.next_sort();
         assert_eq!(l.sort(), Sort::Level);
@@ -518,16 +358,35 @@ mod tests {
     #[test]
     fn cursor_wraps_and_survives_resorting() {
         let mut l = list();
+        l.set_difficulty(Difficulty::Expert);
         l.move_by(-1);
         assert_eq!(l.current().unwrap().id, 1);
         l.move_by(2);
         assert_eq!(l.current().unwrap().id, 3);
+        assert_eq!(l.around(1).unwrap().id, 1);
+        assert_eq!(l.around(-4).unwrap().id, 2);
         l.next_sort(); // level: [3, 1, 2]
         assert_eq!((l.cursor(), l.current().unwrap().id), (0, 3));
-        l.select(2);
-        assert_eq!(l.current().unwrap().id, 2);
-        l.select(99);
-        assert_eq!(l.current().unwrap().id, 2);
+    }
+
+    #[test]
+    fn genre_folders() {
+        let mut l = list();
+        assert_eq!(l.wanted(), Difficulty::Normal);
+        l.cycle_wanted();
+        assert_eq!(l.wanted(), Difficulty::Hard);
+        l.set_difficulty(Difficulty::Inferno);
+        l.cycle_wanted();
+        assert_eq!(l.wanted(), Difficulty::Normal);
+        assert_eq!(l.genres(), [0, 2]);
+        l.set_genre(Some(0));
+        assert_eq!(ids(&l), [2, 1]);
+        l.set_genre(Some(2));
+        assert_eq!((ids(&l), l.cursor()), (vec![3], 0));
+        l.set_genre(None);
+        assert_eq!(ids(&l), [2, 3, 1]);
+        assert_eq!(l.current().unwrap().id, 3);
+        assert!(SongList::new(vec![]).around(0).is_none());
     }
 
     #[test]
@@ -551,6 +410,19 @@ mod tests {
     }
 
     #[test]
+    fn difficulty_button_cycles_existing_charts() {
+        let mut l = list(); // song 2: Hard, Expert, Inferno
+        l.set_difficulty(Difficulty::Expert);
+        l.cycle_difficulty();
+        assert_eq!(l.wanted(), Difficulty::Inferno);
+        l.cycle_difficulty();
+        assert_eq!(l.wanted(), Difficulty::Hard);
+        l.move_by(2); // song 1: Normal, Expert; Hard falls back to Expert
+        l.cycle_difficulty();
+        assert_eq!(l.wanted(), Difficulty::Normal);
+    }
+
+    #[test]
     fn filter_shows_only_songs_with_the_difficulty() {
         let mut l = list();
         l.set_difficulty(Difficulty::Inferno);
@@ -564,46 +436,23 @@ mod tests {
         assert_eq!(l.current().unwrap().id, 1);
     }
 
-    fn area() -> Rect {
-        Rect {
-            x: 0.0,
-            y: 0.0,
-            w: 900.0,
-            h: 1600.0,
-        }
-    }
-
     #[test]
-    fn select_view_lists_songs_with_pick_buttons() {
+    fn folder_stats_count_bests_at_least_each_lamp_and_grade() {
         let l = list();
-        let v = select_view(&l, &SaveData::default(), area());
-        let texts = v.texts();
-        assert!(texts.contains(&"A") && texts.contains(&"13+") && texts.contains(&"NO PLAY"));
-        assert!(texts.contains(&"SORT: TITLE"));
-        let picks = v
-            .buttons
-            .iter()
-            .filter(|(_, a)| matches!(a, Action::Pick(_)))
-            .count();
-        assert_eq!(picks, 3);
-        // The first row's centre picks song index 0.
-        let (r, _) = v
-            .buttons
-            .iter()
-            .find(|(_, a)| *a == Action::Pick(0))
-            .unwrap();
-        assert_eq!(v.hit([r.x + 5.0, r.y + 5.0]), Some(Action::Pick(0)));
-    }
-
-    #[test]
-    fn difficulty_view_has_existing_slots_only() {
-        let l = list(); // song 2: Hard, Expert, Inferno
-        let v = difficulty_view(&l, &SaveData::default(), area());
-        let texts = v.texts();
-        assert!(texts.contains(&"HARD") && texts.contains(&"INFERNO"));
-        assert!(!texts.contains(&"NORMAL"));
-        assert!(v.buttons.iter().any(|(_, a)| *a == Action::Pick(3)));
-        assert!(!v.buttons.iter().any(|(_, a)| *a == Action::Pick(0)));
-        assert!(v.buttons.iter().any(|(_, a)| *a == Action::Confirm));
+        let mut save = SaveData::default();
+        let fc = ChartRecord {
+            best_lamp: Lamp::FullCombo,
+            best_grade: Some(Grade::SsPlus),
+            play_count: 1,
+            ..ChartRecord::default()
+        };
+        save.records
+            .insert(wacca_game::save::chart_key(2, Difficulty::Expert), fc);
+        let st = l.stats(0, Difficulty::Expert, &save);
+        assert_eq!(st.total, 2);
+        assert_eq!(st.lamps, [1, 1, 1]);
+        assert_eq!(st.grades, [1, 1, 0, 1, 1, 0]);
+        assert_eq!(l.stats(0, Difficulty::Normal, &save).total, 1);
+        assert_eq!(l.stats(2, Difficulty::Expert, &save).lamps, [0; 3]);
     }
 }
