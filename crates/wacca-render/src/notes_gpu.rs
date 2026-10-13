@@ -24,7 +24,7 @@ fn gpu_materials() -> [GpuMaterial; MATERIALS.len()] {
     MATERIALS.map(|m| GpuMaterial {
         color: [m.color[0], m.color[1], m.color[2], 1.0],
         p0: [m.dark, m.highlight, m.line, m.chain],
-        p1: [m.bonus, m.bonus_flip, 0.0, 0.0],
+        p1: [m.bonus, m.bonus_flip, f32::from(u8::from(m.bar_line)), 0.0],
     })
 }
 
@@ -284,4 +284,28 @@ fn upload(
         );
     }
     texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn note_shader_validates() {
+        let module = wgpu::naga::front::wgsl::parse_str(include_str!("notes.wgsl")).unwrap();
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::empty(),
+        )
+        .validate(&module)
+        .unwrap();
+    }
+
+    #[test]
+    fn material_table_layout() {
+        let m = gpu_materials();
+        assert_eq!(size_of_val(&m), MATERIALS.len() * 48);
+        assert_eq!(m[MATERIALS.len() - 1].p1[2], 1.0, "bar line flag");
+        assert_eq!(m[0].p0, [0.8, 0.35, 0.08, 0.0]);
+    }
 }
