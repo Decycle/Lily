@@ -593,7 +593,9 @@ mod imp {
             .map(|(delay, press)| press + delay);
         let synced = match (&song, &rx, predicted) {
             (Some(_), _, Some(bgm0_ms)) => {
-                log::info!("sync: predicted song start at epoch {bgm0_ms:.1} ms (no live detection)");
+                log::info!(
+                    "sync: predicted song start at epoch {bgm0_ms:.1} ms (no live detection)"
+                );
                 let m = sync::Match {
                     bgm0: 0,
                     coarse: 0.0,

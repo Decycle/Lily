@@ -1,0 +1,5 @@
+{"seed":21,"min_time":5.0,"isolation":0.35,"min_on":0.025,"probes":{
+"touch":[{"kind":"sweep","from":-8,"to":8,"step":0.5}],
+"hold":[{"kind":"hold_gap","at_ms":150,"ms":[133,150,167,183,200,217,233,267]},{"kind":"hold_release","ms":[167,200,233,267,300]}],
+"slide":[{"kind":"slide_jump","lanes":[1.5,2]}],
+"snap":[{"kind":"snap_move","moves":[[3,2],[2,1],[1,0],[3,1],[2,0]]}]}}

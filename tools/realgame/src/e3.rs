@@ -57,11 +57,24 @@ pub enum Probe {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ProbeSpec {
     /// Shifts `from..=to` frames in `step` frames.
-    Sweep { from: f64, to: f64, step: f64 },
-    HoldGap { at_ms: f64, ms: Vec<f64> },
-    HoldRelease { ms: Vec<f64> },
-    SlideJump { lanes: Vec<f64> },
-    SnapMove { moves: Vec<[u8; 2]> },
+    Sweep {
+        from: f64,
+        to: f64,
+        step: f64,
+    },
+    HoldGap {
+        at_ms: f64,
+        ms: Vec<f64>,
+    },
+    HoldRelease {
+        ms: Vec<f64>,
+    },
+    SlideJump {
+        lanes: Vec<f64>,
+    },
+    SnapMove {
+        moves: Vec<[u8; 2]>,
+    },
 }
 
 impl ProbeSpec {
@@ -418,7 +431,10 @@ pub fn fit_interval(points: &[(f64, bool)]) -> Option<(f64, f64, usize)> {
         return None;
     }
     // Candidate edges between neighbouring sample values (and one step outside the ends).
-    let step = xs.windows(2).map(|w| w[1] - w[0]).fold(f64::INFINITY, f64::min);
+    let step = xs
+        .windows(2)
+        .map(|w| w[1] - w[0])
+        .fold(f64::INFINITY, f64::min);
     let step = if step.is_finite() { step } else { 1.0 };
     let mut cuts = vec![xs[0] - step / 2.0];
     cuts.extend(xs.windows(2).map(|w| (w[0] + w[1]) / 2.0));
@@ -447,7 +463,9 @@ pub fn fit_interval(points: &[(f64, bool)]) -> Option<(f64, f64, usize)> {
         let (min, max) = pairs
             .iter()
             .map(f)
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), x| (a.min(x), b.max(x)));
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), x| {
+                (a.min(x), b.max(x))
+            });
         (min + max) / 2.0
     };
     Some((mid(|p| p.0), mid(|p| p.1), err))
@@ -577,11 +595,20 @@ mod tests {
             note(2.0, 0, 3, NoteBody::Slide(SlideDir::Ccw)),
             note(3.0, 0, 6, NoteBody::Slide(SlideDir::Ccw)),
         ]);
-        let s = spec(vec![(Class::Slide, ProbeSpec::SlideJump { lanes: vec![4.0] })]);
+        let s = spec(vec![(
+            Class::Slide,
+            ProbeSpec::SlideJump { lanes: vec![4.0] },
+        )]);
         assert_eq!(assign(&c, &s), [(1, Probe::SlideJump { lanes: 4.0 })]);
         assert!(feasible(&c.notes[0], &Probe::SlideJump { lanes: 2.0 }));
         assert!(!feasible(&c.notes[0], &Probe::SlideJump { lanes: 2.5 }));
-        assert!(!feasible(&c.notes[0], &Probe::HoldGap { at_ms: 0.0, ms: 1.0 }));
+        assert!(!feasible(
+            &c.notes[0],
+            &Probe::HoldGap {
+                at_ms: 0.0,
+                ms: 1.0
+            }
+        ));
     }
 
     #[test]
@@ -643,19 +670,39 @@ mod tests {
     #[test]
     fn hold_gaps_and_slide_and_snap_probes_reach_our_judge() {
         let c = chart(vec![hold(2.0, 3.0, 10)]);
-        let gap = |ms| spec(vec![(Class::Hold, ProbeSpec::HoldGap { at_ms: 300.0, ms: vec![ms] })]);
+        let gap = |ms| {
+            spec(vec![(
+                Class::Hold,
+                ProbeSpec::HoldGap {
+                    at_ms: 300.0,
+                    ms: vec![ms],
+                },
+            )])
+        };
         assert_eq!(judged(&c, &gap(150.0)), [Some(Judgement::Marvelous)]);
         assert_eq!(judged(&c, &gap(300.0)), [Some(Judgement::Good)]);
         let release = |ms| spec(vec![(Class::Hold, ProbeSpec::HoldRelease { ms: vec![ms] })]);
         assert_eq!(judged(&c, &release(500.0)), [Some(Judgement::Good)]);
 
         let c = chart(vec![note(2.0, 58, 6, NoteBody::Slide(SlideDir::Cw))]);
-        let jump = |lanes| spec(vec![(Class::Slide, ProbeSpec::SlideJump { lanes: vec![lanes] })]);
+        let jump = |lanes| {
+            spec(vec![(
+                Class::Slide,
+                ProbeSpec::SlideJump { lanes: vec![lanes] },
+            )])
+        };
         assert_eq!(judged(&c, &jump(1.5)), [Some(Judgement::Miss)]);
         assert_eq!(judged(&c, &jump(2.0)), [Some(Judgement::Marvelous)]);
 
         let c = chart(vec![note(2.0, 20, 4, NoteBody::Snap(SnapDir::In))]);
-        let mv = |from, to| spec(vec![(Class::Snap, ProbeSpec::SnapMove { moves: vec![[from, to]] })]);
+        let mv = |from, to| {
+            spec(vec![(
+                Class::Snap,
+                ProbeSpec::SnapMove {
+                    moves: vec![[from, to]],
+                },
+            )])
+        };
         assert_eq!(judged(&c, &mv(1, 0)), [Some(Judgement::Marvelous)]);
         assert_eq!(judged(&c, &mv(0, 3)), [Some(Judgement::Miss)]);
     }
@@ -671,7 +718,14 @@ mod tests {
         stray.extend([(-4.0, true), (8.0, true)]);
         assert_eq!(fit_interval(&stray), Some((-4.0, 4.5, 2)));
         // A soft edge (alternating samples) lands in the middle of its equally good cuts.
-        let soft = [(0.0, false), (1.0, true), (2.0, false), (3.0, true), (4.0, true), (5.0, false)];
+        let soft = [
+            (0.0, false),
+            (1.0, true),
+            (2.0, false),
+            (3.0, true),
+            (4.0, true),
+            (5.0, false),
+        ];
         assert_eq!(fit_interval(&soft), Some((1.5, 4.5, 1)));
         assert_eq!(fit_interval(&[(1.0, false)]), None);
     }

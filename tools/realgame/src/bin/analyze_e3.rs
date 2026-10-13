@@ -49,9 +49,15 @@ fn num(v: &serde_json::Value, ptr: &str) -> Result<f64, String> {
 
 /// Panel changes over the whole video, in chart time.
 fn decode_events(dir: &Path, meta: &serde_json::Value, ff: &Path) -> Result<Vec<Event>, String> {
-    let size = (num(meta, "/window/width")? as usize, num(meta, "/window/height")? as usize);
+    let size = (
+        num(meta, "/window/width")? as usize,
+        num(meta, "/window/height")? as usize,
+    );
     if size != panel::SIZE {
-        return Err(format!("window {size:?}, panel regions are for {:?}", panel::SIZE));
+        return Err(format!(
+            "window {size:?}, panel regions are for {:?}",
+            panel::SIZE
+        ));
     }
     let first_frame_ms = num(meta, "/video/first_frame_ms")?;
     let bgm0_ms = num(meta, "/sync/bgm0_ms")?;
@@ -148,7 +154,9 @@ fn analyse(dir: &Path, ff: &Path) -> Result<RunResult, String> {
         .map(|b| b.into_iter().map(|(t, d, _)| (t, d)).collect())
         .unwrap_or_default();
     if blocks.is_empty() {
-        println!("  WARNING: no e2.json visual timing: clock drift not corrected (run analyze_e2 first)");
+        println!(
+            "  WARNING: no e2.json visual timing: clock drift not corrected (run analyze_e2 first)"
+        );
     } else {
         println!("  visual timing blocks (chart s, δ ms): {blocks:.0?}");
     }
@@ -171,7 +179,7 @@ fn analyse(dir: &Path, ff: &Path) -> Result<RunResult, String> {
             }
         })
         .collect();
-    let centre_ms = e3_analysis::touch_centre(&outcomes, 20);
+    let centre_ms = e3_analysis::touch_centre(&outcomes, 10);
     // Timing check: the touch centre of each half of the song must agree (a clock jump moves it).
     let mid = plan.tests.get(plan.tests.len() / 2).map_or(0.0, |t| t.time);
     let halves: Vec<Option<f64>> = [true, false]
@@ -185,12 +193,7 @@ fn analyse(dir: &Path, ff: &Path) -> Result<RunResult, String> {
             e3_analysis::touch_centre(&part, 10)
         })
         .collect();
-    let totals = [0, 1, 2, 3].map(|r| {
-        events
-            .iter()
-            .filter(|e| e.rows[r])
-            .count()
-    });
+    let totals = [0, 1, 2, 3].map(|r| events.iter().filter(|e| e.rows[r]).count());
     println!(
         "{}: {} panel changes (M/Gr/Gd/Miss rows {totals:?}), {} judged notes in the chart, lag {:.1} ms, touch centre {centre_ms:.1?} ms (halves {halves:.1?})",
         dir.display(),

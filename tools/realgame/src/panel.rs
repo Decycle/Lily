@@ -125,7 +125,10 @@ mod tests {
         tr.push(0.4, lit(crop(), 320, 990));
         assert_eq!(tr.events.len(), 2);
         let e = tr.events[0];
-        assert_eq!((e.t, e.judgements(), e.fast(), e.late()), (0.2, vec![Judgement::Great], true, false));
+        assert_eq!(
+            (e.t, e.judgements(), e.fast(), e.late()),
+            (0.2, vec![Judgement::Great], true, false)
+        );
         // Back to dark: the same rows change again.
         assert_eq!(tr.events[1].judgements(), vec![Judgement::Great]);
     }

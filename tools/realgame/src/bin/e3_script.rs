@@ -43,16 +43,24 @@ fn run(a: &Args) -> Result<(), String> {
     let mut spec: Spec = serde_json::from_slice(&read(&a.spec)?).map_err(|e| e.to_string())?;
     spec.seed = a.seed.unwrap_or(spec.seed);
     let (taps, tests) = e3::build(&chart, &spec);
-    let write = |p: &PathBuf, json: String| std::fs::write(p, json).map_err(|e| format!("{}: {e}", p.display()));
+    let write = |p: &PathBuf, json: String| {
+        std::fs::write(p, json).map_err(|e| format!("{}: {e}", p.display()))
+    };
     let script = Script { taps };
-    write(&a.out, serde_json::to_string_pretty(&script).map_err(|e| e.to_string())?)?;
+    write(
+        &a.out,
+        serde_json::to_string_pretty(&script).map_err(|e| e.to_string())?,
+    )?;
     let plan_path = e3::plan_path(&a.out);
     let plan = Plan {
         chart: a.chart.display().to_string(),
         spec,
         tests,
     };
-    write(&plan_path, serde_json::to_string_pretty(&plan).map_err(|e| e.to_string())?)?;
+    write(
+        &plan_path,
+        serde_json::to_string_pretty(&plan).map_err(|e| e.to_string())?,
+    )?;
 
     let mut counts: BTreeMap<String, (usize, BTreeMap<String, usize>)> = BTreeMap::new();
     for t in &plan.tests {
@@ -91,7 +99,9 @@ fn probe_kind(p: &e3::Probe) -> &'static str {
 
 fn main() -> ExitCode {
     let Some(args) = parse_args(std::env::args().skip(1)) else {
-        eprintln!("usage: e3_script --chart <mer> --spec <spec.json> --out <x.taps.json> [--seed N]");
+        eprintln!(
+            "usage: e3_script --chart <mer> --spec <spec.json> --out <x.taps.json> [--seed N]"
+        );
         return ExitCode::FAILURE;
     };
     match run(&args) {
@@ -109,7 +119,12 @@ mod tests {
 
     #[test]
     fn args() {
-        let a = parse_args("--chart c.mer --spec s.json --out o.taps.json --seed 3".split(' ').map(String::from)).unwrap();
+        let a = parse_args(
+            "--chart c.mer --spec s.json --out o.taps.json --seed 3"
+                .split(' ')
+                .map(String::from),
+        )
+        .unwrap();
         assert_eq!((a.out, a.seed), (PathBuf::from("o.taps.json"), Some(3)));
         assert!(parse_args("--chart c.mer --out o".split(' ').map(String::from)).is_none());
     }

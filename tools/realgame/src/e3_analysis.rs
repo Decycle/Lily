@@ -33,9 +33,15 @@ pub fn estimate_lag(events: &[f64], times: &[f64]) -> Option<f64> {
     let bin = |r: f64| ((r + 0.4) / 0.005).floor() as usize;
     let mut hist = vec![0usize; 161];
     rs.iter().for_each(|&r| hist[bin(r).min(160)] += 1);
-    let (best, _) = hist.iter().enumerate().max_by_key(|&(i, n)| (*n, usize::MAX - i))?;
+    let (best, _) = hist
+        .iter()
+        .enumerate()
+        .max_by_key(|&(i, n)| (*n, usize::MAX - i))?;
     let centre = best as f64 * 0.005 - 0.4 + 0.0025;
-    let mut near: Vec<f64> = rs.into_iter().filter(|r| (r - centre).abs() <= 0.025).collect();
+    let mut near: Vec<f64> = rs
+        .into_iter()
+        .filter(|r| (r - centre).abs() <= 0.025)
+        .collect();
     near.sort_by(f64::total_cmp);
     near.get(near.len() / 2).copied()
 }
@@ -163,7 +169,10 @@ pub fn write_stats(errors: &[f64]) -> (f64, f64) {
     let mut v: Vec<f64> = errors.to_vec();
     v.sort_by(f64::total_cmp);
     match v.last() {
-        Some(&max) => (v[((v.len() as f64 * 0.95).ceil() as usize).clamp(1, v.len()) - 1], max),
+        Some(&max) => (
+            v[((v.len() as f64 * 0.95).ceil() as usize).clamp(1, v.len()) - 1],
+            max,
+        ),
         None => (0.0, 0.0),
     }
 }
@@ -179,7 +188,8 @@ pub fn writes_ok(r: &RunResult) -> bool {
 
 /// Whether any edge at chart times `late` (s) falls within a test's span (±0.3 s).
 pub fn touched_by(test: &Test, late: &[f64]) -> bool {
-    late.iter().any(|&t| t >= test.time - 0.3 && t <= test.end + 0.3)
+    late.iter()
+        .any(|&t| t >= test.time - 0.3 && t <= test.end + 0.3)
 }
 
 const TIERS: [&str; 3] = ["Marvelous", "≥Great", "≥Good"];
@@ -201,11 +211,21 @@ fn name(j: Option<Judgement>) -> &'static str {
 /// Fitted edges per class and tier, in frames relative to the run's touch centre: `(lo, hi, misfits, n)`.
 pub fn edges(runs: &[RunResult]) -> BTreeMap<(Class, usize), (f64, f64, usize, usize)> {
     let mut out = BTreeMap::new();
-    for class in [Class::Touch, Class::Hold, Class::Chain, Class::Slide, Class::Snap] {
+    for class in [
+        Class::Touch,
+        Class::Hold,
+        Class::Chain,
+        Class::Slide,
+        Class::Snap,
+    ] {
         let pts: Vec<(f64, usize)> = runs
             .iter()
             .filter_map(|r| Some((r.centre_ms?, r)))
-            .flat_map(|(c, r)| sweep(&r.outcomes, class).into_iter().map(move |(x, k)| (frames(x - c), k)))
+            .flat_map(|(c, r)| {
+                sweep(&r.outcomes, class)
+                    .into_iter()
+                    .map(move |(x, k)| (frames(x - c), k))
+            })
             .collect();
         for tier in 0..3 {
             let ok: Vec<(f64, bool)> = pts.iter().map(|&(x, k)| (x, k <= tier)).collect();
@@ -222,7 +242,10 @@ pub fn report(all: &[RunResult]) -> String {
     let mut s = String::new();
     let runs: Vec<RunResult> = all.iter().filter(|r| writes_ok(r)).cloned().collect();
     let runs = &runs[..];
-    let _ = writeln!(s, "## Runs\n\n| Run | Lag ms | Touch centre ms | Write err p95 / max ms | Tests | Resolved |\n|---|---|---|---|---|---|");
+    let _ = writeln!(
+        s,
+        "## Runs\n\n| Run | Lag ms | Touch centre ms | Write err p95 / max ms | Tests | Resolved |\n|---|---|---|---|---|---|"
+    );
     for r in all {
         let resolved = r.outcomes.iter().filter(|o| o.real.is_some()).count();
         let _ = writeln!(
@@ -249,8 +272,17 @@ pub fn report(all: &[RunResult]) -> String {
             hi - lo
         );
     }
-    let _ = writeln!(s, "\n## Sweeps (frames from the touch centre, rounded to ½)\n");
-    for class in [Class::Touch, Class::Hold, Class::Chain, Class::Slide, Class::Snap] {
+    let _ = writeln!(
+        s,
+        "\n## Sweeps (frames from the touch centre, rounded to ½)\n"
+    );
+    for class in [
+        Class::Touch,
+        Class::Hold,
+        Class::Chain,
+        Class::Slide,
+        Class::Snap,
+    ] {
         let mut rows: BTreeMap<i64, [usize; 5]> = BTreeMap::new();
         for r in runs {
             let Some(c) = r.centre_ms else { continue };
@@ -266,12 +298,31 @@ pub fn report(all: &[RunResult]) -> String {
         let _ = writeln!(s, "{class:?}: frame → M/Gr/Gd/Miss/?");
         let line: Vec<String> = rows
             .iter()
-            .map(|(k, c)| format!("{:+.1}: {}/{}/{}/{}/{}", *k as f64 / 2.0, c[0], c[1], c[2], c[3], c[4]))
+            .map(|(k, c)| {
+                format!(
+                    "{:+.1}: {}/{}/{}/{}/{}",
+                    *k as f64 / 2.0,
+                    c[0],
+                    c[1],
+                    c[2],
+                    c[3],
+                    c[4]
+                )
+            })
             .collect();
         let _ = writeln!(s, "  {}\n", line.join(" · "));
     }
-    let _ = writeln!(s, "## When misses are shown (frames after the note, relative to a centred hit)\n");
-    for class in [Class::Touch, Class::Hold, Class::Chain, Class::Slide, Class::Snap] {
+    let _ = writeln!(
+        s,
+        "## When misses are shown (frames after the note, relative to a centred hit)\n"
+    );
+    for class in [
+        Class::Touch,
+        Class::Hold,
+        Class::Chain,
+        Class::Slide,
+        Class::Snap,
+    ] {
         let mut v: Vec<f64> = Vec::new();
         for r in runs {
             let Some(c) = r.centre_ms else { continue };
@@ -283,14 +334,18 @@ pub fn report(all: &[RunResult]) -> String {
                 .filter_map(|o| Some(o.shown? - shift_ms(&o.test)? / 1000.0))
                 .collect();
             hit.sort_by(f64::total_cmp);
-            let Some(&k) = hit.get(hit.len() / 2) else { continue };
+            let Some(&k) = hit.get(hit.len() / 2) else {
+                continue;
+            };
             let hit0 = k + c / 1000.0;
             v.extend(
                 r.outcomes
                     .iter()
                     .filter(|o| o.test.class == class && o.real == Some(Judgement::Miss))
                     .filter(|o| matches!(o.test.probe, Probe::Shift { .. }))
-                    .filter_map(|o| Some(frames((o.shown? - o.clock_ms? / 1000.0 - hit0) * 1000.0))),
+                    .filter_map(|o| {
+                        Some(frames((o.shown? - o.clock_ms? / 1000.0 - hit0) * 1000.0))
+                    }),
             );
         }
         v.sort_by(f64::total_cmp);
@@ -303,25 +358,48 @@ pub fn report(all: &[RunResult]) -> String {
             );
         }
     }
-    let _ = writeln!(s, "\n## Other probes (real / ours)\n");
-    let mut table: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
-    for o in runs.iter().flat_map(|r| &r.outcomes) {
-        let key = match o.test.probe {
-            Probe::Shift { .. } => continue,
-            Probe::HoldGap { at_ms, ms } => format!("hold gap {ms:.0} ms at +{at_ms:.0} ms"),
-            Probe::HoldRelease { ms } => format!("hold released {ms:.0} ms before end"),
-            Probe::SlideJump { lanes } => format!("slide jump {lanes:.1} lanes"),
-            Probe::SnapMove { from, to } => format!("snap {:?} ring {from}→{to}", o.test.class),
-        };
-        *table
-            .entry(key)
-            .or_default()
-            .entry(format!("{} / {}", name(o.real), name(o.test.ours)))
-            .or_default() += 1;
+    let _ = writeln!(
+        s,
+        "\n## Other probes\n\nThe probed note is otherwise played at script offset 0, which lands at the start offset below \
+         on the judge clock (frames from the touch centre); `start` is what a touch there would get.\n\n\
+         | Probe | Start offset | start | Real | Ours |\n|---|---|---|---|---|"
+    );
+    let touch = edges(runs);
+    let tier_at = |x: f64| {
+        (0..3)
+            .find(|&t| {
+                touch
+                    .get(&(Class::Touch, t))
+                    .is_some_and(|e| x > e.0 && x < e.1)
+            })
+            .map_or("Miss", |t| ["M", "Gr", "Gd"][t])
+    };
+    let mut rows: Vec<(String, f64, String)> = Vec::new();
+    for r in runs {
+        let Some(c) = r.centre_ms else { continue };
+        // Probes next to a clock jump are left out: their timing is unknown.
+        for o in r.outcomes.iter() {
+            let Some(clock) = o.clock_ms else { continue };
+            let key = match o.test.probe {
+                Probe::Shift { .. } => continue,
+                Probe::HoldGap { at_ms, ms } => format!("hold gap {ms:>3.0} ms at +{at_ms:.0} ms"),
+                Probe::HoldRelease { ms } => format!("hold released {ms:>3.0} ms before end"),
+                Probe::SlideJump { lanes } => format!("slide jump {lanes:.1} lanes"),
+                Probe::SnapMove { from, to } => format!("snap ring {from}→{to}"),
+            };
+            let start = frames(-clock - c);
+            let cells = format!(
+                "| {} | {} | {} |",
+                tier_at(start),
+                name(o.real),
+                name(o.test.ours)
+            );
+            rows.push((key, start, cells));
+        }
     }
-    for (k, v) in table {
-        let cells: Vec<String> = v.iter().map(|(j, n)| format!("{j} ×{n}")).collect();
-        let _ = writeln!(s, "- {k}: {}", cells.join(", "));
+    rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    for (key, start, cells) in rows {
+        let _ = writeln!(s, "| {key} | {start:+.1} {cells}");
     }
     s
 }
@@ -357,7 +435,13 @@ mod tests {
 
     #[test]
     fn clock_drift_and_jumps() {
-        let blocks = [(0.0, -80.0), (10.0, -70.0), (20.0, -60.0), (30.0, 40.0), (40.0, 40.0)];
+        let blocks = [
+            (0.0, -80.0),
+            (10.0, -70.0),
+            (20.0, -60.0),
+            (30.0, 40.0),
+            (40.0, 40.0),
+        ];
         assert_eq!(clock_at(&blocks, 5.0), Some(-80.0 + 26.0));
         assert_eq!(clock_at(&blocks, 15.0), Some(-70.0 + 26.0));
         assert_eq!(clock_at(&blocks, 25.0), None, "block before the jump");
@@ -395,7 +479,10 @@ mod tests {
         assert!((o.shown.unwrap() - 0.02).abs() < 1e-9);
         let two = resolve(&test(2.0, Probe::Shift { ms: 0.0 }), &pick(1), 0.03);
         assert_eq!((two.real, two.seen.len()), (None, 2));
-        assert_eq!(resolve(&test(3.5, Probe::Shift { ms: 0.0 }), &[], 0.03).real, None);
+        assert_eq!(
+            resolve(&test(3.5, Probe::Shift { ms: 0.0 }), &[], 0.03).real,
+            None
+        );
     }
 
     fn outcome(ms: f64, real: Judgement) -> Outcome {
