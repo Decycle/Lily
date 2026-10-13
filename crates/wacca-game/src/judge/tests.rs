@@ -283,6 +283,55 @@ fn chain_hit_by_resting_finger_at_note_time() {
     assert_eq!(judgements(&early), vec![(0, Judgement::Miss)]);
 }
 
+/// A chain on lanes 20..24 under one finger on lane 21 from `T + from * F` to `T + to * F`,
+/// sampled every ¼ frame (E5 probes, doc 10 §9).
+fn chain_contact(from: f64, to: f64) -> Judgement {
+    let held = on(arc(21, 1), 0..1);
+    let mut frames = vec![empty(T - 30.0 * F)];
+    let mut k = from;
+    while k < to {
+        frames.push(fr(T + k * F, held));
+        k += 0.25;
+    }
+    frames.push(empty(T + to * F));
+    let ev = run(vec![note(T, arc(20, 4), NoteBody::Chain)], &frames);
+    judgements(&ev)[0].1
+}
+
+#[test]
+fn chain_finger_resting_long_before_hits() {
+    // E5: resting since −15…−20 f and held through the note, or lifted at −2 f: Marvelous.
+    assert_eq!(chain_contact(-20.0, 8.0), Judgement::Marvelous);
+    assert_eq!(chain_contact(-18.0, -2.0), Judgement::Marvelous);
+}
+
+#[test]
+fn chain_finger_landing_early_and_staying_hits() {
+    // E5: touch-downs at −3…−7.6 f that stay down are all Marvelous: no fresh press inside the
+    // window is needed.
+    for from in [-7.5, -6.0, -5.0, -4.5, -3.0] {
+        assert_eq!(chain_contact(from, 8.0), Judgement::Marvelous, "{from}");
+    }
+}
+
+#[test]
+fn chain_early_edge_is_on_the_last_touch() {
+    // E5: long (from −10 f) and short (25 ms) contacts lifted before the note behave alike:
+    // lifted inside the ±4 f window → Marvelous, lifted before it opens → Miss.
+    assert_eq!(chain_contact(-10.0, -3.0), Judgement::Marvelous);
+    assert_eq!(chain_contact(-10.0, -4.5), Judgement::Miss);
+    assert_eq!(chain_contact(-4.5, -3.0), Judgement::Marvelous);
+    assert_eq!(chain_contact(-6.0, -4.5), Judgement::Miss);
+}
+
+#[test]
+fn chain_late_touch_down() {
+    // E5: touch-downs up to ≈ +3.5 f after the note hit, from ≈ +4 f they miss.
+    assert_eq!(chain_contact(2.0, 15.0), Judgement::Marvelous);
+    assert_eq!(chain_contact(3.5, 15.0), Judgement::Marvelous);
+    assert_eq!(chain_contact(4.5, 15.0), Judgement::Miss);
+}
+
 /// Swipe across `a`'s lanes `from`→`to` (offsets in the arc), arriving at `T + frames * F`.
 fn swipe(dir: SlideDir, frames: f64, from: u8, to: u8) -> Judgement {
     let a = arc(30, 6);
@@ -365,10 +414,11 @@ fn snap_windows_are_asymmetric() {
     assert_eq!(outward(-10.5), Miss);
 }
 
-/// Hold on lanes 10..14 from `T` to `T + 1`, curving to lanes 20..24 at `T + 0.5`.
+/// Hold on lanes 10..14 from `T` to `T + 1`, curving to lanes 20..24 from `T + 0.45` to `T + 0.5`.
 fn hold_note() -> Note {
     hold(&[
         (T, arc(10, 4)),
+        (T + 0.45, arc(10, 4)),
         (T + 0.5, arc(20, 4)),
         (T + 1.0, arc(20, 4)),
     ])
@@ -391,6 +441,99 @@ fn hold_start_judged_and_body_followed() {
     assert_eq!(judgements(&ev), vec![(0, Judgement::Great)]);
     assert_eq!(ev[0].class, JudgeClass::Hold);
     assert!(judge.update(&frames[3]).is_empty());
+}
+
+/// Hold from lane 10 (width 4) at `T` to lane 22 at `T + 1` through a generated joint at lane 40
+/// (`control = false`) at `T + 0.5`.
+fn hold_with_joint() -> Note {
+    let mut n = hold(&[
+        (T, arc(10, 4)),
+        (T + 0.5, arc(40, 4)),
+        (T + 1.0, arc(22, 4)),
+    ]);
+    if let NoteBody::Hold { nodes } = &mut n.body {
+        nodes[1].control = false;
+    }
+    n
+}
+
+fn hold_nodes(n: Note) -> Vec<HoldNode> {
+    match n.body {
+        NoteBody::Hold { nodes } => nodes,
+        _ => Vec::new(),
+    }
+}
+
+#[test]
+fn hold_path_is_straight_between_control_points() {
+    let nodes = hold_nodes(hold_with_joint());
+    // Halfway: lane 16 (10 → 22), not the joint's lane 40.
+    assert_eq!(hold_path_at(&nodes, T + 0.5), Some(arc(16, 4)));
+    assert_eq!(hold_path_at(&nodes, T + 0.25), Some(arc(13, 4)));
+    assert_eq!(hold_path_at(&nodes, T - 1.0), Some(arc(10, 4)));
+    assert_eq!(hold_path_at(&nodes, T + 2.0), Some(arc(22, 4)));
+    // With the joint a control point the path goes through it.
+    let mut all = nodes.clone();
+    all[1].control = true;
+    assert_eq!(hold_path_at(&all, T + 0.25), Some(arc(25, 4)));
+    // Width is interpolated too.
+    let widen = [
+        all[0],
+        HoldNode {
+            time: T + 1.0,
+            arc: arc(10, 12),
+            ..all[0]
+        },
+    ];
+    assert_eq!(hold_path_at(&widen, T + 0.5), Some(arc(10, 8)));
+    // Unwrapped lanes cross lane 0: 58 → 62 (= 2).
+    let wrap = [
+        HoldNode {
+            arc: arc(58, 2),
+            lane_unwrapped: 58.0,
+            ..all[0]
+        },
+        HoldNode {
+            time: T + 1.0,
+            arc: arc(2, 2),
+            lane_unwrapped: 62.0,
+            ..all[0]
+        },
+    ];
+    assert_eq!(hold_path_at(&wrap, T + 0.5), Some(arc(0, 2)));
+    assert_eq!(hold_path_at(&[], T), None);
+}
+
+#[test]
+fn hold_body_judged_on_the_control_path() {
+    // A finger following the straight path keeps the hold; one following the joint drops it.
+    let along = |lane: fn(f64) -> f64| {
+        let frames: Vec<InputFrame> = (0..=60)
+            .map(|k| {
+                let x = f64::from(k) / 60.0;
+                fr(T + x, on(arc(lane(x).round() as u8, 1), 0..1))
+            })
+            .chain([empty(T + 1.1)])
+            .collect();
+        judgements(&run(vec![hold_with_joint()], &frames))[0].1
+    };
+    assert_eq!(along(|x| 11.0 + 12.0 * x), Judgement::Marvelous);
+    let via_joint = |x: f64| {
+        if x < 0.5 {
+            11.0 + 60.0 * x
+        } else {
+            41.0 - 36.0 * (x - 0.5)
+        }
+    };
+    assert_eq!(along(via_joint), Judgement::Good);
+}
+
+#[test]
+fn autoplay_follows_the_control_path() {
+    assert_autoplay_perfect(vec![
+        hold_with_joint(),
+        note(T + 0.5, arc(16, 4), NoteBody::Touch),
+    ]);
 }
 
 #[test]

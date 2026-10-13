@@ -179,8 +179,9 @@ fn compare(dir: &Path) -> Result<Vec<Row>, String> {
         .filter_map(|(i, r)| {
             let (probe, real) = (*r)?;
             let note = &chart.notes[i];
+            // Press probes (E5): the contact's onset stands for the shift.
             let shift = match probe {
-                Some(Probe::Shift { ms }) => ms,
+                Some(Probe::Shift { ms } | Probe::Press { from_ms: ms, .. }) => ms,
                 _ => 0.0,
             };
             // Our judge's measured offset where it has one (chains carry none), else the scripted one.

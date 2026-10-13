@@ -94,6 +94,7 @@ fn probe_kind(p: &e3::Probe) -> &'static str {
         e3::Probe::HoldRelease { .. } => "hold_release",
         e3::Probe::SlideJump { .. } => "slide_jump",
         e3::Probe::SnapMove { .. } => "snap_move",
+        e3::Probe::Press { .. } => "press",
     }
 }
 

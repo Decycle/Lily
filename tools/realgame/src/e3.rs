@@ -50,6 +50,9 @@ pub enum Probe {
     SlideJump { lanes: f64 },
     /// Snap: the whole arc on ring `from`, then on ring `to` (0 = innermost).
     SnapMove { from: u8, to: u8 },
+    /// Chain (E5): its contact replaced by one held from `from_ms` to `to_ms` (relative to the note) on ring 0 of
+    /// every lane of the arc — a finger landing early and staying, resting long before, or landing late.
+    Press { from_ms: f64, to_ms: f64 },
 }
 
 /// A probe list in a spec file, expanded by [`ProbeSpec::expand`].
@@ -74,6 +77,10 @@ pub enum ProbeSpec {
     },
     SnapMove {
         moves: Vec<[u8; 2]>,
+    },
+    /// Contacts `[from, to]` in frames relative to the note.
+    Press {
+        frames: Vec<[f64; 2]>,
     },
 }
 
@@ -100,6 +107,13 @@ impl ProbeSpec {
             Self::SnapMove { moves } => moves
                 .iter()
                 .map(|&[from, to]| Probe::SnapMove { from, to })
+                .collect(),
+            Self::Press { frames } => frames
+                .iter()
+                .map(|&[from, to]| Probe::Press {
+                    from_ms: from * FRAME_SECS * 1000.0,
+                    to_ms: to * FRAME_SECS * 1000.0,
+                })
                 .collect(),
         }
     }
@@ -186,6 +200,7 @@ pub fn feasible(n: &Note, p: &Probe) -> bool {
         (Probe::SnapMove { from, to }, NoteBody::Snap(_)) => {
             usize::from(*from) < DEPTHS && usize::from(*to) < DEPTHS && from != to
         }
+        (Probe::Press { from_ms, to_ms }, NoteBody::Chain) => to_ms > from_ms,
         _ => false,
     }
 }
@@ -358,6 +373,12 @@ pub fn contacts(chart: &Chart, probes: &[(usize, Probe)], on: f64, min_gap: f64)
             (Probe::SnapMove { from, to }, _) => {
                 cs = cut(&cs, bits, start - 0.2, start + 0.2);
                 cs.extend(snap_move(n, from, to, on));
+            }
+            (Probe::Press { from_ms, to_ms }, _) => {
+                let (from, to) = (start + from_ms / 1000.0, start + to_ms / 1000.0);
+                cs = cut(&cs, bits, from.min(start - 0.2), to.max(start + 0.2));
+                let lanes: Vec<u8> = (0..n.arc.width).map(|o| n.arc.lane + o).collect();
+                cs.extend(cells(&lanes, &[0], from, to));
             }
             _ => {}
         }
@@ -716,6 +737,34 @@ mod tests {
         };
         assert_eq!(judged(&c, &mv(1, 0)), [Some(Judgement::Marvelous)]);
         assert_eq!(judged(&c, &mv(0, 3)), [Some(Judgement::Miss)]);
+    }
+
+    #[test]
+    fn chain_presses_reach_our_judge() {
+        let c = chart(vec![note(2.0, 20, 4, NoteBody::Chain)]);
+        let press = |from, to| {
+            spec(vec![(
+                Class::Chain,
+                ProbeSpec::Press {
+                    frames: vec![[from, to]],
+                },
+            )])
+        };
+        // Resting long before and held through, lifted inside the window, lifted before it, too late.
+        assert_eq!(judged(&c, &press(-18.0, 8.0)), [Some(Judgement::Marvelous)]);
+        assert_eq!(
+            judged(&c, &press(-10.0, -3.0)),
+            [Some(Judgement::Marvelous)]
+        );
+        assert_eq!(judged(&c, &press(-10.0, -5.0)), [Some(Judgement::Miss)]);
+        assert_eq!(judged(&c, &press(5.0, 15.0)), [Some(Judgement::Miss)]);
+        assert!(!feasible(
+            &note(2.0, 20, 4, NoteBody::Touch),
+            &Probe::Press {
+                from_ms: 0.0,
+                to_ms: 10.0
+            }
+        ));
     }
 
     #[test]

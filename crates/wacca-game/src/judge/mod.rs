@@ -16,7 +16,7 @@ pub use table::{JudgeTable, class_of};
 
 use crate::input::{InputFrame, SensorState};
 use crate::rules::{FRAME_SECS, JudgeClass, JudgeEvent, JudgeWindows, Judgement};
-use wacca_chart::{Arc, Chart, Note, NoteBody};
+use wacca_chart::{Arc, Chart, HoldNode, LANES, Note, NoteBody};
 
 /// A hold released for longer than this (seconds) is dropped (downgraded to Good, or Miss when
 /// its start was missed). Measured between 167 and 183 ms (doc 10 §0, §6.1).
@@ -231,6 +231,9 @@ impl Judge {
                 })
             }
             (state @ (State::Open | State::ChainTouched), NoteBody::Chain) => {
+                // Any touch of the arc while the ±4 f window is open hits: a finger resting since
+                // long before, landing early and staying, or lifted inside the window. No fresh
+                // press is needed and AdjustRate does not shrink the early side (doc 10 §9).
                 if open && sense::arc_touched(cur, note.arc) {
                     *state = State::ChainTouched;
                 }
@@ -315,18 +318,46 @@ fn track_hold(h: &mut HoldState, touching: bool, t: f64) {
     }
 }
 
-/// Span of the hold segment active at `t` (the latest node at or before `t`).
-// UNVERIFIED: Saturn tests the active segment's span, not an interpolated one.
+/// Span of a hold at `t`, or the note's own arc for other notes.
 fn hold_arc_at(note: &Note, t: f64) -> Arc {
     match &note.body {
-        NoteBody::Hold { nodes } => nodes
-            .iter()
-            .rev()
-            .find(|n| n.time <= t + EPS)
-            .or(nodes.first())
-            .map_or(note.arc, |n| n.arc),
+        NoteBody::Hold { nodes } => hold_path_at(nodes, t).unwrap_or(note.arc),
         _ => note.arc,
     }
+}
+
+/// Span of a hold body at `t`: straight (linear in unwrapped lane and width) between the authored
+/// control points, as the game draws it; generated joints (`control == false`) are ignored and the
+/// first and last node always count (doc 10 §8.3, doc 11 §3.4). Rounded to whole lanes; before the
+/// start / after the end the first / last node. `None` without nodes.
+pub(crate) fn hold_path_at(nodes: &[HoldNode], t: f64) -> Option<Arc> {
+    let last = nodes.len().checked_sub(1)?;
+    let mut control = nodes
+        .iter()
+        .enumerate()
+        .filter(|&(i, n)| n.control || i == 0 || i == last)
+        .map(|(_, n)| n);
+    let mut a = control.next()?;
+    for b in control {
+        if t < b.time - EPS {
+            let span = b.time - a.time;
+            let k = if span > EPS {
+                ((t - a.time) / span).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            let lane =
+                f64::from(a.lane_unwrapped) + k * f64::from(b.lane_unwrapped - a.lane_unwrapped);
+            let width =
+                f64::from(a.arc.width) + k * (f64::from(b.arc.width) - f64::from(a.arc.width));
+            return Some(Arc {
+                lane: lane.round().rem_euclid(f64::from(LANES)) as u8,
+                width: width.round().clamp(1.0, f64::from(LANES)) as u8,
+            });
+        }
+        a = b;
+    }
+    Some(a.arc)
 }
 
 /// Where an earlier note's late window overlaps a later note's early window on shared lanes,

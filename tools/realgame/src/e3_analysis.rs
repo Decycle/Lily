@@ -386,6 +386,7 @@ pub fn report(all: &[RunResult]) -> String {
                 Probe::HoldRelease { ms } => format!("hold released {ms:>3.0} ms before end"),
                 Probe::SlideJump { lanes } => format!("slide jump {lanes:.1} lanes"),
                 Probe::SnapMove { from, to } => format!("snap ring {from}→{to}"),
+                Probe::Press { .. } => continue,
             };
             let start = frames(-clock - c);
             let cells = format!(
@@ -400,6 +401,42 @@ pub fn report(all: &[RunResult]) -> String {
     rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
     for (key, start, cells) in rows {
         let _ = writeln!(s, "| {key} | {start:+.1} {cells}");
+    }
+    let _ = writeln!(
+        s,
+        "
+## Chain presses (E5)
+
+Contact on/off in frames from the note on the judge clock (scripted + drift +          touch centre).
+
+| Scripted on..off | On | Off | Real | Ours |
+|---|---|---|---|---|"
+    );
+    let mut rows: Vec<(f64, f64, String)> = Vec::new();
+    for r in runs {
+        let Some(c) = r.centre_ms else { continue };
+        for o in &r.outcomes {
+            let (Some(clock), Probe::Press { from_ms, to_ms }) = (o.clock_ms, o.test.probe) else {
+                continue;
+            };
+            let on = frames(from_ms - clock - c);
+            let off = frames(to_ms - clock - c);
+            rows.push((
+                on,
+                off,
+                format!(
+                    "| {:+.1}..{:+.1} | {on:+.2} | {off:+.2} | {} | {} |",
+                    frames(from_ms),
+                    frames(to_ms),
+                    name(o.real),
+                    name(o.test.ours)
+                ),
+            ));
+        }
+    }
+    rows.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    for (_, _, row) in rows {
+        let _ = writeln!(s, "{row}");
     }
     s
 }
