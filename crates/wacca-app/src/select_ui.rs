@@ -17,7 +17,8 @@ use crate::labels;
 use crate::select::{SongList, effective};
 use crate::ui::{Action, View};
 
-const PEACH: Rgba = hex(0xffe7d5, 1.0);
+/// Tint of the selected song's frame (`Select_menu_OBJ08`, measured on the E3 frames).
+const HIGHLIGHT: Rgba = hex(0xffe7ff, 1.0);
 const VIOLET: Rgba = hex(0x8300a0, 1.0);
 const PANEL_GREY: Rgba = hex(0x4d4d4d, 1.0);
 
@@ -280,7 +281,9 @@ pub fn info_plate(p: &mut Painter, list: &SongList, save: &SaveData) {
 pub fn view(c: Canvas, list: &SongList, shift: f32, save: &SaveData, who: &chrome::Player) -> View {
     let mut p = Painter::new(c);
     chrome::background(&mut p);
-    // `plate01` (dark) then `plate00` (grey zigzag behind the jacket strip).
+    // `plate01` (dark) and `plate00` (grey zigzag behind the jacket strip), the selected song's
+    // frame, then the purple band and the dark strip holding the genre tabs over the frame's
+    // top (E3 frames: purple -305..-269, dark -268..-213).
     p.mirrored("uT_STmenu_obj015", [0.0, -295.0], [656.0, 316.0], 0.5, INK);
     p.mirrored(
         "uT_STmenu_obj015",
@@ -289,7 +292,18 @@ pub fn view(c: Canvas, list: &SongList, shift: f32, save: &SaveData, who: &chrom
         0.5,
         WHITE,
     );
-    p.fill([0.0, -253.0], [1080.0, 64.0], MID, hex(0x7a0cff, 1.0));
+    if list.len() > 0 {
+        // `Select_menu_OBJ08`: the selected song.
+        p.mirrored(
+            "uT_STmenu_obj041",
+            [0.0, 22.0],
+            [196.0, 604.0],
+            0.5,
+            HIGHLIGHT,
+        );
+    }
+    p.fill([0.0, -287.0], [1080.0, 37.0], MID, hex(0x7a0cff, 1.0));
+    p.fill([0.0, -240.0], [1080.0, 54.0], MID, INK);
     connectors(&mut p);
 
     if list.len() > 0 {
@@ -308,8 +322,6 @@ pub fn view(c: Canvas, list: &SongList, shift: f32, save: &SaveData, who: &chrom
                 }
             }
         }
-        // `Select_menu_OBJ08`: the selected song.
-        p.mirrored("uT_STmenu_obj041", [0.0, 22.0], [196.0, 604.0], 0.5, PEACH);
         p.tex("uT_STmenu_obj045", [-158.0, 53.0], [25.0, 32.0], INK);
         p.tex_ex(
             "uT_STmenu_obj045",
@@ -331,7 +343,12 @@ pub fn view(c: Canvas, list: &SongList, shift: f32, save: &SaveData, who: &chrom
             );
             p.jacket(&song.jacket, [0.0, 60.0], 244.0);
             if a < 1.0 {
-                p.fill([0.0, 60.0], [244.0, 244.0], MID, hex(0xffe7d5, 1.0 - a));
+                p.fill(
+                    [0.0, 60.0],
+                    [244.0, 244.0],
+                    MID,
+                    [HIGHLIGHT[0], HIGHLIGHT[1], HIGHLIGHT[2], 1.0 - a],
+                );
             }
             p.button([0.0, 60.0], [264.0, 264.0], Action::Confirm);
         }
