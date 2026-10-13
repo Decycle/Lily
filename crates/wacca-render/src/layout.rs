@@ -309,7 +309,9 @@ pub fn mask_state(masks: &[MaskEvent], t: f64) -> [bool; LANES as usize] {
     let initial = !masks.iter().any(|m| m.add);
     let mut on = [initial; LANES as usize];
     let mut changed_at = [f64::NEG_INFINITY; LANES as usize];
-    for m in masks.iter().take_while(|m| m.time <= t) {
+    // Events at or before the chart's start are already in place before it (E3 Fragile: its
+    // add-all at 0 s shows every lane from the lead-in on, no sweep).
+    for m in masks.iter().take_while(|m| m.time <= t.max(0.0)) {
         let w = m.arc.width as usize;
         for i in 0..w {
             let order = match m.dir {
@@ -317,7 +319,11 @@ pub fn mask_state(masks: &[MaskEvent], t: f64) -> [bool; LANES as usize] {
                 MaskDir::Minus => w - 1 - i,
                 MaskDir::Center => (2 * i).abs_diff(w - 1) / 2,
             };
-            let at = m.time + order as f64 * MASK_SECS_PER_LANE;
+            let at = if m.time <= 0.0 {
+                f64::NEG_INFINITY
+            } else {
+                m.time + order as f64 * MASK_SECS_PER_LANE
+            };
             let lane = (m.arc.lane as usize + i) % LANES as usize;
             if at <= t && at >= changed_at[lane] {
                 on[lane] = m.add;
@@ -543,6 +549,11 @@ mod tests {
         assert!(mask_state(&[], 0.0).iter().all(|&on| on));
         let m = [mask(1.0, 0, 60, true, MaskDir::Plus)];
         assert!(mask_state(&m, 0.0).iter().all(|&on| !on));
+        // An add at the chart start is in place from the lead-in on, without a sweep.
+        let start = [mask(0.0, 15, 60, true, MaskDir::Center)];
+        for t in [-3.0, 0.0, 0.01] {
+            assert!(mask_state(&start, t).iter().all(|&on| on), "{t}");
+        }
     }
 
     #[test]
