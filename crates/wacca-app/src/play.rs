@@ -18,7 +18,7 @@ use wacca_render::effects::hold_arc_at;
 use wacca_render::layout::Rect;
 use wacca_render::{
     Effects, JudgeSprite, LiveState, MeshVertex, NoteMeshes, RimState, SceneOptions, SpriteSheet,
-    Vertex, build_mesh_notes, build_scene_into,
+    Stage, Vertex, build_mesh_notes, build_scene_into, build_stage_into,
 };
 use wacca_video::{Frame, VideoPlayer};
 
@@ -369,15 +369,16 @@ impl PlayState {
         self.player.pause();
     }
 
-    /// The playfield now, into `out` (reused across frames); with `meshes` the notes go to `notes`
-    /// (3D) and the returned index splits `out` around them (see `build_scene_into`).
+    /// The playfield now, into `out` (2D, over the 3D view) and `stage` (guide lanes, hold
+    /// ribbons, chevrons); with `meshes` the notes go to `notes` (3D). Buffers are reused.
     pub fn scene(
         &self,
         sprites: &SpriteSheet,
         meshes: Option<&NoteMeshes>,
         out: &mut Vec<Vertex>,
         notes: &mut Vec<MeshVertex>,
-    ) -> usize {
+        stage: &mut Stage,
+    ) {
         let now = self.now();
         let judgement = self
             .session
@@ -409,7 +410,8 @@ impl PlayState {
         if let Some(meshes) = meshes {
             build_mesh_notes(notes, meshes, &self.chart, now, &opts, &live);
         }
-        build_scene_into(out, &self.chart, now, &opts, &live, sprites)
+        build_stage_into(stage, &self.chart, now, &opts, &live, meshes);
+        build_scene_into(out, &self.chart, now, &opts, &live, sprites);
     }
 
     /// `art`: the playfield draws the judgement word art and the combo counter (no text).
@@ -476,6 +478,7 @@ mod tests {
             time: 0.0,
             arc: LaneArc { lane, width: 4 },
             lane_unwrapped: f32::from(lane),
+            control: true,
         };
         let chart = Chart {
             header: ChartHeader::default(),

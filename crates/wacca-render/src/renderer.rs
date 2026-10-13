@@ -1,7 +1,7 @@
-//! wgpu side: one pipeline drawing the [`build_scene`](crate::build_scene) triangle list with 4x MSAA,
-//! sampling one premultiplied sprite atlas (premultiplied-alpha blending; additive vertices write
-//! alpha 0). With note meshes loaded, the notes are drawn in 3D between the two parts of the scene
-//! ([`crate::notes3d`]).
+//! wgpu side: the 3D stage pass (movie, 3D notes, [`crate::stage`] elements; linear HDR, see
+//! `stage_gpu`) composed with the game's final 1/2.2 power, then one pipeline drawing the
+//! [`build_scene`](crate::build_scene) triangle list over it with 4x MSAA, sampling one
+//! premultiplied sprite atlas (premultiplied-alpha blending; additive vertices write alpha 0).
 
 use std::path::Path;
 
@@ -9,6 +9,8 @@ use crate::layout::{ATLAS_SIZE, Vertex, playfield_viewport};
 use crate::notes_gpu::NoteLayer;
 use crate::notes3d::{MeshVertex, NoteMeshes};
 use crate::sprites::{self, Sprite, SpriteSheet, TextSprite};
+use crate::stage::Stage;
+use crate::stage_gpu::StageLayer;
 use crate::style::VIEW_EXTENT;
 use crate::video::VideoLayer;
 
@@ -35,6 +37,8 @@ pub struct Renderer {
     video: VideoLayer,
     /// 3D notes (off until meshes and their textures load).
     notes: NoteLayer,
+    /// Guide lanes, hold ribbons, chevrons; the HDR pass and its composition.
+    stage: StageLayer,
 }
 
 impl Renderer {
@@ -157,8 +161,9 @@ impl Renderer {
             text_font: None,
             vertices: vertex_buffer(device, MIN_BUFFER_BYTES),
             msaa: None,
-            video: VideoLayer::new(device, format, SAMPLE_COUNT),
-            notes: NoteLayer::new(device, format, SAMPLE_COUNT),
+            video: VideoLayer::new(device, SAMPLE_COUNT),
+            notes: NoteLayer::new(device, SAMPLE_COUNT),
+            stage: StageLayer::new(device, queue, format, SAMPLE_COUNT),
         };
         // The white block alone: flat colours work without any sprites.
         me.upload(sprites::pack(Vec::new()).1);
@@ -172,6 +177,7 @@ impl Renderer {
     /// `data/meshes` (`wacca-convert --meshes`) with their textures from `ui_dir/Vfx/Textures`;
     /// without them notes stay 2D.
     pub fn load_sprites(&mut self, ui_dir: &Path) {
+        self.stage.load(&self.device, &self.queue, ui_dir);
         self.notes.load(
             &self.device,
             &self.queue,
@@ -264,7 +270,8 @@ impl Renderer {
         self.video.visible = visible;
     }
 
-    /// Clears `target` (size `target_size` px) to black and draws `scene` in the centred 9:16 area.
+    /// Clears `target` (size `target_size` px) to black and draws `scene` in the centred 9:16 area
+    /// (over the movie, when shown).
     pub fn render(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -272,24 +279,36 @@ impl Renderer {
         target_size: [u32; 2],
         scene: &[Vertex],
     ) {
-        self.render_with_notes(encoder, target, target_size, scene, scene.len(), &[]);
+        self.render_with_notes(encoder, target, target_size, scene, &[], &Stage::default());
     }
 
-    /// [`Renderer::render`] with 3D `notes` drawn over `scene[..split]` and under the rest.
+    /// [`Renderer::render`] with the 3D play view under `scene`: the movie, the 3D `notes` and
+    /// the `stage` elements, rendered like the game's main view (linear, depth-tested) and
+    /// composed with its final `pow(x, 1/2.2)`.
     pub fn render_with_notes(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
         target_size: [u32; 2],
         scene: &[Vertex],
-        split: usize,
         notes: &[MeshVertex],
+        stage: &Stage,
     ) {
         if target_size.contains(&0) {
             return;
         }
-        let split = split.min(scene.len());
-        self.notes.prepare(&self.device, &self.queue, notes);
+        let vp = playfield_viewport(target_size[0] as f32, target_size[1] as f32);
+        let staged = self.video.shown() || !notes.is_empty() || !stage.is_empty();
+        if staged {
+            self.notes.prepare(&self.device, &self.queue, notes);
+            self.stage.prepare(&self.device, &self.queue, stage, vp);
+            let mut pass = self.stage.begin(&self.device, encoder, target_size, vp);
+            self.video.draw(&mut pass);
+            self.notes.draw_opaque(&mut pass, notes);
+            self.stage.draw_opaque(&mut pass);
+            self.stage.draw_translucent(&mut pass);
+            self.notes.draw_aura(&mut pass, notes);
+        }
         let bytes: &[u8] = bytemuck::cast_slice(scene);
         if bytes.len() as u64 > self.vertices.size() {
             let size = (bytes.len() as u64).next_power_of_two();
@@ -323,23 +342,17 @@ impl Renderer {
             })],
             ..Default::default()
         });
-        let vp = playfield_viewport(target_size[0] as f32, target_size[1] as f32);
         pass.set_viewport(vp.x, vp.y, vp.w, vp.h, 0.0, 1.0);
-        self.video.draw(&mut pass);
+        if staged {
+            self.stage.compose(&mut pass);
+        }
         if scene.is_empty() {
             return;
         }
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.atlas_group, &[]);
         pass.set_vertex_buffer(0, self.vertices.slice(..bytes.len() as u64));
-        pass.draw(0..split as u32, 0..1);
-        if !notes.is_empty() {
-            self.notes.draw(&mut pass, notes);
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.atlas_group, &[]);
-            pass.set_vertex_buffer(0, self.vertices.slice(..bytes.len() as u64));
-        }
-        pass.draw(split as u32..scene.len() as u32, 0..1);
+        pass.draw(0..scene.len() as u32, 0..1);
     }
 }
 

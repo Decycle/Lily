@@ -477,6 +477,7 @@ mod tests {
                 width: 4,
             },
             lane_unwrapped: lane,
+            control: true,
         };
         let nodes = [n(1.0, 58.0), n(2.0, 62.0)];
         assert_eq!(hold_arc_at(&nodes, 1.5), Some((60.0, 4.0)));

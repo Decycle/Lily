@@ -1,5 +1,5 @@
-//! Background movie layer: `yuv420p` frames uploaded to three R8 textures and drawn as a square behind the
-//! playfield (inside the playfield's multisampled pass). Decoding lives in `wacca-video`.
+//! Background movie layer: `yuv420p` frames uploaded to three R8 textures and drawn as the game's movie
+//! quad, the farthest opaque surface of the 3D stage pass (`stage_gpu`). Decoding lives in `wacca-video`.
 
 #[derive(Debug)]
 pub(crate) struct VideoLayer {
@@ -24,7 +24,7 @@ pub(crate) fn plane_sizes([w, h]: [u32; 2]) -> [[u32; 2]; 3] {
 }
 
 impl VideoLayer {
-    pub(crate) fn new(device: &wgpu::Device, format: wgpu::TextureFormat, samples: u32) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, samples: u32) -> Self {
         let module = device.create_shader_module(wgpu::include_wgsl!("video.wgsl"));
         let tex = |binding| wgpu::BindGroupLayoutEntry {
             binding,
@@ -55,11 +55,7 @@ impl VideoLayer {
             bind_group_layouts: &[&layout],
             push_constant_ranges: &[],
         });
-        let constants = [("LINEARIZE", if format.is_srgb() { 1.0 } else { 0.0 })];
-        let options = wgpu::PipelineCompilationOptions {
-            constants: &constants,
-            ..Default::default()
-        };
+        let options = wgpu::PipelineCompilationOptions::default();
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("video"),
             layout: Some(&pipeline_layout),
@@ -73,7 +69,7 @@ impl VideoLayer {
                 topology: wgpu::PrimitiveTopology::TriangleStrip,
                 ..Default::default()
             },
-            depth_stencil: None,
+            depth_stencil: Some(crate::stage_gpu::depth_state(true)),
             multisample: wgpu::MultisampleState {
                 count: samples,
                 ..Default::default()
@@ -82,7 +78,7 @@ impl VideoLayer {
                 module: &module,
                 entry_point: Some("fs_main"),
                 compilation_options: options,
-                targets: &[Some(format.into())],
+                targets: &[Some(crate::stage_gpu::HDR_FORMAT.into())],
             }),
             multiview: None,
             cache: None,
@@ -181,6 +177,11 @@ impl VideoLayer {
             textures,
             bind,
         }
+    }
+
+    /// A frame is uploaded and the layer is visible.
+    pub(crate) fn shown(&self) -> bool {
+        self.visible && self.planes.is_some()
     }
 
     /// Draw the last uploaded frame over the current viewport (if visible).

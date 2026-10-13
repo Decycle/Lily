@@ -59,7 +59,7 @@ pub(crate) struct NoteLayer {
 }
 
 impl NoteLayer {
-    pub(crate) fn new(device: &wgpu::Device, format: wgpu::TextureFormat, samples: u32) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, samples: u32) -> Self {
         let module = device.create_shader_module(wgpu::include_wgsl!("notes.wgsl"));
         let fragment = wgpu::ShaderStages::FRAGMENT;
         let tex = |binding| wgpu::BindGroupLayoutEntry {
@@ -100,13 +100,10 @@ impl NoteLayer {
             bind_group_layouts: &[&layout],
             push_constant_ranges: &[],
         });
-        let constants = [("LINEARIZE", if format.is_srgb() { 1.0 } else { 0.0 })];
-        let options = wgpu::PipelineCompilationOptions {
-            constants: &constants,
-            ..Default::default()
-        };
+        let options = wgpu::PipelineCompilationOptions::default();
         let attributes = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Uint32];
-        let make = |entry: &str, blend: Option<wgpu::BlendState>| {
+        // Into the stage pass: linear HDR target, reversed-Z depth (opaque bodies write it).
+        let make = |entry: &str, blend: Option<wgpu::BlendState>, depth_write: bool| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(entry),
                 layout: Some(&pipeline_layout),
@@ -120,8 +117,8 @@ impl NoteLayer {
                         attributes: &attributes,
                     }],
                 },
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
+                primitive: crate::stage_gpu::primitive(),
+                depth_stencil: Some(crate::stage_gpu::depth_state(depth_write)),
                 multisample: wgpu::MultisampleState {
                     count: samples,
                     ..Default::default()
@@ -131,7 +128,7 @@ impl NoteLayer {
                     entry_point: Some(entry),
                     compilation_options: options.clone(),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format,
+                        format: crate::stage_gpu::HDR_FORMAT,
                         blend,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
@@ -151,13 +148,14 @@ impl NoteLayer {
             operation: wgpu::BlendOperation::Add,
         };
         // Masked materials: opaque where not discarded.
-        let pipeline = make("fs_main", None);
+        let pipeline = make("fs_main", None, true);
         let aura = make(
             "fs_aura",
             Some(wgpu::BlendState {
                 color: add,
                 alpha: keep,
             }),
+            false,
         );
         let materials = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("note materials"),
@@ -267,22 +265,37 @@ impl NoteLayer {
         queue.write_buffer(&self.vertices, 0, bytes);
     }
 
-    /// Draws the prepared `notes`: the aura first (additive), then the opaque triangles over it.
-    pub(crate) fn draw(&self, pass: &mut wgpu::RenderPass, notes: &[MeshVertex]) {
+    /// Draws the prepared `notes`' opaque triangles (bodies, hold ends, bar lines; depth written).
+    pub(crate) fn draw_opaque(&self, pass: &mut wgpu::RenderPass, notes: &[MeshVertex]) {
         let Some(bind) = &self.bind else { return };
-        if notes.is_empty() {
+        let aura = aura_count(notes) as u32;
+        if aura as usize == notes.len() {
             return;
         }
-        let aura = aura_count(notes) as u32;
-        let bytes = std::mem::size_of_val(notes) as u64;
         pass.set_bind_group(0, bind, &[]);
-        pass.set_vertex_buffer(0, self.vertices.slice(..bytes));
-        if aura > 0 {
-            pass.set_pipeline(&self.aura);
-            pass.draw(0..aura, 0..1);
-        }
+        pass.set_vertex_buffer(
+            0,
+            self.vertices.slice(..std::mem::size_of_val(notes) as u64),
+        );
         pass.set_pipeline(&self.pipeline);
         pass.draw(aura..notes.len() as u32, 0..1);
+    }
+
+    /// Draws the prepared `notes`' additive aura (separate translucency: depth-tested against the
+    /// opaque scene, not written).
+    pub(crate) fn draw_aura(&self, pass: &mut wgpu::RenderPass, notes: &[MeshVertex]) {
+        let Some(bind) = &self.bind else { return };
+        let aura = aura_count(notes) as u32;
+        if aura == 0 {
+            return;
+        }
+        pass.set_bind_group(0, bind, &[]);
+        pass.set_vertex_buffer(
+            0,
+            self.vertices.slice(..std::mem::size_of_val(notes) as u64),
+        );
+        pass.set_pipeline(&self.aura);
+        pass.draw(0..aura, 0..1);
     }
 }
 

@@ -99,6 +99,10 @@ pub struct HoldNode {
     pub arc: Arc,
     /// Lane after shortest-path unwrapping relative to the previous node (start node = its lane).
     pub lane_unwrapped: f32,
+    /// Authored control point: the start, the end and joints with column 8 = 1. Joints with 0
+    /// are pre-baked samples of the path between control points; the game draws the hold body
+    /// straight between control points (doc 11 §3.4).
+    pub control: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]

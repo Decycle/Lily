@@ -7,9 +7,6 @@
 // (vMX_2_NoteAura_000, additive) has its own entry point `fs_aura`.
 // Constant names in comments are the material parameters (cb4 / cb3 slots in the disassembly).
 
-// 1.0 when the target is sRGB (it re-encodes what we write).
-override LINEARIZE: f32 = 0.0;
-
 struct Material {
     color: vec4<f32>,
     // Dark, HighLight, Line, ChainNote
@@ -58,8 +55,8 @@ fn vs_main(
     @location(2) material: u32,
 ) -> VsOut {
     var out: VsOut;
-    // 90° FOV: NDC = (X, Z) / w (notes3d::place).
-    out.pos = vec4<f32>(pos.x, pos.y, 0.5 * pos.z, pos.z);
+    // 90° FOV: NDC = (X, Z) / w (notes3d::place); reversed-Z depth near / w (stage.wgsl).
+    out.pos = vec4<f32>(pos.x, pos.y, 10.0, pos.z);
     out.uv = uv;
     out.w = pos.z;
     out.material = material;
@@ -146,21 +143,10 @@ fn hold_end_cap(uv: vec2<f32>) -> vec3<f32> {
     return max(c * (k * k - 0.5 * k + 0.5), vec3<f32>(0.0));
 }
 
-// The game's tonemap pass for the main view: `pow(linear, 1/2.2)` into a UNORM target (doc 11 §2.6).
-fn encode(c: vec3<f32>) -> vec3<f32> {
-    return pow(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));
-}
-
-// Inverse sRGB transfer: an sRGB target re-encodes it, so the stored value is `encode(c)`.
-fn srgb_to_linear(e: vec3<f32>) -> vec3<f32> {
-    return select(pow((e + 0.055) / 1.055, vec3<f32>(2.4)), e / 12.92, e <= vec3<f32>(0.04045));
-}
-
-// What to write for a final linear colour `c`.
+// What to write for a final colour `c`: the linear scene colour of the stage pass (stage_gpu
+// composes the game's final 1/2.2 power, doc 11 §2.6).
 fn output(c: vec3<f32>) -> vec3<f32> {
-    // No bloom/TAA yet (doc 11 §2.6: the main view's tonemap is a plain 1/2.2 power).
-    let e = encode(c);
-    return select(e, srgb_to_linear(e), LINEARIZE > 0.5);
+    return c;
 }
 
 @fragment
@@ -184,8 +170,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }
 
 // vMX_2_NoteAura_000 (BLEND_Additive): emissive NewNoteColor·t, opacity sat(t), t = SNote.r;
-// added as emissive·opacity.
-// UNVERIFIED: additive in our encoded target, not in the game's linear scene colour.
+// added as emissive·opacity to the linear scene colour (separate translucency, One/One).
 @fragment
 fn fs_aura(in: VsOut) -> @location(0) vec4<f32> {
     let m = materials[in.material & 255u];
