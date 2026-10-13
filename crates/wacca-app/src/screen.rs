@@ -1,6 +1,6 @@
 //! The core loop as a state machine, following the original:
 //! Title → ModeSelect → Category (genre folder) → SongSelect (song + difficulty) → Options → Play
-//! → Results → SongSelect.
+//! → Results → SongSelect. The timing check opens from (and returns to) Options.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
@@ -9,6 +9,8 @@ pub enum Screen {
     Category,
     SongSelect,
     Options,
+    /// Timing check ([`crate::calibrate`]).
+    Calibrate,
     Play,
     Results,
 }
@@ -21,6 +23,8 @@ pub enum Event {
     /// The song ended (played out or given up).
     PlayOver,
     Retry,
+    /// Open the timing check.
+    Calibrate,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +48,8 @@ pub fn next(screen: Screen, event: Event) -> Next {
         (SongSelect, Back) => Next::Go(Category),
         (Options, Confirm) => Next::Go(Play),
         (Options, Back) => Next::Go(SongSelect),
+        (Options, Event::Calibrate) => Next::Go(Screen::Calibrate),
+        (Screen::Calibrate, Confirm | Back) => Next::Go(Options),
         (Play, PlayOver) => Next::Go(Results),
         (Results, Confirm | Back) => Next::Go(SongSelect),
         (Results, Retry) => Next::Go(Play),
@@ -95,6 +101,15 @@ mod tests {
             Next::Go(Screen::Title)
         );
         assert_eq!(next(Screen::Title, Event::Back), Next::Quit);
+    }
+
+    #[test]
+    fn timing_check_returns_to_options() {
+        let c = Screen::Calibrate;
+        assert_eq!(next(Screen::Options, Event::Calibrate), Next::Go(c));
+        assert_eq!(next(c, Event::Confirm), Next::Go(Screen::Options));
+        assert_eq!(next(c, Event::Back), Next::Go(Screen::Options));
+        assert_eq!(next(Screen::SongSelect, Event::Calibrate), Next::Stay);
     }
 
     #[test]

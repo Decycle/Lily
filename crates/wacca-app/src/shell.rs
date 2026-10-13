@@ -31,7 +31,8 @@ use crate::results::Summary;
 use crate::screen::{self, Event, Next, Screen};
 use crate::ui::{Action, Item, View, WHITE};
 use crate::{
-    category, hud, jacket, mode, options, play, preview, record, results, select_ui, title, wipe,
+    calibrate, category, hud, jacket, mode, options, play, preview, record, results, select_ui,
+    title, wipe,
 };
 
 /// Contact id used for the mouse (touch ids come from the OS).
@@ -437,6 +438,10 @@ impl App {
                 let title = m.list.current().map_or("", |s| s.title.as_str());
                 options::view(&m.options, &m.settings, m.autoplay, title, area)
             }
+            Screen::Calibrate => {
+                let pos = self.s.player.position();
+                calibrate::view(&m.calibration, &m.settings, pos, area)
+            }
             Screen::Results => self
                 .summary
                 .as_ref()
@@ -483,6 +488,12 @@ impl App {
                 }
             }
             Next::Go(s) => {
+                if self.screen == Screen::Calibrate {
+                    self.end_calibration(e == Event::Confirm);
+                }
+                if s == Screen::Calibrate {
+                    self.start_calibration();
+                }
                 if wipe::applies(self.screen, s) {
                     self.wipe = Some((self.screen, Instant::now()));
                 }
@@ -605,6 +616,39 @@ impl App {
         self.event(event_loop, Event::PlayOver);
     }
 
+    /// Replace the preview with the timing check's click track.
+    fn start_calibration(&mut self) {
+        self.preview.stop(&self.s.player);
+        let rate = self.s.player.sample_rate();
+        let click = hit_sounds(&mut self.hits, &mut self.s.se, rate)
+            .and_then(|h| h.marvelous.first().cloned())
+            .unwrap_or_else(|| calibrate::beep(rate));
+        let track = calibrate::Metronome::new(&click);
+        match self.s.player.load(Box::new(track)) {
+            Ok(()) => self.s.player.play(),
+            Err(e) => log::warn!("timing check: {e}"),
+        }
+    }
+
+    /// Stop the clicks; `applied`: the offset was set, so save it.
+    fn end_calibration(&mut self, applied: bool) {
+        self.s.player.pause();
+        if applied {
+            log::info!(
+                "timing check: offset {:+.1}",
+                self.s.menu.settings.judge_offset
+            );
+            self.save_settings();
+        }
+    }
+
+    fn calibration_tap(&mut self) {
+        let pos = self.s.player.position();
+        if let Some(e) = self.s.menu.calibration.tap(pos) {
+            log::info!("timing check tap at {pos:.4}: {:+.1} ms", e * 1000.0);
+        }
+    }
+
     fn save_settings(&mut self) {
         self.s.save.settings = self.s.menu.settings.clone();
         if let Some(path) = &self.s.save_path
@@ -673,6 +717,10 @@ impl App {
             }
             return;
         }
+        if self.screen == Screen::Calibrate && code == KeyCode::Space {
+            self.calibration_tap();
+            return;
+        }
         let action = match code {
             KeyCode::ArrowUp => Action::Up,
             KeyCode::ArrowDown => Action::Down,
@@ -700,6 +748,10 @@ impl App {
                 play.pointer(id, at, playfield_viewport(w, h));
             }
             return;
+        }
+        // Timing check: a press anywhere but on a button is a tap, timed at the press.
+        if self.screen == Screen::Calibrate && down == Some(true) && self.view().hit(p).is_none() {
+            self.calibration_tap();
         }
         let g = self.pointers.entry(id).or_default();
         let gesture = match down {
@@ -763,7 +815,7 @@ impl App {
             Screen::Title | Screen::ModeSelect | Screen::Category => {
                 self.preview.stop(&self.s.player)
             }
-            Screen::Results => {}
+            Screen::Results | Screen::Calibrate => {}
         }
         let now = Instant::now();
         let dt = self
@@ -853,8 +905,8 @@ impl ApplicationHandler for App {
                     },
                 ..
             } => {
-                // Menus scroll on key repeat; play ignores it.
-                if !repeat || self.screen != Screen::Play {
+                // Menus scroll on key repeat; play and the timing check ignore it.
+                if !repeat || !matches!(self.screen, Screen::Play | Screen::Calibrate) {
                     self.key(event_loop, code);
                 }
             }
