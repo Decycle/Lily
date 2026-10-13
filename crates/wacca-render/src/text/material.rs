@@ -15,6 +15,8 @@ pub enum UiMaterial {
     TitleGlitch,
     /// `uM_Chara_2`, smoky additive glow (`chara_glow.wgsl`).
     CharaGlow,
+    /// `uM_CMcircle001`, the mode select's swirling art ring (`circle_swirl.wgsl`).
+    CircleSwirl,
 }
 
 /// Colour blending of a material's output.
@@ -27,19 +29,24 @@ pub enum Blend {
 }
 
 impl UiMaterial {
-    pub const ALL: [UiMaterial; 2] = [UiMaterial::TitleGlitch, UiMaterial::CharaGlow];
+    pub const ALL: [UiMaterial; 3] = [
+        UiMaterial::TitleGlitch,
+        UiMaterial::CharaGlow,
+        UiMaterial::CircleSwirl,
+    ];
 
     pub(super) fn source(self) -> String {
         let body = match self {
             UiMaterial::TitleGlitch => include_str!("title_glitch.wgsl"),
             UiMaterial::CharaGlow => include_str!("chara_glow.wgsl"),
+            UiMaterial::CircleSwirl => include_str!("circle_swirl.wgsl"),
         };
         format!("{}\n{body}", include_str!("material_common.wgsl"))
     }
 
     pub fn blend(self) -> Blend {
         match self {
-            UiMaterial::TitleGlitch => Blend::Translucent,
+            UiMaterial::TitleGlitch | UiMaterial::CircleSwirl => Blend::Translucent,
             UiMaterial::CharaGlow => Blend::Additive,
         }
     }
