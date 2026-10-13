@@ -14,6 +14,16 @@ use std::collections::BTreeMap;
 use std::fmt::Write;
 use wacca_game::rules::{FRAME_SECS, Judgement};
 
+/// Single-note classes with window sweeps.
+const CLASSES: [Class; 6] = [
+    Class::Touch,
+    Class::Hold,
+    Class::Chain,
+    Class::Slide,
+    Class::Snap,
+    Class::SnapOut,
+];
+
 /// Panel changes further than this (s) from every note are not assigned.
 pub const MAX_DISTANCE: f64 = 0.4;
 
@@ -84,6 +94,9 @@ pub fn clock_at(blocks: &[(f64, f64)], t: f64) -> Option<f64> {
     (!(i > 0 && jump(i - 1, i)) && !jump(i, i + 1)).then(|| blocks[i].1 - mean)
 }
 
+/// How much later (s) than a hit a miss-only panel change is shown: 6 frames.
+pub const MISS_DELAY: f64 = 0.1;
+
 /// Assigns every judgement change to the note whose expected span `(start, end)` (chart s, a test's shift
 /// included) is nearest after removing `lag`; ties go to the shorter span (a tap inside a hold body).
 pub fn assign(events: &[Event], spans: &[(f64, f64)], lag: f64) -> Vec<Vec<usize>> {
@@ -92,7 +105,14 @@ pub fn assign(events: &[Event], spans: &[(f64, f64)], lag: f64) -> Vec<Vec<usize
         if e.judgements().is_empty() {
             continue;
         }
-        let t = e.t - lag;
+        // A miss is shown when its window closes, ~6.5 f after a centred hit would be (doc 10 §3).
+        let t = e.t
+            - lag
+            - if e.judgements() == [Judgement::Miss] {
+                MISS_DELAY
+            } else {
+                0.0
+            };
         let score = |&(s, end): &(f64, f64)| (s - t).max(t - end).max(0.0) + (end - s) * 1e-3;
         let best = spans
             .iter()
@@ -211,13 +231,7 @@ fn name(j: Option<Judgement>) -> &'static str {
 /// Fitted edges per class and tier, in frames relative to the run's touch centre: `(lo, hi, misfits, n)`.
 pub fn edges(runs: &[RunResult]) -> BTreeMap<(Class, usize), (f64, f64, usize, usize)> {
     let mut out = BTreeMap::new();
-    for class in [
-        Class::Touch,
-        Class::Hold,
-        Class::Chain,
-        Class::Slide,
-        Class::Snap,
-    ] {
+    for class in CLASSES {
         let pts: Vec<(f64, usize)> = runs
             .iter()
             .filter_map(|r| Some((r.centre_ms?, r)))
@@ -276,13 +290,7 @@ pub fn report(all: &[RunResult]) -> String {
         s,
         "\n## Sweeps (frames from the touch centre, rounded to ½)\n"
     );
-    for class in [
-        Class::Touch,
-        Class::Hold,
-        Class::Chain,
-        Class::Slide,
-        Class::Snap,
-    ] {
+    for class in CLASSES {
         let mut rows: BTreeMap<i64, [usize; 5]> = BTreeMap::new();
         for r in runs {
             let Some(c) = r.centre_ms else { continue };
@@ -316,13 +324,7 @@ pub fn report(all: &[RunResult]) -> String {
         s,
         "## When misses are shown (frames after the note, relative to a centred hit)\n"
     );
-    for class in [
-        Class::Touch,
-        Class::Hold,
-        Class::Chain,
-        Class::Slide,
-        Class::Snap,
-    ] {
+    for class in CLASSES {
         let mut v: Vec<f64> = Vec::new();
         for r in runs {
             let Some(c) = r.centre_ms else { continue };
@@ -386,7 +388,9 @@ pub fn report(all: &[RunResult]) -> String {
                 Probe::HoldRelease { ms } => format!("hold released {ms:>3.0} ms before end"),
                 Probe::SlideJump { lanes } => format!("slide jump {lanes:.1} lanes"),
                 Probe::SnapMove { from, to } => format!("snap ring {from}→{to}"),
-                Probe::Press { .. } => continue,
+                Probe::Press { .. } | Probe::GroupPress { .. } | Probe::GroupSplit { .. } => {
+                    continue;
+                }
             };
             let start = frames(-clock - c);
             let cells = format!(
@@ -438,6 +442,60 @@ Contact on/off in frames from the note on the judge clock (scripted + drift +   
     for (_, _, row) in rows {
         let _ = writeln!(s, "{row}");
     }
+    s.push_str(&group_report(runs));
+    s
+}
+
+/// The judgements two notes produce, as the panel can show them: the set of counters that change (two equal
+/// judgements on one frame change one counter once).
+pub fn judgement_set(js: impl IntoIterator<Item = Option<Judgement>>) -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = js.into_iter().map(name).collect();
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
+/// E6 two-note groups: every panel change near the group vs our verdicts for both notes. Offsets are frames on
+/// the judge clock relative to each note (scripted + drift + touch centre).
+pub fn group_report(runs: &[RunResult]) -> String {
+    let mut s = String::from(
+        "\n## Two-note groups (E6)\n\nPress times in frames on the judge clock (first press relative to the second \
+         note for `press`, each note's own time for `split`); dt = second − first note (frames).\n\n\
+         | Run | Note | Class | dt | Probe | Real changes | Ours (1st, 2nd) | Agree |\n|---|---|---|---|---|---|---|---|\n",
+    );
+    for r in runs {
+        let Some(c) = r.centre_ms else { continue };
+        for o in &r.outcomes {
+            let Some(clock) = o.clock_ms else { continue };
+            let at = |ms: f64| frames(ms - clock - c);
+            let probe = match o.test.probe {
+                Probe::GroupPress { cover, ms } => format!("press {cover:?} {:+.1}", at(ms)),
+                Probe::GroupSplit { a_ms, b_ms } => format!(
+                    "split {} / {}",
+                    a_ms.map_or("–".into(), |a| format!("{:+.1}", at(a))),
+                    b_ms.map_or("–".into(), |b| format!("{:+.1}", at(b)))
+                ),
+                _ => continue,
+            };
+            let mut seen: Vec<&str> = o.seen.iter().map(|&j| name(Some(j))).collect();
+            seen.sort_unstable();
+            let real = seen.clone();
+            seen.dedup();
+            let ours = judgement_set([o.test.ours, o.test.ours_partner]);
+            let _ = writeln!(
+                s,
+                "| {} | {} | {:?} | {:.1} | {probe} | {} | {}, {} | {} |",
+                r.run,
+                o.test.note,
+                o.test.class,
+                frames((o.test.end - o.test.time) * 1000.0),
+                real.join(" "),
+                name(o.test.ours),
+                name(o.test.ours_partner),
+                if seen == ours { "✔" } else { "✘" }
+            );
+        }
+    }
     s
 }
 
@@ -460,6 +518,8 @@ mod tests {
             class: Class::Touch,
             probe,
             ours: None,
+            partner: None,
+            ours_partner: None,
         }
     }
 

@@ -1,0 +1,11 @@
+{"seed":91,"min_time":5.0,"isolation":0.22,"min_on":0.025,"probes":{
+"touch":[{"kind":"sweep","from":-6.5,"to":6.5,"step":0.5}],
+"slide":[{"kind":"sweep","from":-12,"to":-2,"step":0.5}],
+"snap":[{"kind":"sweep","from":-12,"to":-2,"step":0.5}],
+"snapout":[{"kind":"sweep","from":-12,"to":12,"step":1}],
+"chordoverlap":[{"kind":"group_press","presses":[["overlap",0],["first",0],["second",0],["union",4]]},
+         {"kind":"group_split","frames":[[0,4],[4,0]]}],
+"pair":[{"kind":"group_press","presses":[["union",0],["union",-3],["second",0]]},
+         {"kind":"group_split","frames":[[0,0]]}],
+"pairoverlap":[{"kind":"group_press","presses":[["union",0],["union",-2],["union",-4],["first",0],["second",0]]},
+         {"kind":"group_split","frames":[[0,0],[null,0]]}]}}

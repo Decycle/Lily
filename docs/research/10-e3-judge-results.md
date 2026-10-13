@@ -14,13 +14,14 @@ checkout** (gitignored). Every input went only through `Local\WACCON_SHARED_BUFF
 | Hold start | Like touch: Marvelous −3.2/+3.5 f, Great −5.5/+5.5 f (n 47). A start outside its windows whose body is held still gives **Good** (seen from −10 to +8.5 f). | same ✔ |
 | Chain window, AdjustRate front = 20 | Marvelous when the 25 ms contact starts −3.96…+4.0 f from the centre, Miss outside (n 38); the early edge is ≈ 3.5–4 f even after allowing for the contact length — **AdjustRate 20 does not shrink the early window** (to 0.8 f). Chains never showed Great/Good. **E5 (§9):** any touch of the arc while the ±4 f window is open hits — a finger resting since long before, or landing early and staying, is Marvelous; no fresh press is needed. | 4/4 f on any touch, AdjustRate ignored ✔ |
 | Slide windows (table 5/7, 8/10, 10/10) | Consistent: Marvelous −4.2…+7.2 f, Great at −4.5…−7.5 f, Miss at ≤ −10.5 and ≥ +9.5 f; a missed slide is shown ≈ 10.3 f after a centred hit (late close ≈ 10 f). n 19 — edges ±1 f. Community −5/+5 Marvelous is **not** supported (Marvelous seen at +4…+5 f twice). | table ✔ |
-| Snap windows | Only 5 timed snaps (all snap-in): Marvelous at +0.5, +6.5 f, Great +7.5, Miss +10.5, +13.5; miss shown +11 f. Consistent with SnapUp 5/7, 8/10, 10/10 but not a measurement. | table |
+| Snap windows | **E6 (§10):** snap-in early edges M −6.0, Great −8.2, Good −10.2 f (n 23); snap-out M −7.5/+6.0, Great −10.0/+8.3, Good −10.0/+10.5 f (n 21). Table SnapUp 5/7, 8/10, 10/10 and SnapDown 7/5, 10/8, 10/10 to ±1 f; slide early edges −5.5 / −8.1 / −10.4 f (n 107). | table ✔ |
 | Hold drop allowance (Saturn 215 ms) | **Between 167 and 183 ms (10–11 frames).** A mid-hold release of ≤ 167 ms keeps the start judgement (n 10), ≥ 183 ms gives Good (n 9). | 215 ms ✘ |
 | Release before the end / HoldEnd 7/7 row | Releasing **≤ 267 ms** before the end keeps the start judgement (n 16), **300 ms** gives Good (n 3). Fits "the hold is checked until end − 7 f (HoldEnd), and a gap there > ~10 f is a drop": 300 − 117 = 183 ms → drop, 267 − 117 = 150 ms → kept. | release > 215 ms before end → Good ✘ |
 | Start missed **and** dropped | **Miss** (start at −8 f, released 300 ms before the end); start missed + gap ≤ 167 ms → Good. | Good ✘ |
 | Slide distance threshold (Saturn 1.9 lanes) | A single jump of **≥ 2.0 lanes** hits (n 7), **≤ 1.5 lanes** misses (n 7), mean-position model. | 1.9 ✔ |
 | Snap ring movement | **One ring inward** suffices (3→2, 1→0, 3→1, 2→0 all Marvelous); an outward move on a snap-in misses. | one ring ✔ |
-| Chord / one-press rule (`ProtectInvolveRockFrameNum −1`) | Not probed (no guest Normal chart with overlapping notes inside one window). Ordinary chords (side by side, same time) were hit by the perfect script's simultaneous contacts in every run. | — |
+| Chord / one-press rule (`ProtectInvolveRockFrameNum −1`) | **E6 (§10):** chord notes pressed separately each take their own press's timing; one press over a chord hits all of it; one press over two side-by-side notes 9.5 f apart hits both (the earlier one late); overlapping notes 9.5 f apart have their windows cut at the midpoint and a press goes to the note whose window it is in. A finger landing ≥ 8 f before a touch and held is a Miss (41/41). 102 / 107 groups agree, the rest at a window edge. | same ✔ |
+| Hard difficulty | **E6:** guests can select Hard (song-select DIFFICULTY button, lanes 30–31); Expert/Inferno stay locked (doc 09 §1.3). Touch windows on Hard: M −3.2/+3.1, Great −5.4/+5.1, Good −6.1/+5.8 f (n 532) = Normal's. | same ✔ |
 
 ## 1. Method
 
@@ -162,7 +163,7 @@ deliberately mistimed notes, i.e. Great/Good/Miss popups and combo breaks. KING 
    these with a pointer to this doc. Slide threshold 1.9 and one-ring snaps are consistent with the game
    (threshold between 1.5 and 2.0 lanes).
 5. Open (not measured): chord / involve-lock rule, snap-out windows and early slide/snap Great edges (few samples),
-   Hard/Expert charts (difficulty select not automated).
+   Hard/Expert charts (difficulty select not automated). **Done in E6 (§10) except Expert (locked for guests).**
 
 ## 7. Reproduce
 
@@ -359,3 +360,115 @@ judge_parity <7 E3 runs> runs\e5\20261013-052909 runs\e5\20261013-053427 runs\e5
 ```
 `data\nav\cat-vocaloid.png` (not committed) is the crop `[0.28, 0.36, 0.44, 0.2]` of
 `runs\e3\20261013-042834\nav-11-category-vocaloid.png`.
+
+## 10. E6: chords, close pairs, snap-out, slide/snap early edges, Hard (live, 2026-10-13)
+
+### 10.1 Probes, charts, runs
+- **Two-note groups** (`e3::isolated_pairs`, classes `chord` / `chordoverlap` / `pair` / `pairoverlap`): two touches
+  (or touch + hold start) starting ≤ 0.19 s apart whose joint span keeps the spec isolation from every other note.
+  The test note is the earlier one, its partner the next note. Probes remove both notes' scripted input and add
+  `group_press {cover, ms}` (one 25 ms contact on ring 0 of `union` = shortest arc over both / `first` / `second` /
+  `overlap` lanes, at the second note + `ms`) or `group_split {a, b}` (first arc on ring 0 at its time + a, second
+  arc on ring 1 at its time + b). `analyze_e3` pools every panel change near either note into the test note;
+  `judge_parity` compares the set of changed counters with ours for both notes on the injected input (two equal
+  judgements on one frame change one counter once). Miss-only panel changes are now matched ~6 f earlier
+  (`e3_analysis::MISS_DELAY`): a miss is shown when its window closes, which put the second note's miss nearer the
+  next note in the first E6 analysis.
+- **Held touches:** `press {from, to}` now also applies to touch notes (finger on ring 0 of the arc from `from` to
+  `to` frames).
+- Window sweeps as in §1.1; snap-out notes are their own class (`snapout`) from now on.
+- **Hard:** the guest song select has a DIFFICULTY button at lanes 30–31 (left edge); one touch switches Normal →
+  Hard (`nav-*-difficulty-hard.png` shows HARD Lv. 8 / 8+ on every run). Navigation: `e6-guest-*-hard.nav.json`
+  (VOCALOID by image; TOUHOU = one more right step from VOCALOID, so no TOUHOU tile image is needed).
+  Expert/Inferno: not tried again; locked for guests per doc 09 §1.3.
+- Charts (chart stats: new `chart_stats <songs.json> <assets> --difficulty Hard`): no Normal or Hard chart has
+  isolated touch-touch pairs closer than 0.19 s except 砂の惑星 Hard (overlapping pairs 9.5 f apart, 24–32 per run);
+  KING Hard has 85 isolated side-by-side chords; 四次元跳躍機関 Hard (TOUHOU) the most isolated snap-outs (8) plus
+  9 snap-ins and 23 slides. Overlapping simultaneous touch pairs (`chordoverlap`) are not isolated on any reachable
+  chart: not measured.
+
+| Run (`runs/e6/…`) | Chart (Hard) | Spec (seed) | Write err p95 / max ms | Visual timing | Touch centre ms | Used |
+|---|---|---|---|---|---|---|
+| 20261013-192905 | KING | e6-mixed (81): chords, sweeps | 1.22 / 36 (26 late edges, their tests dropped) | −85→0 ms drift, then δ swings −400…+160 ms after 100 s | 29.1 | ✔ before 100 s |
+| 20261013-193804 | 砂の惑星 | e6-pair (101): pairs, slide sweep | 0.00 / 2.2 | jumps at 54, 99, 121 s | 65.1 | ✔ except 99–121 s |
+| 20261013-194706 | 四次元跳躍機関 | e6-snap (91) | 0.00 / 0.2 | flat −70…−90 | 2.1 | ✔ |
+| 20261013-195356 | 四次元跳躍機関 | e6-snap-edges (92) | 0.00 / 0.4 | jumps at 11, 13, 76–122 s | 18.4 | ✔ (blocks next to jumps excluded) |
+| 20261013-200154 | 四次元跳躍機関 | e6-snap-edges (93) | 0.00 / 6.0 (2 late edges) | flat | 15.0 | ✔ |
+| 20261013-200944 | 砂の惑星 | e6-pair (102) | 0.00 / 0.3 | jumps at 71, 75 s | −22.9 | ✔ |
+| 20261013-201831 | 四次元跳躍機関 | e6-touch-held (111) | 0.00 / 0.9 | flat | 19.2 | ✔ |
+
+The two exclusions are chosen from the timing check, not the verdicts: in 192905 after 100 s and 193804 between the
+99 s and 121 s jumps, the per-block δ (−400…+160 ms, +122…+153 ms) is evidently not the judge clock (perfectly
+played notes there come out 6–9 f off on the corrected clock).
+
+### 10.2 Chords and one-press rule (frames on the judge clock)
+- **Side-by-side chords (KING, 52 groups before 100 s, all agree):** one press over both arcs hits both with the
+  press's timing (−0.4…0 f: one Marvelous change; +3.6…+4.0 f: one Great change). Split presses are judged each on
+  its own press: (0, +4) → M + Gr, (−4, +4) → Gr + Gr, (+2, 0) → M + M, (0, −4) → M + Gr — the first press does not
+  carry the second note.
+- **Overlapping touches 9.5 f apart (砂の惑星, 43 / 48 agree):** a press over both (or over either arc alone, which
+  overlaps the other) up to +4.1…+4.7 f after the first note hits the first only (Great; the second is missed unless
+  pressed again); from +4.9…+5.4 f after the first (= −4.6…−4.1 f before the second, 5 groups) it hits only the
+  second (Great), and the first is missed — although +5.4 f is inside a lone touch's Good window. The switch lies at
+  4.7–4.9 f, the midpoint (4.75 f): **the windows of overlapping notes are cut at the midpoint**, as `cut_overlaps`
+  does, and a press goes to the note whose (cut) window it falls in. Disagreements: four at the Marvelous/Great edge
+  (−2.6…−3.7 f) and one outlier: a union press at +4.4 f after the first gave Great + Great (ours Great + Miss; the
+  second note at −5.1 f, outside its cut early window — two Great changes 25 ms apart). Three other presses at
+  +4.1…+4.7 f did not hit the second note, so this stays a single unexplained case.
+- **Side-by-side touches 9.5 f apart (7 groups):** one press over both 5.6 f after the first gave Good (first, late)
+  + Great (second, early) — one press hits an earlier open note and a later one when their arcs do not overlap, as
+  ours (the hit note's lanes are consumed, the rest go on).
+- **Held finger on a touch (四次元, 41 notes):** a finger landing 7.8–16.9 f before the note and held to −6…+6 f is
+  a **Miss** every time (41 / 41): a touch needs a press inside its window (our rule).
+
+### 10.3 Windows (Hard; frames from each run's touch centre, 50 % points, `runs/e6/report.md`)
+
+| Class | Marvelous | ≥ Great | ≥ Good | n | Table |
+|---|---|---|---|---|---|
+| Touch | −3.24 / +3.13 | −5.40 / +5.07 | −6.08 / +5.80 | 532 | 3/3, 5/5, 6/6 (Normal E3: −2.97/+3.04, −4.94/+4.81, −5.73/+5.86) |
+| Slide (early side) | −5.5 | −8.1 | −10.4 | 107 | 5, 8, 10 |
+| Snap in (early side) | −6.0 | −8.2 | −10.2 | 23 | 5, 8, 10 |
+| Snap out | −7.5 / +6.0 | −10.0 / +8.3 | −10.0 / +10.5 | 21 | 7/5, 10/8, 10/10 |
+
+Snap-out samples: −10.5 Miss ×2, −9.5 Gr, −7.5 M/Gr, −3.5…+5.0 M ×9, +7.0 Gr ×2, +8.0 / +8.5 Gr/Gd, +10.5 Gd/Miss —
+the late Marvelous edge lies between +5 and +7 f (fit midpoint +6), consistent with 5. The snap-in Marvelous edge
+rests on one Marvelous at −6.0 f (next to Great at −5.5 and −6.5 f). **Hard uses Normal's windows; slide and snap
+rows match `JudgeParameterTable` to ±1 f.**
+
+### 10.4 Parity (`judge_parity`, 18 runs: 7 E3 + 4 E5 + 7 E6; exclusions of §10.1)
+
+| Class | Agree / compared | > 1 f from every edge |
+|---|---|---|
+| Touch | 1,435 / 1,649 | 747 / 749 |
+| Hold | 154 / 174 | 86 / 86 |
+| Chain | 168 / 182 | 111 / 111 |
+| Slide | 147 / 165 | 90 / 90 |
+| Snap in | 36 / 42 | 22 / 22 |
+| Snap out | 25 / 29 | 14 / 14 |
+| Two-note groups (E6) | 102 / 107 | – (5 at an edge, §10.2) |
+
+The two touch disagreements away from an edge are early strays at −7.3 and −7.4 f (real Good, ours Miss; the §8.2
+one and one in 195356), 1.3–1.4 f past the Good edge. E6 alone: touch 349 / 350, slide 63 / 63, snap in 15 / 15, snap
+out 14 / 14, chain 31 / 31, hold 8 / 8 away from the edges.
+
+**No rule changes:** the chord rule, the window cut between overlapping notes and every window agree with the real
+game. The UNVERIFIED notes on `Judge::press` and `cut_overlaps` are replaced by pointers here; new tests
+`chord_notes_are_judged_on_their_own_presses`, `close_overlapping_pair_press_goes_to_the_nearer_note`,
+`one_press_hits_an_earlier_open_note_beside_the_target`, harness `e3::tests::group_probes_reach_our_judge` (and `resting_finger_does_not_hit_touch` now cites §10.2).
+Autoplay corpus unchanged (judge untouched).
+
+Open: overlapping simultaneous touches (no isolated case on a guest chart), the one +4.4 f double hit above,
+Expert/Inferno (locked for guests).
+
+### 10.5 Reproduce
+```
+chart_stats data\songs.json <assets> --difficulty Hard > hard.tsv
+e3_script --chart <assets>\MusicData\S03-005\S03-005_01.mer --spec tools\realgame\scripts\e6-mixed.spec.json --out tools\realgame\scripts\e6-king-h81.taps.json
+e3_script … S00-030_01.mer --spec e6-pair.spec.json (seeds 101, 102); S02-225_01.mer --spec e6-snap.spec.json (91),
+  e6-snap-edges.spec.json (92, 93), e6-touch-held.spec.json (111)
+run_experiment … --nav tools\realgame\scripts\e6-guest-{king,suna,yojigen}-hard.nav.json   (as §7; data\nav\cat-vocaloid.png and the jackets)
+analyze_e2 <run> --compare 0 --timing-block 8 ; analyze_e3 <runs>… --report runs\e6\report.md
+judge_parity <7 E3 runs> <4 E5 runs> <7 E6 runs> --report runs\e6\parity-before.md --table runs\e6\parity-before.csv
+```
+Note: the fourth run (195356) was started 2 min 13 s after the previous one released the lock (rule: ≥ 3 min);
+all others kept the gap.
