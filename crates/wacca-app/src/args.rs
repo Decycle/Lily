@@ -4,8 +4,11 @@ use std::path::{Path, PathBuf};
 
 use wacca_chart::Difficulty;
 
+use crate::screen::Screen;
+
 pub const USAGE: &str = "usage: wacca-app --assets <dir> [--data <dir>] [--save <file>] [--windowed] \
 [--autoplay] [--speed 1.0..6.0] [--offset-ms N] \
+[--screen title|mode|category|select|options|calibrate] \
 [--chart <MusicData/<song>/<song>_NN.mer | MusicData/<song>> [--difficulty normal|hard|expert|inferno]]";
 
 pub const SPEED_RANGE: std::ops::RangeInclusive<f64> = 1.0..=6.0;
@@ -41,6 +44,20 @@ pub struct Args {
     /// Save file (default `%APPDATA%/wacca-slim/save.json`).
     pub save: Option<PathBuf>,
     pub windowed: bool,
+    /// Open this menu screen instead of the title (debugging, screenshots).
+    pub screen: Option<Screen>,
+}
+
+fn screen(v: &str) -> Option<Screen> {
+    Some(match v {
+        "title" => Screen::Title,
+        "mode" => Screen::ModeSelect,
+        "category" => Screen::Category,
+        "select" => Screen::SongSelect,
+        "options" => Screen::Options,
+        "calibrate" => Screen::Calibrate,
+        _ => return None,
+    })
 }
 
 fn value<T: std::str::FromStr>(flag: &'static str, v: Option<String>) -> Result<T, ArgsError> {
@@ -71,6 +88,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, ArgsError> 
         data: PathBuf::from("data"),
         save: None,
         windowed: false,
+        screen: None,
     };
     while let Some(flag) = args.next() {
         match flag.as_str() {
@@ -78,6 +96,13 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, ArgsError> 
             "--chart" => out.chart = Some(value::<PathBuf>("--chart", args.next())?),
             "--save" => out.save = Some(value::<PathBuf>("--save", args.next())?),
             "--windowed" => out.windowed = true,
+            "--screen" => {
+                let v: String = value("--screen", args.next())?;
+                out.screen = Some(screen(&v).ok_or(ArgsError::Value {
+                    flag: "--screen",
+                    value: v,
+                })?);
+            }
             "--data" => out.data = value("--data", args.next())?,
             "--difficulty" => diff = Some(value::<String>("--difficulty", args.next())?),
             "--autoplay" => out.autoplay = true,
@@ -177,6 +202,13 @@ mod tests {
         assert_eq!(a.data, PathBuf::from("D"));
         assert_eq!(a.save, Some(PathBuf::from("S")));
         assert_eq!(a.difficulty, Some(Difficulty::Hard));
+        assert_eq!(a.screen, None);
+        let a = args("--assets A --screen select").unwrap();
+        assert_eq!(a.screen, Some(Screen::SongSelect));
+        assert!(matches!(
+            args("--assets A --screen play"),
+            Err(ArgsError::Value { .. })
+        ));
     }
 
     #[test]

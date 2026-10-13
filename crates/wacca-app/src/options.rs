@@ -5,7 +5,6 @@
 //! [`offset_secs`] / [`offset_units`].
 
 use wacca_game::save::Settings;
-use wacca_render::layout::Rect;
 use wacca_render::text::Align;
 
 use crate::circle::{self, Canvas, NAVY, PINK, slab};
@@ -134,9 +133,15 @@ fn label(row: Row) -> &'static str {
 /// pink text and a pink value slab with spaced navy text, stepping right down the list. The
 /// selected row is lit and flanked by arrows; tapping left / right of the value's centre steps
 /// it down / up. BACK and GO sit at the bottom of the circle.
-pub fn view(menu: &OptionsMenu, s: &Settings, autoplay: bool, title: &str, area: Rect) -> View {
+pub fn view(
+    menu: &OptionsMenu,
+    s: &Settings,
+    autoplay: bool,
+    title: &str,
+    frame: crate::canvas::Canvas,
+) -> View {
     let mut v = View::default();
-    let c = Canvas::new(area);
+    let c = Canvas::new(frame);
     circle::background(&mut v, &c);
     c.panel(&mut v, &slab(350.0, 560.0, 420.0, 56.0), &[NAVY]);
     c.text(
@@ -320,12 +325,7 @@ mod tests {
             &s,
             auto,
             "Song",
-            Rect {
-                x: 0.0,
-                y: 0.0,
-                w: 900.0,
-                h: 1600.0,
-            },
+            crate::canvas::Canvas::fit(900.0, 1600.0),
         );
         let t = v.texts().concat();
         assert!(t.contains("TIMING+0.1") && t.contains("Song"), "{t}");

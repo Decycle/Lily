@@ -6,7 +6,6 @@
 
 use wacca_chart::Difficulty;
 use wacca_game::grade::{Grade, Lamp, PlayResult};
-use wacca_render::layout::Rect;
 use wacca_render::style::Rgba;
 use wacca_render::text::Align;
 
@@ -199,9 +198,9 @@ fn ui_tex(name: &str) -> String {
 }
 
 /// Results for `s`, `t` seconds after the screen appeared.
-pub fn view(s: &Summary, area: Rect, t: f32) -> View {
+pub fn view(s: &Summary, menu: crate::canvas::Canvas, t: f32) -> View {
     let mut v = View::default();
-    let c = Canvas::new(area);
+    let c = Canvas::new(menu);
     circle::background(&mut v, &c);
     let e = ease(t, INFO_AT, SLIDE);
     header(&mut v, &c.moved([0.0, -120.0 * (1.0 - e)], e), s);
@@ -593,12 +592,9 @@ mod tests {
     use super::*;
     use wacca_game::score::Counts;
 
-    const AREA: Rect = Rect {
-        x: 0.0,
-        y: 0.0,
-        w: 900.0,
-        h: 1600.0,
-    };
+    fn area() -> crate::canvas::Canvas {
+        crate::canvas::Canvas::fit(900.0, 1600.0)
+    }
 
     fn summary(new_best: bool) -> Summary {
         Summary {
@@ -687,7 +683,7 @@ mod tests {
 
     #[test]
     fn settled_screen_shows_counts_score_rank_and_record() {
-        let v = view(&summary(true), AREA, 10.0);
+        let v = view(&summary(true), area(), 10.0);
         let text = joined(&v);
         for want in [
             "Song", "Artist", "PLAYER", "EXPERT", "12+", "0090", "0005", "0002", "0003", "090.0%",
@@ -721,7 +717,7 @@ mod tests {
     #[test]
     fn counters_use_the_numeral_face() {
         use wacca_render::text::Face;
-        let v = view(&summary(false), AREA, 10.0);
+        let v = view(&summary(false), area(), 10.0);
         let face = |want: &str| {
             v.items.iter().find_map(|i| match i {
                 Item::Text { text, face, .. } if text == want => Some(*face),
@@ -737,7 +733,7 @@ mod tests {
         let keys = |g: Grade| {
             let mut s = summary(false);
             s.result.grade = g;
-            images(&view(&s, AREA, 10.0))
+            images(&view(&s, area(), 10.0))
                 .into_iter()
                 .filter(|k| k.contains("RTrate") && k.contains("BG"))
                 .map(str::to_string)
@@ -752,12 +748,12 @@ mod tests {
     #[test]
     fn animation_hides_rank_until_stamped_and_counts_score() {
         let s = summary(false);
-        let early = view(&s, AREA, 0.0);
+        let early = view(&s, area(), 0.0);
         assert!(!images(&early).iter().any(|k| k.contains("uT_FTrate")));
         assert!(!images(&early).iter().any(|k| k.contains("BG00")));
         assert!(joined(&early).contains("0000000"));
         assert!(!images(&early).iter().any(|k| k.contains("newrecord")));
-        let late = view(&s, AREA, 10.0);
+        let late = view(&s, area(), 10.0);
         assert!(images(&late).iter().any(|k| k.contains("uT_FTrateST00")));
     }
 
@@ -771,7 +767,7 @@ mod tests {
             before: 3.0,
             after: 3.0,
         };
-        let v = view(&s, AREA, 10.0);
+        let v = view(&s, area(), 10.0);
         let t = v.texts();
         assert!(t.contains(&"GIVEN UP") && t.contains(&"AUTOPLAY: NOT SAVED"));
         assert!(images(&v).contains(&"UI/Textures/FONT/uT_FTclear_095"));

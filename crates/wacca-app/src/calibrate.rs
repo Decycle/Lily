@@ -11,7 +11,6 @@
 
 use wacca_audio::{Decoder, Error, Sfx};
 use wacca_game::save::Settings;
-use wacca_render::layout::Rect;
 use wacca_render::text::Align;
 
 use crate::circle::{self, Canvas, NAVY, PINK, slab};
@@ -235,9 +234,9 @@ const SHOWN: usize = 5;
 
 /// The timing check in the options' style: header slab, a ring flashing on each click, the
 /// latest tap errors, the suggestion against the current setting, BACK and APPLY.
-pub fn view(cal: &Calibration, s: &Settings, pos: f64, area: Rect) -> View {
+pub fn view(cal: &Calibration, s: &Settings, pos: f64, menu: crate::canvas::Canvas) -> View {
     let mut v = View::default();
-    let c = Canvas::new(area);
+    let c = Canvas::new(menu);
     circle::background(&mut v, &c);
     c.panel(&mut v, &slab(350.0, 560.0, 420.0, 56.0), &[NAVY]);
     c.text(
@@ -323,12 +322,9 @@ pub fn view(cal: &Calibration, s: &Settings, pos: f64, area: Rect) -> View {
 mod tests {
     use super::*;
 
-    const AREA: Rect = Rect {
-        x: 0.0,
-        y: 0.0,
-        w: 900.0,
-        h: 1600.0,
-    };
+    fn area() -> crate::canvas::Canvas {
+        crate::canvas::Canvas::fit(900.0, 1600.0)
+    }
 
     #[test]
     fn tap_errors_are_against_the_nearest_click() {
@@ -418,12 +414,12 @@ mod tests {
     fn view_shows_progress_suggestion_and_buttons() {
         let mut cal = Calibration::default();
         let s = Settings::default();
-        let t = view(&cal, &s, 0.0, AREA).texts().concat();
+        let t = view(&cal, &s, 0.0, area()).texts().concat();
         assert!(t.contains("TAPS 0/16") && t.contains("KEEP TAPPING"), "{t}");
         for k in 0..16 {
             cal.tap(LEAD_IN + k as f64 * PERIOD + 0.025);
         }
-        let v = view(&cal, &s, LEAD_IN, AREA);
+        let v = view(&cal, &s, LEAD_IN, area());
         let t = v.texts().concat();
         assert!(
             t.contains("25 MS LATE") && t.contains("TIMING -3.0 (NOW +0.0)"),
@@ -432,7 +428,7 @@ mod tests {
         assert!(v.buttons.iter().any(|(_, a)| *a == Action::Confirm));
         assert!(v.buttons.iter().any(|(_, a)| *a == Action::Back));
         // The ring area is free to tap.
-        let centre = crate::ui::canvas(AREA, [540.0, 780.0]);
+        let centre = Canvas::new(area()).p([540.0, 780.0]);
         assert_eq!(v.hit(centre), None);
     }
 }

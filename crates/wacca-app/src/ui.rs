@@ -185,19 +185,6 @@ pub fn contains(r: Rect, p: [f32; 2]) -> bool {
     p[0] >= r.x && p[0] < r.x + r.w && p[1] >= r.y && p[1] < r.y + r.h
 }
 
-/// The original UI is a 1080 × 1920 portrait canvas around the round screen.
-pub const CANVAS: [f32; 2] = [1080.0, 1920.0];
-
-/// Canvas point → window pixels: the canvas scaled to the height of the 9:16 menu `area` and
-/// centred in it.
-pub fn canvas(area: Rect, [x, y]: [f32; 2]) -> [f32; 2] {
-    let s = area.h / CANVAS[1];
-    [
-        area.x + area.w / 2.0 + (x - CANVAS[0] / 2.0) * s,
-        area.y + y * s,
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,18 +213,5 @@ mod tests {
         assert_eq!(v.hit([50.0, 60.0]), Some(Action::Confirm));
         assert_eq!(v.hit([110.0, 60.0]), None);
         assert_eq!(v.hit([0.0, 0.0]), None);
-    }
-
-    #[test]
-    fn canvas_scales_to_height_and_centres() {
-        let area = Rect {
-            x: 100.0,
-            y: 0.0,
-            w: 540.0,
-            h: 960.0,
-        };
-        assert_eq!(canvas(area, [540.0, 0.0]), [370.0, 0.0]);
-        assert_eq!(canvas(area, [0.0, 1920.0]), [100.0, 960.0]);
-        assert_eq!(canvas(area, [1080.0, 960.0]), [640.0, 480.0]);
     }
 }

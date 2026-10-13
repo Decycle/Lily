@@ -230,6 +230,7 @@ fn run(args: &Args) -> Result<(), Error> {
             save,
             menu,
             start,
+            screen: args.screen,
             windowed: args.windowed,
             ffmpeg,
         },

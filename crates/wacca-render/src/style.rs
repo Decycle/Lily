@@ -186,6 +186,8 @@ pub const SENSOR_DEPTHS: usize = 4;
 pub const LANE_LINE_HALF_WIDTH: f32 = 0.002;
 /// Playfield-space radius mapped to the edge of the square viewport (room for the ring).
 pub const VIEW_EXTENT: f32 = 1.17;
+/// Playfield-space radius of the rim's outer edge: the edge of the visible round screen.
+pub const SCREEN_EDGE: f32 = 1.0 + JUDGE_BAND_WIDTH + RIM_WIDTH;
 
 pub fn note_color(body: &NoteBody) -> Rgba {
     match body {
