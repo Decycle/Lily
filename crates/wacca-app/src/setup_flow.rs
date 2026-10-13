@@ -1,11 +1,13 @@
 //! First-run setup as a pure state machine: welcome → folder picker → detection report (with the
-//! background-video choice) → running (progress, cancel) → summary → title. Errors end on a
+//! background-video and checksum choices) → optional md5 check → running (progress, cancel) → summary → title. Errors end on a
 //! failure step that explains what to do. The shell performs the [`Effect`]s (dialog, worker
 //! threads) and feeds their results back as [`Input`]s.
 
 use std::path::PathBuf;
 
-use crate::setup_backend::{Detected, Finding, Phase, Progress, SetupError, Source, Summary};
+use crate::setup_backend::{
+    ArchiveFile, Detected, Finding, Phase, Progress, SetupError, Source, Summary,
+};
 
 /// Why setup is showing.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,6 +35,10 @@ pub enum Step {
         dir: PathBuf,
         detected: Detected,
         movies: bool,
+        /// Check the archives' md5 first (archives only).
+        verify: bool,
+        /// Archives whose checksum did not match (START continues anyway).
+        mismatched: Vec<String>,
     },
     Running {
         dir: PathBuf,
@@ -40,6 +46,8 @@ pub enum Step {
         /// When the current step started (s, the shell's clock).
         step_since: f64,
         cancelling: bool,
+        /// While the checksums are checked: what to run afterwards (report, videos).
+        checking: Option<(Detected, bool)>,
     },
     Done(Summary),
     Failed {
@@ -54,10 +62,14 @@ pub enum Input {
     Confirm,
     Back,
     /// Flip the background-video choice.
-    Toggle,
+    ToggleMovies,
+    /// Flip the checksum check.
+    ToggleVerify,
     /// The dialog closed: the chosen folder, if any.
     Picked(Option<PathBuf>),
     Detected(Result<Detected, Failure>),
+    /// Checksums checked: the archives that did not match.
+    Verified(Result<Vec<String>, Failure>),
     /// Progress at time `at` (s).
     Progress(Progress, f64),
     Finished(Result<Summary, Failure>),
@@ -68,6 +80,8 @@ pub enum Input {
 pub enum Effect {
     OpenPicker,
     Detect(PathBuf),
+    /// Check these archives' md5.
+    Verify(Vec<ArchiveFile>),
     Run {
         source: Source,
         include_movies: bool,
@@ -84,6 +98,34 @@ pub enum Effect {
 pub struct Flow {
     pub step: Step,
     pub reason: Reason,
+}
+
+/// The archives of an archive source.
+pub fn archives(d: &Detected) -> Option<&[ArchiveFile]> {
+    match &d.source {
+        Source::Archives(a) => Some(a),
+        Source::Installed { .. } => None,
+    }
+}
+
+fn running(dir: PathBuf, checking: Option<(Detected, bool)>) -> Step {
+    Step::Running {
+        dir,
+        progress: None,
+        step_since: 0.0,
+        cancelling: false,
+        checking,
+    }
+}
+
+fn found(dir: PathBuf, detected: Detected, movies: bool, mismatched: Vec<String>) -> Step {
+    Step::Found {
+        dir,
+        detected,
+        movies,
+        verify: false,
+        mismatched,
+    }
 }
 
 impl Flow {
@@ -116,14 +158,7 @@ impl Flow {
             (Step::Picking, Picked(Some(dir))) => detect(dir),
             (Step::Detecting(_), Back) => (Step::Welcome, None),
             (Step::Detecting(dir), Detected(r)) => match r {
-                Ok(detected) => (
-                    Step::Found {
-                        dir,
-                        detected,
-                        movies: false,
-                    },
-                    None,
-                ),
+                Ok(detected) => (found(dir, detected, false, Vec::new()), None),
                 Err(failure) => (
                     Step::Failed {
                         failure,
@@ -137,16 +172,23 @@ impl Flow {
                     dir,
                     detected,
                     movies,
+                    verify,
+                    mismatched,
                 },
-                Toggle,
+                input @ (ToggleMovies | ToggleVerify),
             ) => {
-                // Only when there are videos to include.
-                let movies = !movies && movies_available(&detected);
+                // Only what applies: videos when there are some, checksums for archives.
+                let (movies, verify) = match input {
+                    ToggleMovies => (!movies && movies_available(&detected), verify),
+                    _ => (movies, !verify && archives(&detected).is_some()),
+                };
                 (
                     Step::Found {
                         dir,
                         detected,
                         movies,
+                        verify,
+                        mismatched,
                     },
                     None,
                 )
@@ -156,20 +198,23 @@ impl Flow {
                     dir,
                     detected,
                     movies,
+                    verify,
+                    ..
                 },
                 Confirm,
-            ) => (
-                Step::Running {
-                    dir,
-                    progress: None,
-                    step_since: 0.0,
-                    cancelling: false,
-                },
-                Some(Effect::Run {
-                    source: detected.source,
-                    include_movies: movies,
-                }),
-            ),
+            ) => match archives(&detected).filter(|_| verify).map(<[_]>::to_vec) {
+                Some(list) => (
+                    running(dir, Some((detected, movies))),
+                    Some(Effect::Verify(list)),
+                ),
+                None => (
+                    running(dir, None),
+                    Some(Effect::Run {
+                        source: detected.source,
+                        include_movies: movies,
+                    }),
+                ),
+            },
             (Step::Found { .. }, Back) => (Step::Welcome, None),
             (
                 Step::Running {
@@ -177,6 +222,7 @@ impl Flow {
                     progress,
                     step_since,
                     cancelling: false,
+                    checking,
                 },
                 Back,
             ) => (
@@ -185,6 +231,7 @@ impl Flow {
                     progress,
                     step_since,
                     cancelling: true,
+                    checking,
                 },
                 Some(Effect::Cancel),
             ),
@@ -194,6 +241,7 @@ impl Flow {
                     progress: old,
                     step_since,
                     cancelling,
+                    checking,
                 },
                 Progress(p, at),
             ) => {
@@ -206,11 +254,43 @@ impl Flow {
                         progress: Some(p),
                         step_since: if new_step { at } else { step_since },
                         cancelling,
+                        checking,
                     },
                     None,
                 )
             }
-            (Step::Running { dir, .. }, Finished(r)) => match r {
+            (
+                Step::Running {
+                    dir,
+                    checking: Some((detected, movies)),
+                    ..
+                },
+                Verified(r),
+            ) => match r {
+                Ok(bad) if bad.is_empty() => (
+                    running(dir, None),
+                    Some(Effect::Run {
+                        source: detected.source,
+                        include_movies: movies,
+                    }),
+                ),
+                Ok(bad) => (found(dir, detected, movies, bad), None),
+                Err(failure) => (
+                    Step::Failed {
+                        failure,
+                        dir: Some(dir),
+                    },
+                    None,
+                ),
+            },
+            (
+                Step::Running {
+                    dir,
+                    checking: None,
+                    ..
+                },
+                Finished(r),
+            ) => match r {
                 Ok(summary) => (Step::Done(summary), None),
                 Err(failure) => (
                     Step::Failed {
@@ -418,7 +498,7 @@ pub fn failure(e: &SetupError) -> Failure {
             "UNSUPPORTED VERSION",
             vec![
                 format!("These game files cannot be used: {v}."),
-                "WACCA_slim needs WACCA Reverse 3.07.01: the Reverse update".into(),
+                "Lily needs WACCA Reverse 3.07.01: the Reverse update".into(),
                 "archives (3.00.00 base + 3.01.00 … 3.07.01) or a game folder.".into(),
             ],
         ),
@@ -487,7 +567,7 @@ mod tests {
         );
         assert_eq!(f.input(Input::Detected(Ok(detected()))), None);
         assert!(matches!(f.step, Step::Found { movies: false, .. }));
-        f.input(Input::Toggle);
+        f.input(Input::ToggleMovies);
         assert!(matches!(f.step, Step::Found { movies: true, .. }));
         assert_eq!(
             f.input(Input::Confirm),
@@ -530,8 +610,10 @@ mod tests {
             dir: "G".into(),
             detected: d,
             movies: false,
+            verify: false,
+            mismatched: Vec::new(),
         };
-        f.input(Input::Toggle);
+        f.input(Input::ToggleMovies);
         assert!(matches!(f.step, Step::Found { movies: false, .. }));
     }
 
@@ -555,7 +637,7 @@ mod tests {
         f.input(Input::Back);
         assert_eq!(f.input(Input::Detected(Ok(detected()))), None);
         assert!(matches!(f.step, Step::Welcome));
-        assert_eq!(f.input(Input::Toggle), None);
+        assert_eq!(f.input(Input::ToggleMovies), None);
     }
 
     #[test]
@@ -572,6 +654,80 @@ mod tests {
         assert!(matches!(f.step, Step::Welcome));
     }
 
+    fn archive_set() -> Detected {
+        Detected {
+            source: Source::Archives(vec![ArchiveFile {
+                path: "D/WACCA Reverse (3.00.00).7z".into(),
+                version: "3.00.00".into(),
+                size: 1,
+                md5: "x",
+            }]),
+            version: Some("3.07.01".into()),
+            report: vec![Finding::ChecksumNotVerified],
+        }
+    }
+
+    fn found_step(detected: Detected) -> Step {
+        Step::Found {
+            dir: "D".into(),
+            detected,
+            movies: false,
+            verify: false,
+            mismatched: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn checksums_first_when_chosen_then_run() {
+        let mut f = Flow::new(Reason::Requested);
+        f.step = found_step(archive_set());
+        f.input(Input::ToggleVerify);
+        let Some(Effect::Verify(list)) = f.input(Input::Confirm) else {
+            panic!("{:?}", f.step)
+        };
+        assert_eq!(list.len(), 1);
+        assert!(matches!(
+            f.step,
+            Step::Running {
+                checking: Some(_),
+                ..
+            }
+        ));
+        // A late `Finished` while checking is ignored.
+        assert_eq!(f.input(Input::Finished(Ok(Summary::default()))), None);
+        assert_eq!(
+            f.input(Input::Verified(Ok(Vec::new()))),
+            Some(Effect::Run {
+                source: archive_set().source,
+                include_movies: false
+            })
+        );
+        assert!(matches!(f.step, Step::Running { checking: None, .. }));
+    }
+
+    #[test]
+    fn checksum_mismatch_warns_and_allows_continuing() {
+        let mut f = Flow::new(Reason::Requested);
+        f.step = found_step(archive_set());
+        f.input(Input::ToggleVerify);
+        f.input(Input::Confirm);
+        f.input(Input::Verified(Ok(vec!["a.7z".into()])));
+        assert!(matches!(
+            &f.step,
+            Step::Found { verify: false, mismatched, .. } if mismatched == &["a.7z"]
+        ));
+        assert!(matches!(f.input(Input::Confirm), Some(Effect::Run { .. })));
+    }
+
+    #[test]
+    fn no_checksum_choice_for_an_installed_game() {
+        let mut f = Flow::new(Reason::Requested);
+        f.step = found_step(detected());
+        f.input(Input::ToggleVerify);
+        assert!(matches!(f.step, Step::Found { verify: false, .. }));
+        assert!(matches!(f.input(Input::Confirm), Some(Effect::Run { .. })));
+    }
+
     #[test]
     fn cancel_while_running() {
         let mut f = Flow::new(Reason::Requested);
@@ -579,6 +735,8 @@ mod tests {
             dir: "G".into(),
             detected: detected(),
             movies: false,
+            verify: false,
+            mismatched: Vec::new(),
         };
         f.input(Input::Confirm);
         assert_eq!(f.input(Input::Back), Some(Effect::Cancel));
@@ -687,10 +845,13 @@ mod tests {
             failure(&SetupError::BaseArchiveMissing).title,
             "BASE ARCHIVE MISSING"
         );
-        let f = failure(&SetupError::Convert("boom".into()));
+        let f = failure(&SetupError::MissingCore("boom".into()));
         assert_eq!(
             (f.title.as_str(), f.lines[0].as_str()),
-            ("SETUP FAILED", "conversion failed: boom")
+            (
+                "SETUP FAILED",
+                "a required game file is missing or broken: boom"
+            )
         );
         // No download locations anywhere on the screens.
         for e in [

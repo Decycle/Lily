@@ -12,6 +12,7 @@ wacca-game.workspace = true
 wacca-audio.workspace = true
 wacca-render.workspace = true
 wacca-video.workspace = true
+wacca-setup = { path = "../wacca-setup" }
 log.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true

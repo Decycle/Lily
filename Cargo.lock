@@ -2093,6 +2093,7 @@ dependencies = [
  "wacca-chart",
  "wacca-game",
  "wacca-render",
+ "wacca-setup",
  "wacca-video",
  "wgpu",
  "winit",

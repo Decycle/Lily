@@ -1015,11 +1015,12 @@ impl App {
     /// A menu action on the setup screen.
     fn setup_action(&mut self, event_loop: &ActiveEventLoop, a: Action) {
         let Some(run) = &mut self.setup else { return };
-        let found = matches!(run.flow.step, Step::Found { .. });
+        // On the report: ←/→ or the first row = videos, ↑/↓ or the second row = checksums.
         let input = match a {
             Action::Confirm => Input::Confirm,
             Action::Back => Input::Back,
-            Action::Left | Action::Right | Action::Up | Action::Down if found => Input::Toggle,
+            Action::Left | Action::Right | Action::Pick(0) => Input::ToggleMovies,
+            Action::Up | Action::Down | Action::Pick(1) => Input::ToggleVerify,
             _ => return,
         };
         if let Some(exit) = run.input(input) {

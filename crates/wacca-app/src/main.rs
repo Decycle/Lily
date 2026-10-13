@@ -357,7 +357,7 @@ fn run(args: &Args, started: std::time::Instant) -> Result<(), Error> {
             screen: args.screen.filter(|s| *s != screen::Screen::Setup),
             setup,
             setup_root: paths.setup_root.clone(),
-            backend: Arc::new(setup_backend::Stub),
+            backend: Arc::new(setup_backend::Real),
             windowed: args.windowed,
             ffmpeg,
             started,

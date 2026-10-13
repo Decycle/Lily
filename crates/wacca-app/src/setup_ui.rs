@@ -10,7 +10,8 @@ use crate::canvas::{CIRCLE_R, Canvas, MID, Painter, hex};
 use crate::chrome::{INK, PINK, WHITE};
 use crate::setup_backend::Finding;
 use crate::setup_flow::{
-    Flow, Reason, Severity, Step, bytes, finding_text, movies_available, progress_text, shown,
+    Flow, Reason, Severity, Step, archives, bytes, finding_text, movies_available, progress_text,
+    shown,
 };
 use crate::ui::{Action, GREY, View};
 
@@ -25,7 +26,7 @@ const LINE_W: f32 = 760.0;
 pub fn view(c: Canvas, flow: &Flow, now: f64, t: f32) -> View {
     let mut p = Painter::new(c);
     backdrop(&mut p, t);
-    p.text("SETUP", [0.0, -400.0], 30.0, PINK, Align::Center);
+    p.text("LILY SETUP", [0.0, -400.0], 30.0, PINK, Align::Center);
     match &flow.step {
         Step::Welcome => welcome(&mut p, &flow.reason),
         Step::Picking => {
@@ -45,6 +46,8 @@ pub fn view(c: Canvas, flow: &Flow, now: f64, t: f32) -> View {
             dir,
             detected,
             movies,
+            verify,
+            mismatched,
         } => {
             let version = format!(
                 "Version: {}",
@@ -66,8 +69,14 @@ pub fn view(c: Canvas, flow: &Flow, now: f64, t: f32) -> View {
                     (text, color)
                 })
                 .collect();
-            let refs: Vec<(&str, Rgba)> = report.iter().map(|(s, c)| (s.as_str(), *c)).collect();
-            small_lines(&mut p, -220.0, &refs);
+            let mut refs: Vec<(&str, Rgba)> =
+                report.iter().map(|(s, c)| (s.as_str(), *c)).collect();
+            let bad: Vec<String> = mismatched
+                .iter()
+                .map(|a| format!("Checksum mismatch: {a} (START continues anyway)"))
+                .collect();
+            refs.extend(bad.iter().map(|s| (s.as_str(), BAD)));
+            small_lines(&mut p, -230.0, &refs[..refs.len().min(8)]);
             let size = detected.report.iter().find_map(|f| match f {
                 Finding::Movies {
                     present: true,
@@ -76,19 +85,27 @@ pub fn view(c: Canvas, flow: &Flow, now: f64, t: f32) -> View {
                 _ => None,
             });
             if movies_available(detected) {
-                toggle(&mut p, 120.0, *movies, size.unwrap_or(0));
+                let note = format!(
+                    "{} more; playing them needs FFmpeg.",
+                    bytes(size.unwrap_or(0))
+                );
+                toggle(&mut p, 50.0, ("BACKGROUND VIDEOS", *movies, &note), 0);
             } else {
                 small_lines(
                     &mut p,
-                    120.0,
+                    50.0,
                     &[(
                         "No background videos in these files: songs play without them.",
                         GREY,
                     )],
                 );
             }
-            button(&mut p, 250.0, "START", Action::Confirm, true);
-            button(&mut p, 345.0, "BACK", Action::Back, false);
+            if archives(detected).is_some() {
+                let note = "Reads every archive once more (a few minutes).";
+                toggle(&mut p, 160.0, ("CHECK ARCHIVES (MD5)", *verify, note), 1);
+            }
+            button(&mut p, 260.0, "START", Action::Confirm, true);
+            button(&mut p, 350.0, "BACK", Action::Back, false);
         }
         Step::Running {
             progress,
@@ -284,24 +301,18 @@ fn button(p: &mut Painter, y: f32, label: &str, action: Action, main: bool) {
     p.button([0.0, y], size, action);
 }
 
-/// The background-video choice (`size` bytes): tap (or ←/→) to flip.
-fn toggle(p: &mut Painter, y: f32, on: bool, size: u64) {
+/// A yes/no choice on report row `row` (tap it to flip; keys: see the shell).
+fn toggle(p: &mut Painter, y: f32, (name, on, note): (&str, bool, &str), row: usize) {
     p.fill([0.0, y], [620.0, 70.0], MID, hex(0xffffff, 0.08));
-    p.text("BACKGROUND VIDEOS", [-280.0, y], 16.0, WHITE, Align::Left);
+    p.text(name, [-280.0, y], 16.0, WHITE, Align::Left);
     let (label, color) = if on {
         ("◀ YES ▶", GOOD)
     } else {
         ("◀ NO ▶", GREY)
     };
     p.text(label, [280.0, y], 18.0, color, Align::Right);
-    p.text(
-        format!("{} more; playing them needs FFmpeg.", bytes(size)),
-        [0.0, y + 55.0],
-        11.0,
-        GREY,
-        Align::Center,
-    );
-    p.button([0.0, y], [620.0, 70.0], Action::Right);
+    p.text(note, [0.0, y + 52.0], 11.0, GREY, Align::Center);
+    p.button([0.0, y], [620.0, 70.0], Action::Pick(row));
 }
 
 /// Progress bar; `None` = unknown (a sliding block).
@@ -352,8 +363,12 @@ mod tests {
     }
 
     #[test]
-    fn found_shows_report_and_video_choice() {
+    fn found_shows_report_and_choices() {
         let mut f = Flow::new(Reason::Requested);
+        let movies = Finding::Movies {
+            present: true,
+            bytes: 21_369_353_312,
+        };
         f.step = Step::Found {
             dir: "G".into(),
             detected: Detected {
@@ -363,13 +378,12 @@ mod tests {
                 version: Some("3.07.01".into()),
                 report: vec![
                     Finding::MissingUpdates(vec!["3.05.00".into()]),
-                    Finding::Movies {
-                        present: true,
-                        bytes: 21_369_353_312,
-                    },
+                    movies.clone(),
                 ],
             },
             movies: true,
+            verify: false,
+            mismatched: Vec::new(),
         };
         let v = view(c(), &f, 0.0, 0.0);
         let texts = v.texts();
@@ -382,7 +396,29 @@ mod tests {
         ] {
             assert!(texts.contains(&s), "{s}");
         }
-        assert_eq!(v.hit(c().pt([0.0, 120.0])), Some(Action::Right));
+        assert_eq!(v.hit(c().pt([0.0, 50.0])), Some(Action::Pick(0)));
+        // The checksum choice is for archives only.
+        assert!(!texts.contains(&"CHECK ARCHIVES (MD5)"));
+        f.step = Step::Found {
+            dir: "G".into(),
+            detected: Detected {
+                source: Source::Archives(Vec::new()),
+                version: Some("3.07.01".into()),
+                report: vec![movies],
+            },
+            movies: false,
+            verify: true,
+            mismatched: vec!["WACCA Reverse (3.01.00).7z".into()],
+        };
+        let v = view(c(), &f, 0.0, 0.0);
+        let texts = v.texts();
+        assert!(texts.contains(&"CHECK ARCHIVES (MD5)"));
+        assert!(
+            texts.contains(
+                &"Checksum mismatch: WACCA Reverse (3.01.00).7z (START continues anyway)"
+            )
+        );
+        assert_eq!(v.hit(c().pt([0.0, 160.0])), Some(Action::Pick(1)));
     }
 
     #[test]
@@ -398,6 +434,7 @@ mod tests {
             }),
             step_since: 0.0,
             cancelling: false,
+            checking: None,
         };
         let v = view(c(), &f, 10.0, 0.0);
         assert!(v.texts().contains(&"50%") && v.texts().contains(&"CANCEL"));

@@ -8,7 +8,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Instant;
 
 use crate::folder_dialog;
-use crate::setup_backend::{Backend, Plan};
+use crate::setup_backend::{Backend, Plan, Progress};
 use crate::setup_flow::{Effect, Failure, Flow, Input, Reason, Step, failure};
 
 /// What the shell does when setup ends.
@@ -95,13 +95,24 @@ impl SetupRun {
         None
     }
 
+    /// A progress callback for a new worker: forwards progress, returns `false` once cancelled.
+    fn progress_sender(&mut self) -> impl FnMut(Progress) -> bool + Send + 'static {
+        self.cancel = Arc::new(AtomicBool::new(false));
+        let cancel = Arc::clone(&self.cancel);
+        let (tx, clock) = (self.tx.clone(), self.clock);
+        move |p| {
+            let _ = tx.send(Input::Progress(p, clock.elapsed().as_secs_f64()));
+            !cancel.load(Ordering::Relaxed)
+        }
+    }
+
     fn perform(&mut self, effect: Effect) -> Option<Exit> {
         let tx = self.tx.clone();
         match effect {
             Effect::OpenPicker => {
                 let owner = self.owner;
                 spawn("setup-picker", move || {
-                    let picked = folder_dialog::pick_folder(owner, "Choose your WACCA files");
+                    let picked = folder_dialog::pick_folder(owner, "Lily: choose your WACCA files");
                     let input = match picked {
                         Ok(dir) => Input::Picked(dir),
                         Err(e) => {
@@ -122,6 +133,29 @@ impl SetupRun {
                     let _ = tx.send(Input::Detected(r));
                 });
             }
+            Effect::Verify(archives) => {
+                let backend = Arc::clone(&self.backend);
+                let mut progress = self.progress_sender();
+                spawn("setup-verify", move || {
+                    let mut bad = Vec::new();
+                    let mut r = Ok(());
+                    for a in &archives {
+                        match backend.verify(a, &mut progress) {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                log::warn!("checksum mismatch: {}", a.path.display());
+                                bad.push(file_name(&a.path));
+                            }
+                            Err(e) => {
+                                log::error!("verify: {e}");
+                                r = Err(failure(&e));
+                                break;
+                            }
+                        }
+                    }
+                    let _ = tx.send(Input::Verified(r.map(|()| bad)));
+                });
+            }
             Effect::Run {
                 source,
                 include_movies,
@@ -131,18 +165,9 @@ impl SetupRun {
                     include_movies,
                     dest: self.root.clone(),
                 };
-                self.cancel = Arc::new(AtomicBool::new(false));
-                let cancel = Arc::clone(&self.cancel);
-                let clock = self.clock;
+                let mut progress = self.progress_sender();
                 log::info!("setup: {source:?} → {}", plan.dest.display());
                 spawn("setup-run", move || {
-                    let progress_tx = tx.clone();
-                    // Returning `false` cancels the run.
-                    let mut progress = |p| {
-                        let at = clock.elapsed().as_secs_f64();
-                        let _ = progress_tx.send(Input::Progress(p, at));
-                        !cancel.load(Ordering::Relaxed)
-                    };
                     let r = backend.run(&source, &plan, &mut progress).map_err(|e| {
                         log::error!("setup: {e}");
                         failure(&e)
@@ -170,6 +195,14 @@ fn spawn(name: &str, f: impl FnOnce() + Send + 'static) {
     }
 }
 
+/// The file name of `p` (the whole path if it has none).
+fn file_name(p: &std::path::Path) -> String {
+    p.file_name().map_or_else(
+        || p.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    )
+}
+
 /// A failure shown when the game files are still unusable after setup.
 pub fn still_missing(parts: &[String]) -> Failure {
     let mut lines = vec!["Setup finished, but the game still cannot start:".to_string()];
@@ -177,5 +210,116 @@ pub fn still_missing(parts: &[String]) -> Failure {
     Failure {
         title: "FILES STILL MISSING".into(),
         lines,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::setup_backend::{ArchiveFile, Detected, Phase, SetupError, Source, Summary};
+
+    /// Finds an installed game anywhere; `run` reports 3 progress steps (slowly with videos, for
+    /// the cancel test) unless cancelled.
+    #[derive(Debug)]
+    struct Fake;
+
+    impl Backend for Fake {
+        fn detect(&self, dir: &Path) -> Result<Detected, SetupError> {
+            Ok(Detected {
+                source: Source::Installed {
+                    content_dir: dir.to_path_buf(),
+                },
+                version: None,
+                report: Vec::new(),
+            })
+        }
+
+        fn verify(
+            &self,
+            _: &ArchiveFile,
+            _: &mut dyn FnMut(Progress) -> bool,
+        ) -> Result<bool, SetupError> {
+            Ok(true)
+        }
+
+        fn run(
+            &self,
+            _: &Source,
+            plan: &Plan,
+            progress: &mut dyn FnMut(Progress) -> bool,
+        ) -> Result<Summary, SetupError> {
+            for done in 1..=3 {
+                if plan.include_movies {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                let p = Progress {
+                    phase: Phase::Copy,
+                    done,
+                    total: 3,
+                    detail: String::new(),
+                };
+                if !progress(p) {
+                    return Err(SetupError::Cancelled);
+                }
+            }
+            Ok(Summary {
+                songs_playable: 7,
+                ..Summary::default()
+            })
+        }
+    }
+
+    fn run() -> SetupRun {
+        SetupRun::new(Reason::Requested, Arc::new(Fake), "dest".into(), 0)
+    }
+
+    /// Polls until `done` holds for the step or setup exits (max 5 s).
+    fn wait(r: &mut SetupRun, done: impl Fn(&Step) -> bool) -> Option<Exit> {
+        for _ in 0..500 {
+            if let Some(exit) = r.poll() {
+                return Some(exit);
+            }
+            if done(&r.flow.step) {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("timed out in {:?}", r.flow.step)
+    }
+
+    #[test]
+    fn auto_start_runs_through_to_the_title() {
+        let mut r = run();
+        assert_eq!(r.preselect("G".into(), true), None);
+        assert_eq!(wait(&mut r, |_| false), Some(Exit::Finished));
+    }
+
+    #[test]
+    fn workers_report_back_and_cancel_stops_the_run() {
+        let mut r = run();
+        r.preselect("G".into(), false);
+        wait(&mut r, |s| matches!(s, Step::Found { .. }));
+        r.input(Input::Confirm);
+        wait(
+            &mut r,
+            |s| matches!(s, Step::Done(s) if s.songs_playable == 7),
+        );
+        // A slow run, cancelled.
+        r.flow.step = Step::Found {
+            dir: "G".into(),
+            detected: Fake.detect(Path::new("G")).unwrap(),
+            movies: true,
+            verify: false,
+            mismatched: Vec::new(),
+        };
+        r.input(Input::Confirm);
+        r.input(Input::Back);
+        wait(
+            &mut r,
+            |s| matches!(s, Step::Failed { failure, .. } if failure.title == "SETUP CANCELLED"),
+        );
     }
 }
