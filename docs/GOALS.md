@@ -30,5 +30,5 @@ Priority: **1) play area — fully faithful visual + control port**, 2) menus, 3
 - [x] Remaining details (Reverse Points from WaccaPointTable — matches real results; user plate; menu timers off by default; title halftone/curved text/glitch approx)
 
 ## 3. Finish
-- [ ] README (how to play, controls, options)
+- [x] README (how to play, controls, options, troubleshooting, accuracy)
 - [ ] Final release build on the desktop launcher + report (done / measured vs estimated / left)
