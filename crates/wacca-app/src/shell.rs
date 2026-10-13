@@ -73,6 +73,7 @@ pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
         screen: Screen::SongSelect,
         play: None,
         summary: None,
+        results_at: Instant::now(),
         last_spec: None,
         hits: None,
         preview: PreviewPlayer::default(),
@@ -182,6 +183,12 @@ impl Gfx {
                         self.text.fill(*rect, jacket::placeholder_color(key));
                     }
                 }
+                Item::Poly { points, colors } => self.text.fill_poly(points, colors),
+                Item::Image { rect, key, tint } => {
+                    let key = format!("{UI_IMAGE}{key}");
+                    jackets.ensure(&mut self.text, &key);
+                    self.text.image(&key, *rect, *tint);
+                }
             }
         }
         self.text.render(&mut encoder, &target);
@@ -191,7 +198,10 @@ impl Gfx {
     }
 }
 
-/// Loads each jacket PNG once, on first use.
+/// Image-key prefix of exported UI textures (`data/ui/<key>.png`); other keys are jackets.
+const UI_IMAGE: &str = "ui:";
+
+/// Loads each jacket / UI texture PNG once, on first use.
 struct Jackets<'a> {
     data: &'a std::path::Path,
     tried: &'a mut HashSet<String>,
@@ -202,7 +212,11 @@ impl Jackets<'_> {
         if key.is_empty() || !self.tried.insert(key.to_string()) {
             return;
         }
-        if let Some((size, rgba)) = jacket::load(&jacket::path(self.data, key)) {
+        let path = match key.strip_prefix(UI_IMAGE) {
+            Some(ui) => self.data.join("ui").join(format!("{ui}.png")),
+            None => jacket::path(self.data, key),
+        };
+        if let Some((size, rgba)) = jacket::load(&path) {
             text.set_image(key, size, &rgba);
         }
     }
@@ -322,6 +336,8 @@ struct App {
     screen: Screen,
     play: Option<PlayState>,
     summary: Option<Summary>,
+    /// When the results screen appeared (its entry animation).
+    results_at: Instant,
     last_spec: Option<PlaySpec>,
     /// Decoded once, at the first play.
     hits: Option<HitSounds>,
@@ -361,7 +377,7 @@ impl App {
             Screen::Results => self
                 .summary
                 .as_ref()
-                .map(|s| results::view(s, area))
+                .map(|s| results::view(s, area, self.results_at.elapsed().as_secs_f32()))
                 .unwrap_or_default(),
             Screen::Play => {
                 let [w, h] = self.size();
@@ -499,6 +515,7 @@ impl App {
             new_best,
             not_saved,
         });
+        self.results_at = Instant::now();
         self.event(event_loop, Event::PlayOver);
     }
 

@@ -7,6 +7,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))] // tests may unwrap (CONTRIBUTING)
 
 mod args;
+mod circle;
 mod gesture;
 mod hitsound;
 mod hud;
