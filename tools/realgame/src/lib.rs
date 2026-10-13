@@ -16,6 +16,7 @@ pub mod inject;
 pub mod nav;
 pub mod ours;
 pub mod panel;
+pub mod parity;
 pub mod perfect;
 pub mod playfield;
 pub mod raster;
