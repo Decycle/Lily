@@ -1,43 +1,100 @@
-# WACCA_slim
+# Lily
 
-A native Rust reimplementation of WACCA Reverse (3.07.01) for a Windows touchscreen PC. It covers the single-player
-core loop: title → mode → genre → song and difficulty → options → play → results, with personal bests saved locally.
-Multiplayer, cards, servers, unlocks and other arcade-only features are not included (see [docs/PLAN.md](docs/PLAN.md) §1).
+Lily is a faithful native reimplementation of the WACCA Reverse (3.07.01) rhythm game, written in Rust. It runs the
+single-player core loop on a PC, ideally with a touchscreen: title → mode → genre → song and difficulty → options →
+play → results, with personal bests saved locally.
 
-**You need your own copy of the original game.** This repository contains no game files. Charts, audio, movies,
-textures, fonts and meshes are all read from your install. Personal use only.
+It reads **your own copy of the game**: charts, music, movies, textures, fonts and note meshes all come from the
+game files you supply. This repository contains no game assets. Lily is unofficial and not affiliated with SEGA or
+Marvelous ([NOTICE.md](NOTICE.md)).
 
-## Quick start (Windows)
+Not included: multiplayer, cards and login, servers, unlocks, and other arcade-only features (everything is unlocked).
 
-1. **Toolchain.** Install Rust with `winget install Rustlang.Rustup`, then select the GNU toolchain:
-   `rustup default stable-x86_64-pc-windows-gnu`. Some dependencies are pinned to versions that build on this
-   toolchain, so don't run a bare `cargo update` ([CONTRIBUTING.md](CONTRIBUTING.md#toolchain)).
-2. **FFmpeg** (optional, needed for background movies): `winget install Gyan.FFmpeg`.
-3. **Game files.** Copy the game's `WindowsNoEditor\Mercury\Content` folder to `assets\` in the repository root.
-   `assets/` and `data/` are gitignored.
-4. **Convert, one time** (writes `data\`):
-   ```
-   cargo run --release -p wacca-convert -- --assets assets --out data --textures --fonts --meshes --export-ui UI/Textures --export-ui Vfx/Textures
-   ```
-   | Flag | Writes |
-   |---|---|
-   | (always) | `data/songs.json`: song list from `MusicParameterTable` |
-   | `--textures` | `data/jackets/*.png` |
-   | `--fonts` | `data/fonts/` (the game's fonts, incl. the combo-digit font) |
-   | `--meshes` | `data/meshes/*.obj` (3D note meshes) |
-   | `--export-ui <dir>` | `data/ui/<dir>/**.png`: every texture under `assets/<dir>` (menus, playfield, notes) |
-5. **Play:**
-   ```
-   cargo run --release -p wacca-app -- --assets assets --data data
-   ```
+## How faithful is it?
 
-### `wacca-app` flags
+The aim is a copy, not a remake. Values come from the game's own data tables. Everything else was measured on the
+real game, driven by injected touch input and recorded ([doc 07](docs/research/07-real-game-harness.md)):
+
+- **Judgement:** windows, hold drop, slide distance, snap rings and chord rules were measured on the real game
+  ([doc 10](docs/research/10-e3-judge-results.md)). Fed the same recorded input, Lily's judge agrees with the real
+  game on 1,068 of the 1,070 notes that landed more than one frame from a window edge (doc 10 §10.4).
+- **Visuals:** the play area uses the game's note meshes and textures, the camera and note speed from RenderDoc
+  frame captures, and WGSL ports of the game's compiled shaders. Colours are within 1–3/255 of the captured frames
+  ([doc 11](docs/research/11-shaders-and-meshes.md)), and whole frames are compared side by side with the real
+  game ([doc 13](docs/research/13-parity-audit.md), menus [doc 14](docs/research/14-menu-parity.md)).
+- **Scoring:** a perfect run scores 1,000,000, and grades, lamps, rating and Reverse Points follow the game's tables
+  ([doc 02](docs/research/02-data-tables.md), [doc 05](docs/research/05-save-and-song-select.md)).
+
+Anything inferred rather than measured is marked `UNVERIFIED` in the code and docs. Open items are in
+[docs/ROADMAP.md](docs/ROADMAP.md).
+
+## Screenshots
+
+No game images are committed to this repository. To see Lily, run it with your own game files.
+
+## Features
+
+- All 395 songs and 1,247 charts of 3.07.01, with genre and song select, sort and filter, preview audio, and jackets.
+- Real note meshes, shaders, hit effects, background movies (optional) and the no-movie background scene.
+- Touch input on a virtual 60 × 4 sensor ring, like the cabinet. The mouse works as a single finger.
+- Options: note speed, timing offset with a tap-along TIMING CHECK, mirror, autoplay, and more.
+- Results with grade, lamp, judgement counts and fast/late, saved personal bests, rating and Reverse Points.
+
+## Requirements
+
+- **Your own copy of WACCA Reverse 3.07.01**: the Reverse update archives (3.00.00 base plus 3.01.00 … 3.07.01), or
+  an installed or unpacked game.
+- Windows 10 or 11, 64-bit, with a GPU that supports DirectX 12 or Vulkan. A touchscreen is recommended.
+  Linux and macOS build from source but are untested ([GUIDE § Porting notes](docs/GUIDE.md#porting-notes)).
+- An audio output device that can play 48 kHz.
+- About 7 GB of free disk space for the game files Lily uses, plus about 20 GB if you include the background movies.
+- Optional: [FFmpeg](https://ffmpeg.org/) on `PATH` for background movies.
+
+## Quick start (players)
+
+1. Download the portable Windows build from the Releases page and unzip it anywhere. You get a `Lily/` folder.
+2. Run `lily.exe`. On the first start, setup asks for your game files:
+   1. **Pick a folder** that contains either the Reverse `.7z` update archives or an existing game folder.
+   2. Lily **verifies** that the files are the expected 3.07.01 data.
+   3. It **unpacks only the files it needs** (charts, audio, textures, fonts, meshes; movies are optional).
+   4. It **converts** them into its own `data` folder.
+   5. **Play.** Setup runs once; afterwards Lily starts straight at the title screen.
+3. For background movies, install FFmpeg (`winget install Gyan.FFmpeg`). Without it, songs play without movies.
+
+The full walkthrough, how each note type is judged and troubleshooting are in the [player guide](docs/GUIDE.md).
+
+## Build from source (developers)
+
+```
+rustup default stable-x86_64-pc-windows-gnu      # Windows; see CONTRIBUTING.md#toolchain
+cargo build --release -p wacca-app
+```
+
+With the game's `WindowsNoEditor\Mercury\Content` folder copied to `assets/` (gitignored), convert once and play:
+
+```
+cargo run --release -p wacca-convert -- --assets assets --out data --textures --fonts --meshes --export-ui UI/Textures --export-ui Vfx/Textures
+cargo run --release -p wacca-app -- --assets assets --data data
+```
+
+| `wacca-convert` flag | Writes |
+|---|---|
+| (always) | `data/songs.json`: song list from `MusicParameterTable` |
+| `--textures` | `data/jackets/*.png` |
+| `--fonts` | `data/fonts/` (the game's fonts, including the combo-digit font) |
+| `--meshes` | `data/meshes/*.obj` (3D note meshes) |
+| `--export-ui <dir>` | `data/ui/<dir>/**.png`: every texture under `assets/<dir>` (menus, playfield, notes) |
+
+Some dependencies are pinned to versions that build on the GNU toolchain, so don't run a bare `cargo update`
+([CONTRIBUTING.md](CONTRIBUTING.md#toolchain)).
+
+### Command-line flags
 
 | Flag | Meaning |
 |---|---|
-| `--assets <dir>` | Game `Content` folder (required) |
+| `--assets <dir>` | Game `Content` folder |
 | `--data <dir>` | Output of `wacca-convert` (default `data`) |
-| `--save <file>` | Save file (default `%APPDATA%\wacca-slim\save.json`) |
+| `--save <file>` | Save file (default `%APPDATA%\lily\save.json`) |
 | `--windowed` | Start in a 450×800 window instead of borderless fullscreen |
 | `--autoplay` | Start with AUTOPLAY on |
 | `--speed <1.0–6.0>` | Note speed for this session (overrides the saved one) |
@@ -46,31 +103,10 @@ textures, fonts and meshes are all read from your install. Personal use only.
 | `--difficulty normal\|hard\|expert\|inferno` | Difficulty for `--chart` |
 | `--screen title\|mode\|category\|select\|options\|calibrate\|results` | Open on this screen (for debugging) |
 
-## How to play
-
-Notes travel from the centre outward. Hit them as they reach the ring at the edge. The ring has 60 lanes and 4
-depth rings of sensors, like the cabinet. A note covers an arc, and touching anywhere inside that arc counts.
-
-| Note | What it needs |
-|---|---|
-| Touch | A new touch on the note's arc in time |
-| Hold | Touch the start in time, then keep a finger on the (moving) hold until it ends. You don't need to release at the end. A gap longer than 175 ms drops the hold to Good, or to Miss if the start was also missed |
-| Slide (arrows along the ring) | Swipe along the ring in the arrow direction, at least ~2 lanes |
-| Snap in (arrows to the centre) | Move the finger at least one sensor ring inward |
-| Snap out (arrows to the edge) | Move the finger at least one sensor ring outward |
-| Chain | Just be touching the arc when it arrives. A resting finger counts. Chains are only Marvelous or Miss |
-| R notes | Judged like their base type, but worth double score |
-
-Judgements are Marvelous / Great / Good / Miss. Touch windows are ±50 / 83 / 100 ms, and the other note types follow
-the game's `JudgeParameterTable` ([doc 04 §4](docs/research/04-gameplay-mechanics.md)).
-
-**Without a touchscreen:** the left mouse button is one finger. Click to tap, hold the button for holds, and drag
-for slides and snaps. Chords need more than one finger.
-
 ## Controls
 
 Touch or click works everywhere: tap the on-screen buttons, and drag sideways or use the mouse wheel to turn the
-song and genre wheels.
+song and genre wheels. Without a touchscreen, the left mouse button is one finger.
 
 | Screen | Keys |
 |---|---|
@@ -98,83 +134,49 @@ The options screen opens after you pick a song. Settings are saved when you star
 | BAR LINES | ON | Measure lines on the playfield, as in the real game |
 | TOUCH GUIDE | OFF | Faint depth-ring circles and highlights on the sensors you are pressing (not in the real game) |
 
-These settings are only in the save file (edit it while the app is closed):
+Save-file-only settings, the save format and environment variables are described in the
+[player guide](docs/GUIDE.md#save-file-and-advanced-settings).
 
-| Key in `settings` | Default | What it does |
-|---|---|---|
-| `menuTimers` | `false` | Show the arcade's menu countdowns and continue automatically when they run out (mode 30 s, song select 99 s, options 25 s, results 15 s) |
-| `playerName`, `playerTitle` | `"PLAYER"`, `""` | Name and title on the results screen's player plate |
-
-## Save file
-
-`%APPDATA%\wacca-slim\save.json`, or the path given with `--save`. It is versioned JSON and written atomically, with
-the previous version kept as `save.json.bak`. It stores:
-
-- `settings`: the options above.
-- `records`, keyed `<songId>:<difficulty>`: best score and its judgement counts, best lamp (clear / missless /
-  full combo / all marvelous), best grade, best combo, lowest miss count, and counters for plays, clears, lamps and
-  grades. Every play counts, including give-ups.
-- `reversePoints`: total RP earned.
-
-Rating and player level are calculated from these values, not stored. If the save can't be read, the app doesn't
-overwrite it and plays without saving. Spec: [doc 05 §2](docs/research/05-save-and-song-select.md).
-
-## Troubleshooting
-
-| Symptom | Cause / fix |
-|---|---|
-| `error: audio: ...` at start | There is no default output device, or it can't play 48 kHz (there is no resampler). Connect or enable a device, or set it to 48 kHz in Windows Sound settings |
-| No background movies (log: `ffmpeg not found`) | Install FFmpeg (`winget install Gyan.FFmpeg`) or set `WACCA_FFMPEG=C:\path\to\ffmpeg.exe`. Without it, songs play without movies |
-| Song select is empty | `data/songs.json` is missing. Run `wacca-convert`, and pass `--data` if `data` isn't in the current folder |
-| Flat 2D notes / plain colours / missing jackets | `data/meshes`, `data/ui/...` or `data/jackets` is missing. Rerun the convert command with all its flags. The app falls back to 2D notes and flat colours |
-| Fullscreen is black, stutters or is slow (laptops with two GPUs) | Run with `--windowed` and press F11 later, or pick the GPU yourself: `WGPU_POWER_PREF=high` and/or `WGPU_BACKEND=vulkan` (or `dx12`). F3 shows frame times. The adapter in use is logged at start |
-| Notes judged consistently early or late | Run TIMING CHECK in the options, or set TIMING yourself |
-
-Environment variables:
-
-| Variable | Effect |
-|---|---|
-| `WACCA_FFMPEG` | Path to `ffmpeg.exe`. Otherwise the app looks on `PATH`, then in winget's install folder |
-| `WACCA_PRESENT=immediate` | Disable vsync (uncapped frame rate, tearing) |
-| `WACCA_PACE=0` | Turn off vsync frame pacing (the app normally waits until shortly before the next refresh to cut input latency) |
-| `WGPU_BACKEND`, `WGPU_POWER_PREF` | wgpu's GPU selection (`vulkan`/`dx12`, `high`/`low`) |
-| `RUST_LOG` | Log level (default `info`). `RUST_LOG=wacca_app=debug` logs every judgement, and `RUST_LOG=wacca_app::perf=debug` logs the F3 stats every 2 s |
-
-## Accuracy
-
-The goal is a faithful copy. Values are taken from the game's own data tables, and the rest is measured on the real
-game, which is driven by injected touch input and recorded ([doc 07](docs/research/07-real-game-harness.md)).
-
-- **Measured and matching:** touch mapping (all 240 sensors) and the minimum tap length
-  ([doc 08](docs/research/08-e1-results.md)); a perfect run scores 1,000,000, lane 0 and its direction, and
-  playfield geometry ([doc 09](docs/research/09-e2-results.md)); judgement windows, hold drop (175 ms), slide distance
-  and snap ring rules ([doc 10](docs/research/10-e3-judge-results.md)). Fed the same input as the real game, our judge
-  agrees on every note more than one frame from a window edge except 1 of 406 (doc 10 §8).
-- **Visuals:** the play area uses the game's own note meshes and textures, the camera and note speed from RenderDoc
-  captures, and WGSL ports of the real shaders. Colours are within 1–3/255 of captured frames
-  ([doc 11](docs/research/11-shaders-and-meshes.md)). Hit effects and menus are approximations.
-- **Not measured yet:** the chord / one-press rule, snap-out windows, the TIMING unit and sign, and some gauge
-  details. These are marked `UNVERIFIED` in the code and docs ([doc 04 §11](docs/research/04-gameplay-mechanics.md),
-  [PLAN §5](docs/PLAN.md)). Progress: [docs/GOALS.md](docs/GOALS.md).
-
-## Layout
+## Project layout
 
 | Path | What |
 |---|---|
 | `crates/wacca-app` | The game: window, touch, screens, play, save IO |
-| `crates/wacca-game` | Rules: judgement, score, gauge, grades, rating, RP, save format |
+| `crates/wacca-game` | Rules: judgement, score, gauge, grades, rating, Reverse Points, save format |
 | `crates/wacca-chart` | `.mer` chart parser and timing |
-| `crates/wacca-render` | wgpu renderer: playfield, notes, effects, text (examples: `playfield`, `stagecmp`) |
+| `crates/wacca-render` | wgpu renderer: playfield, notes, effects, text, WGSL shader ports (examples: `playfield`, `stagecmp`) |
 | `crates/wacca-audio` | CRI ACB/AWB, HCA/ADX decoding, audio output and clock |
 | `crates/wacca-video` | `.usm` movie demux and decoding through an external `ffmpeg` |
-| `crates/wacca-ue4` | Reader for UE 4.19 cooked packages (DataTables, textures, meshes) |
-| `crates/wacca-convert` | `assets/` → `data/` converter |
-| `tools/realgame` | Harness that drives and records the real game: `run_experiment`, `e2_script`, `e3_script`, `analyze_e1/e2/e3`, `judge_parity` |
+| `crates/wacca-ue4` | Reader for UE 4.19 cooked packages (DataTables, textures, meshes, materials, particles) |
+| `crates/wacca-convert` | Game files → `data/` converter |
+| `tools/realgame` | Windows-only harness that drives and records the real game, and compares its judgements with ours |
 | `tools/research` | Python scripts used for format research (UE4, CRI, RenderDoc) |
-| `docs/` | [PLAN](docs/PLAN.md), [GOALS](docs/GOALS.md), and the research docs `docs/research/01–11` |
+| `docs/` | [Player guide](docs/GUIDE.md), [roadmap](docs/ROADMAP.md), the original [plan](docs/PLAN.md), and research docs [01–14](docs/research/) |
 
-## For developers
+The crate names keep the `wacca-` prefix because they describe the game's formats.
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for code rules, tests (`cargo test --workspace`; tests that need the real
-assets are `#[ignore]` and read `WACCA_ASSETS`), pinned dependencies, and the rule that no game data is ever
-committed.
+## Research docs
+
+| Doc | Topic |
+|---|---|
+| [01](docs/research/01-chart-format.md) | `.mer` chart format |
+| [02](docs/research/02-data-tables.md) | Data tables: judgement, score, gauge, rating |
+| [03](docs/research/03-audio-and-jackets.md) | CRI audio and jackets |
+| [04](docs/research/04-gameplay-mechanics.md) | Gameplay mechanics |
+| [05](docs/research/05-save-and-song-select.md) | Save data and song select |
+| [06](docs/research/06-visuals.md) | Movies, textures, UI |
+| [07](docs/research/07-real-game-harness.md) | Real-game harness |
+| [08](docs/research/08-e1-results.md), [09](docs/research/09-e2-results.md), [10](docs/research/10-e3-judge-results.md) | Measurements: touch mapping, playfield geometry, judgement |
+| [11](docs/research/11-shaders-and-meshes.md), [12](docs/research/12-hit-effects.md) | Shaders, meshes, hit effects |
+| [13](docs/research/13-parity-audit.md), [14](docs/research/14-menu-parity.md) | Visual parity audits: play area, menus |
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for code rules, tests (`cargo test --workspace`; tests that need real game
+files are `#[ignore]` and read `WACCA_ASSETS`), pinned dependencies, and the rule that no game data is ever committed.
+
+## License
+
+The code is released under the [MIT license](LICENSE). WACCA and all game content are © SEGA / Marvelous; Lily is an
+unofficial fan project, contains no game assets, and requires your own legally obtained copy of the game. See
+[NOTICE.md](NOTICE.md).

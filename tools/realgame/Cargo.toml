@@ -21,7 +21,7 @@ env_logger = { version = "0.11", default-features = false }
 # Same version as wacca-convert.
 png = "0.18.1"
 # Same versions/features as wacca-render (headless render of our playfield for comparisons).
-wgpu = { version = "27", default-features = false, features = ["std", "parking_lot", "dx12", "vulkan", "wgsl"] }
+wgpu = { version = "27", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
 pollster = "0.4"
 
 [lints]

@@ -177,7 +177,7 @@ run_experiment --script tools\realgame\scripts\e3-fragile-a.taps.json --nav tool
 analyze_e2 <run> --compare 0 --timing-block 8     (timing check → e2.json; also reference/ frames)
 analyze_e3 <run>... --report report.md            (panel.json, e3.json per run; pooled report)
 ```
-(run from a directory with `data/jackets` and `data/nav`; take `runs/LIVE.lock` first, doc GOALS.md.)
+(run from the repository root, with `data/jackets` and `data/nav` exported and the game's `Content` folder at `assets/`: the `*.plan.json` files name their chart as `assets/MusicData/...`; only one live game session at a time.)
 
 ## 8. E4 parity (offline: injected input → our judge vs the real verdicts)
 

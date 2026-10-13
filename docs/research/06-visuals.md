@@ -1,6 +1,6 @@
 ﻿# 06 – Visual assets (movies, UI, playfield, textures, fonts, materials)
 
-Source: `C:\Games\WACCA\WindowsNoEditor\Mercury\Content` (read-only). Engine: **UE 4.19**
+Source: `<game>\WindowsNoEditor\Mercury\Content` (read-only). Engine: **UE 4.19**
 (`++UE4+Release-4.19` in `Mercury-Win64-Shipping.exe`), cooked, split `.uasset/.uexp(/.ubulk)`,
 unversioned packages (FileVersionUE4 = 0, legacy version -7). Fixed 60 fps (`DefaultEngine.ini`
 `FixedFrameRate=60`), forward shading, UI scale curve keyed on the shortest side = 1080 px.

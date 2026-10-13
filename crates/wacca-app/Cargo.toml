@@ -16,7 +16,7 @@ log.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
 winit = "0.30"
-wgpu = { version = "27", default-features = false, features = ["std", "parking_lot", "dx12", "vulkan", "wgsl"] }
+wgpu = { version = "27", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
 pollster = "0.4"
 env_logger = { version = "0.11", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }

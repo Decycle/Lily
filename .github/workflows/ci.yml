@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal --component rustfmt && rustup default stable
+      - run: cargo fmt --all -- --check
+
+  build:
+    name: clippy + test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows uses the GNU toolchain, like local development. The pinned dependencies
+          # (CONTRIBUTING.md "Pinned dependencies") keep `windows-link` 0.2 out of the tree, so the
+          # rustup GNU toolchain links without a full MinGW (`dlltool` + `as`).
+          - os: windows-latest
+            toolchain: stable-x86_64-pc-windows-gnu
+          - os: ubuntu-latest
+            toolchain: stable
+          - os: macos-latest
+            toolchain: stable
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        shell: bash
+        run: |
+          rustup toolchain install ${{ matrix.toolchain }} --profile minimal --component clippy
+          rustup default ${{ matrix.toolchain }}
+          rustc -vV
+      - name: Install ALSA headers (cpal)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-${{ matrix.toolchain }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.toolchain }}-cargo-
+      - name: Check the windows-link pin
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          out=$(cargo tree --locked --target x86_64-pc-windows-gnu -i windows-link 2>&1 || true)
+          echo "$out"
+          if ! echo "$out" | grep -qE "nothing to print|did not match any packages"; then
+            echo "::error::windows-link entered the dependency tree; see CONTRIBUTING.md (Pinned dependencies)"
+            exit 1
+          fi
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      # Tests that need the real game files are #[ignore]d (they read WACCA_ASSETS).
+      - run: cargo test --locked --workspace

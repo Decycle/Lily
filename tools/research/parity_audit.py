@@ -30,10 +30,10 @@ import struct
 import subprocess
 import sys
 
-FFMPEG = os.environ.get("WACCA_FFMPEG", r"C:\Users\<user>\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0.2-full_build\bin\ffmpeg.exe")
+FFMPEG = os.environ.get("WACCA_FFMPEG", "ffmpeg")
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 EXAMPLES = os.environ.get("WACCA_AUDIT_EXAMPLES", os.path.join(ROOT, "target", "release", "examples"))
-ASSETS = os.environ.get("WACCA_ASSETS", r"C:\Users\<user>\OneDrive\Documents\WACCA\WACCA_slim\assets")
+ASSETS = os.environ.get("WACCA_ASSETS", os.path.join(ROOT, "assets"))
 # Regions (px from the centre of the 675 px view; the judgement ring is at 292-315 px).
 REGIONS = [("centre", 0, 100), ("inner", 100, 200), ("outer", 200, 275), ("ring", 275, 325), ("rim", 325, 999)]
 

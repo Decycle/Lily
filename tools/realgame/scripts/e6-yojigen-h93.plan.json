@@ -1,5 +1,5 @@
 {
-  "chart": "../../../assets/MusicData/S02-225/S02-225_01.mer",
+  "chart": "assets/MusicData/S02-225/S02-225_01.mer",
   "spec": {
     "seed": 93,
     "min_time": 5.0,
