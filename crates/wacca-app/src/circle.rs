@@ -1,18 +1,25 @@
 //! Shared look of the round-screen menus (results, options): drawing in the original 1080 × 1920
-//! portrait canvas ([`ui::canvas`]), the background disc, slanted panels clipped to the round
-//! screen, word-art textures and the GO / side-tab buttons. Positions and colours are measured
-//! from the E2 real-game frames.
+//! portrait canvas, placed on the window like the other menus ([`canvas::Canvas`]), the
+//! background disc, slanted panels clipped to the round screen, word-art textures and the GO /
+//! side-tab buttons. Positions and colours are measured from the E2 real-game frames.
 
-use wacca_render::layout::Rect;
+use wacca_render::layout::{PORTRAIT_RING_CENTER, Rect};
 use wacca_render::style::Rgba;
 use wacca_render::text::Align;
 
+use crate::canvas::{self, Place};
 use crate::ui::{self, Action, Item, View};
 
 /// The round screen in canvas units.
 // UNVERIFIED: measured from E2 frames (675 × 1200 captures × 1.6).
-pub const CENTER: [f32; 2] = [540.0, 900.0];
+pub const CENTER: [f32; 2] = PORTRAIT_RING_CENTER;
 pub const RADIUS: f32 = 530.0;
+
+/// Canvas point → menu design units (origin at the circle centre).
+fn design([x, y]: [f32; 2]) -> [f32; 2] {
+    [x - CENTER[0], y - CENTER[1]]
+}
+
 /// Panels lean 30° from vertical: a panel's bottom edge sits this much × its height to the left.
 pub const SLANT: f32 = 0.577;
 /// Segments of the clip / background circle.
@@ -84,17 +91,16 @@ pub fn slab(x: f32, y: f32, w: f32, h: f32) -> [[f32; 2]; 4] {
 /// Draws in canvas units into a [`View`], optionally shifted and faded (slide-in animations).
 #[derive(Clone, Copy, Debug)]
 pub struct Canvas {
-    area: Rect,
-    scale: f32,
+    /// The menus' mapping ([`canvas::Canvas`], origin at the circle centre).
+    menu: canvas::Canvas,
     pub offset: [f32; 2],
     pub alpha: f32,
 }
 
 impl Canvas {
-    pub fn new(area: Rect) -> Self {
+    pub fn new(menu: canvas::Canvas) -> Self {
         Self {
-            area,
-            scale: area.h / ui::CANVAS[1],
+            menu,
             offset: [0.0, 0.0],
             alpha: 1.0,
         }
@@ -113,19 +119,36 @@ impl Canvas {
         [x + self.offset[0], y + self.offset[1]]
     }
 
-    /// Canvas point → window pixels.
+    /// Mapping of an element anchored at canvas point `at`, chosen by its resting place (not
+    /// by where a slide-in has moved it).
+    fn place(&self, at: [f32; 2]) -> Place {
+        self.menu.place(design(at))
+    }
+
+    /// Canvas point → window pixels, mapped like an element anchored there.
     pub fn p(&self, p: [f32; 2]) -> [f32; 2] {
-        ui::canvas(self.area, self.shift(p))
+        self.place(p).pt(design(self.shift(p)))
+    }
+
+    /// Shifted canvas point on the circle's mapping (shapes clipped to the circle).
+    fn on_circle(&self, p: [f32; 2]) -> [f32; 2] {
+        self.menu.pt(design(p))
     }
 
     pub fn rect(&self, x: f32, y: f32, w: f32, h: f32) -> Rect {
         let [px, py] = self.p([x, y]);
+        let s = self.scale([x, y]);
         Rect {
             x: px,
             y: py,
-            w: w * self.scale,
-            h: h * self.scale,
+            w: w * s,
+            h: h * s,
         }
+    }
+
+    /// Pixels per canvas unit for an element anchored at `at`.
+    fn scale(&self, at: [f32; 2]) -> f32 {
+        self.place(at).scale
     }
 
     fn fade(&self, mut c: Rgba) -> Rgba {
@@ -144,10 +167,7 @@ impl Canvas {
         let clipped = clip(&poly, &disc());
         if clipped.len() >= 3 {
             v.poly(
-                clipped
-                    .iter()
-                    .map(|&(p, _)| ui::canvas(self.area, p))
-                    .collect(),
+                clipped.iter().map(|&(p, _)| self.on_circle(p)).collect(),
                 clipped.iter().map(|&(_, c)| self.fade(c)).collect(),
             );
         }
@@ -158,7 +178,7 @@ impl Canvas {
         v.text_in(
             s,
             self.p(at),
-            px * self.scale,
+            px * self.scale(at),
             self.fade(color),
             align,
             None,
@@ -182,7 +202,7 @@ impl Canvas {
         max: f32,
         align: Align,
     ) {
-        let sc = self.scale;
+        let sc = self.scale(at);
         v.text_in(
             s,
             self.p(at),
@@ -203,7 +223,7 @@ impl Canvas {
         color: Rgba,
         align: Align,
     ) {
-        v.numerals(s, self.p(at), px * self.scale, self.fade(color), align);
+        v.numerals(s, self.p(at), px * self.scale(at), self.fade(color), align);
     }
 
     /// Characters on a fixed `pitch` (the game's wide-spaced labels), first cell from `x`.
@@ -265,10 +285,7 @@ impl Canvas {
             };
             v.items.push(Item::ImagePoly {
                 key: key.clone(),
-                points: part
-                    .iter()
-                    .map(|&(p, _)| ui::canvas(self.area, p))
-                    .collect(),
+                points: part.iter().map(|&(p, _)| self.on_circle(p)).collect(),
                 uvs: part.iter().map(|&(p, _)| uv(p)).collect(),
                 tint: [1.0, 1.0, 1.0, self.alpha * alpha],
             });
@@ -362,16 +379,31 @@ mod tests {
         assert_eq!(at_edge, [0.5, 0.5, 0.5, 1.0]);
     }
 
+    /// The portrait frame at `scale` pixels per unit, top-left at the window origin.
+    fn frame(scale: f32) -> Canvas {
+        Canvas::new(canvas::Canvas::new(CENTER.map(|c| c * scale), scale))
+    }
+
+    #[test]
+    fn off_circle_elements_move_beside_the_circle_and_slide_with_it() {
+        let c = Canvas::new(canvas::Canvas::fit(1920.0, 1200.0));
+        let ring = wacca_render::layout::ring(1920.0, 1200.0);
+        // On the circle: concentric with the play ring.
+        let [x, y] = c.p(CENTER);
+        assert!((x - ring.center[0]).abs() < 1e-3 && (y - ring.center[1]).abs() < 1e-3);
+        // A label above the circle lands left of it, one below right of it.
+        assert!(c.p([540.0, 100.0])[0] < ring.center[0] - ring.radius);
+        assert!(c.p([540.0, 1800.0])[0] > ring.center[0] + ring.radius);
+        // A slide-in moving an on-circle panel past the circle's square does not move it there.
+        let header = c.moved([0.0, -300.0], 1.0).rect(330.0, 420.0, 10.0, 10.0);
+        assert!((header.x - c.p([330.0, 120.0])[0]).abs() > 1.0);
+        assert!((header.x - c.rect(330.0, 420.0, 10.0, 10.0).x).abs() < 1e-3);
+    }
+
     #[test]
     fn panels_are_clipped_to_the_screen_circle() {
-        let area = Rect {
-            x: 0.0,
-            y: 0.0,
-            w: 1080.0,
-            h: 1920.0,
-        };
         let mut v = View::default();
-        Canvas::new(area).panel(&mut v, &slab(0.0, 880.0, 2000.0, 40.0), &[W]);
+        frame(1.0).panel(&mut v, &slab(0.0, 880.0, 2000.0, 40.0), &[W]);
         let crate::ui::Item::Poly { points, .. } = &v.items[0] else {
             panic!("{:?}", v.items)
         };
@@ -392,13 +424,7 @@ mod tests {
 
     #[test]
     fn moved_canvas_shifts_and_fades() {
-        let area = Rect {
-            x: 0.0,
-            y: 0.0,
-            w: 540.0,
-            h: 960.0,
-        };
-        let c = Canvas::new(area).moved([100.0, 0.0], 0.5);
+        let c = frame(0.5).moved([100.0, 0.0], 0.5);
         assert_eq!(c.p([440.0, 0.0]), [270.0, 0.0]);
         let mut v = View::default();
         c.image(&mut v, font_tex("x"), [540.0, 960.0], [100.0, 50.0], 1.0);
@@ -414,12 +440,6 @@ mod tests {
 
     #[test]
     fn tiled_texture_repeats_and_maps_uvs() {
-        let area = Rect {
-            x: 0.0,
-            y: 0.0,
-            w: 1080.0,
-            h: 1920.0,
-        };
         let mut v = View::default();
         // 300 wide around the centre, tiles 200 wide from x = 400: [400, 600) and [600, 800).
         let poly = [
@@ -428,7 +448,7 @@ mod tests {
             [750.0, 920.0],
             [450.0, 920.0],
         ];
-        Canvas::new(area).tiled(
+        frame(1.0).tiled(
             &mut v,
             "k".into(),
             &poly,
