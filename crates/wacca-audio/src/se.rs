@@ -5,14 +5,12 @@
 use std::io::Cursor;
 use std::path::Path;
 
-use crate::cri::acb::{Acb, Source, Waveform};
+use crate::cri::acb::{Acb, ENCODE_ADX, ENCODE_HCA, Source, Waveform};
 use crate::cri::afs2;
 use crate::{Decoder, Error, HcaStream, Sfx, adx};
 
 /// UE4 asset that carries the SE ACB.
 pub const ACB_FILE: &str = "MER_SE.uexp";
-const ENCODE_ADX: u8 = 0;
-const ENCODE_HCA: u8 = 2;
 
 /// Opened SE bank. Holds the memory AWB (≈ 13 MB) so any cue can be decoded on demand.
 #[derive(Debug, Clone)]
