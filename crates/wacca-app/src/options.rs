@@ -1,5 +1,5 @@
-//! Options screen: note speed, judgement offset, mirror, autoplay and background video, stored in the save's
-//! [`Settings`] (autoplay is per session and never saved).
+//! Options screen: note speed, judgement offset, mirror, autoplay, background video, bar lines and
+//! the touch guide, stored in the save's [`Settings`] (autoplay is per session and never saved).
 //!
 //! This module is the one place that knows the judge-offset unit: everything else converts with
 //! [`offset_secs`] / [`offset_units`].
@@ -31,14 +31,18 @@ pub enum Row {
     Mirror,
     Autoplay,
     Video,
+    BarLines,
+    TouchGuide,
 }
 
-pub const ROWS: [Row; 5] = [
+pub const ROWS: [Row; 7] = [
     Row::Speed,
     Row::Offset,
     Row::Mirror,
     Row::Autoplay,
     Row::Video,
+    Row::BarLines,
+    Row::TouchGuide,
 ];
 
 /// Judge offset setting → user offset in seconds (added to chart time).
@@ -86,6 +90,8 @@ impl OptionsMenu {
             Row::Mirror => s.mirror = !s.mirror,
             Row::Autoplay => *autoplay = !*autoplay,
             Row::Video => s.background_video = !s.background_video,
+            Row::BarLines => s.bar_lines = !s.bar_lines,
+            Row::TouchGuide => s.touch_guide = !s.touch_guide,
         }
     }
 }
@@ -101,6 +107,8 @@ pub fn value(row: Row, s: &Settings, autoplay: bool) -> String {
         Row::Mirror => on_off(s.mirror).into(),
         Row::Autoplay => on_off(autoplay).into(),
         Row::Video => on_off(s.background_video).into(),
+        Row::BarLines => on_off(s.bar_lines).into(),
+        Row::TouchGuide => on_off(s.touch_guide).into(),
     }
 }
 
@@ -111,6 +119,8 @@ fn label(row: Row) -> &'static str {
         Row::Mirror => "MIRROR",
         Row::Autoplay => "AUTOPLAY",
         Row::Video => "BG MOVIE",
+        Row::BarLines => "BAR LINES",
+        Row::TouchGuide => "TOUCH GUIDE",
     }
 }
 
@@ -189,15 +199,16 @@ pub fn view(menu: &OptionsMenu, s: &Settings, autoplay: bool, title: &str, area:
     v
 }
 
-const ROW_TOP: f32 = 690.0;
-const ROW_PITCH: f32 = 84.0;
-const ROW_H: f32 = 60.0;
+// Seven rows fit above the BACK tab (y 1300) and inside the circle.
+const ROW_TOP: f32 = 680.0;
+const ROW_PITCH: f32 = 76.0;
+const ROW_H: f32 = 56.0;
 const LABEL_W: f32 = 290.0;
 const VALUE_W: f32 = 280.0;
 
 /// Top-left of row `k`'s label slab; rows step right like the game's panel.
 fn row_origin(k: usize) -> (f32, f32) {
-    (210.0 + 20.0 * k as f32, ROW_TOP + ROW_PITCH * k as f32)
+    (210.0 + 14.0 * k as f32, ROW_TOP + ROW_PITCH * k as f32)
 }
 
 /// Handle a tap on [`view`]'s `Pick(n)`: select row `n / 2` and step it down (even) or up (odd).
@@ -242,10 +253,32 @@ mod tests {
         m.adjust(&mut s, &mut auto, 1);
         assert!(!s.background_video);
         assert_eq!(value(Row::Video, &s, auto), "OFF");
+        // Bar lines and the touch guide start off and toggle.
+        m.move_by(1);
+        assert_eq!(value(Row::BarLines, &s, auto), "OFF");
+        m.adjust(&mut s, &mut auto, 1);
+        assert!(s.bar_lines);
+        m.move_by(1);
+        assert_eq!(value(Row::TouchGuide, &s, auto), "OFF");
+        m.adjust(&mut s, &mut auto, -1);
+        assert!(s.touch_guide);
+        assert_eq!(value(Row::TouchGuide, &s, auto), "ON");
         m.move_by(1);
         assert_eq!(m.row, 0);
         m.move_by(-1);
-        assert_eq!(ROWS[m.row], Row::Video);
+        assert_eq!(ROWS[m.row], Row::TouchGuide);
+    }
+
+    #[test]
+    fn all_rows_fit_above_the_back_tab_inside_the_circle() {
+        for k in 0..ROWS.len() {
+            let (x, y) = row_origin(k);
+            assert!(y + ROW_H < 1300.0, "row {k}");
+            // The value slab's right edge and the arrow stay inside the circle.
+            let right = [x + LABEL_W + 30.0 + VALUE_W + 22.0, y + ROW_H];
+            let d = (right[0] - circle::CENTER[0]).hypot(right[1] - circle::CENTER[1]);
+            assert!(d < circle::RADIUS, "row {k}: {d}");
+        }
     }
 
     #[test]

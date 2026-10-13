@@ -15,5 +15,5 @@ mod video;
 pub use effects::Effects;
 pub use layout::{Paint, Vertex};
 pub use renderer::Renderer;
-pub use scene::{LiveState, SceneOptions, build_scene};
-pub use sprites::{JudgeSprite, Sprite, SpriteSheet};
+pub use scene::{LiveState, RimState, SceneOptions, build_scene};
+pub use sprites::{JudgeSprite, Sprite, SpriteSheet, TextSprite};

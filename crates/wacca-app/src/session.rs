@@ -117,6 +117,11 @@ impl Session {
         self.tally.combo()
     }
 
+    /// Clear gauge fill, 0..=1.
+    pub fn gauge(&self) -> f64 {
+        self.tally.gauge()
+    }
+
     /// Song played to the end: unresolved notes are missed, then the result.
     pub fn finish(&mut self, norma: f32) -> PlayResult {
         let events = self.judge.finish();

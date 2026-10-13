@@ -17,23 +17,76 @@ pub const GUIDE_LANE_TINT: Rgba = [0.25, 0.27, 0.40, 0.7];
 pub const LANE_LINE: Rgba = [0.22, 0.22, 0.30, 1.0];
 /// Lane lines over a background movie (faint, E2 frames).
 pub const LANE_LINE_MOVIE: Rgba = [0.75, 0.80, 0.95, 0.06];
+/// Guide sectors over a movie: a dark translucent tunnel, darkest at the rim (tint of the
+/// guide-lane gradient). E2: masked lanes show the movie bright, lanes that are on dim it.
+// UNVERIFIED: tint and opacity eyeballed (`GuideLaneBrightnessParamAlphaMovie` 290 vs 600).
+pub const GUIDE_LANE_MOVIE: Rgba = [0.03, 0.04, 0.12, 0.8];
+/// Flat fallback of [`GUIDE_LANE_MOVIE`] (no gradient texture).
+pub const GUIDE_LANE_MOVIE_FLAT: Rgba = [0.03, 0.04, 0.12, 0.4];
 /// Judgement ring: a thick band from the line outwards, hot pink on the sides, purple at the
 /// bottom and partly at the top (see `scene::judge_ring_color`), drawn only on lanes that are
-/// on. E2 frames: band 292–317 px for a 291.8 px line, (255, 30, 150) on the right side.
-pub const JUDGE_RING_SIDE: Rgba = [1.0, 0.12, 0.60, 1.0];
-pub const JUDGE_RING_PURPLE: Rgba = [0.78, 0.16, 1.0, 1.0];
+/// on. E2 frames: band 292–315 px for a 291.8 px line, (255, 41, 150) on the right side; its
+/// two edges (294 and 310 px) are bright, the middle at ~2/3 brightness.
+pub const JUDGE_RING_SIDE: Rgba = [1.0, 0.16, 0.59, 1.0];
+pub const JUDGE_RING_PURPLE: Rgba = [0.78, 0.07, 1.0, 1.0];
 pub const JUDGE_RING_TOP_PURPLE: f32 = 0.7;
-pub const JUDGE_BAND_WIDTH: f32 = 0.085;
-/// Additive glow inside the line and on the band (textured look only): opacity and width.
+pub const JUDGE_BAND_WIDTH: f32 = 0.08;
+/// Brightness of the band between its two bright stripes.
+pub const JUDGE_BAND_MID: f32 = 0.8;
+/// Bright stripes: centre radii and half width.
+pub const JUDGE_STRIPES: [f32; 2] = [1.008, 1.062];
+pub const JUDGE_STRIPE_HALF_WIDTH: f32 = 0.007;
+/// Additive glow inside the line and outside the band (textured look only): opacity and width.
 pub const JUDGE_GLOW_ALPHA: f32 = 0.5;
 pub const JUDGE_GLOW_WIDTH: f32 = 0.03;
-/// Dark band outside the ring (E2: 317–331 px) and its thin light outer edge.
-pub const RIM: Rgba = [0.13, 0.13, 0.17, 1.0];
+/// Dark band outside the ring (E2: 315–331 px, (20, 18, 30)) and its thin outer edge. It goes
+/// all the way round, also over masked lanes.
+pub const RIM: Rgba = [0.08, 0.07, 0.12, 1.0];
 /// Everything outside the rim.
 pub const OUTSIDE: Rgba = [0.0, 0.0, 0.0, 1.0];
-pub const RIM_WIDTH: f32 = 0.048;
-pub const RIM_EDGE: Rgba = [0.55, 0.55, 0.62, 0.8];
-pub const RIM_EDGE_HALF_WIDTH: f32 = 0.002;
+pub const RIM_WIDTH: f32 = 0.053;
+pub const RIM_EDGE: Rgba = [0.18, 0.18, 0.26, 1.0];
+pub const RIM_EDGE_HALF_WIDTH: f32 = 0.003;
+/// Song progress on the dark rim: lit from 12 o'clock counter-clockwise by the played
+/// fraction (E2: 18 % at 20 s, 86 % at 100 s), radii 321–329 px, (45, 36, 57).
+pub const PROGRESS: Rgba = [0.18, 0.14, 0.23, 1.0];
+pub const PROGRESS_RADII: (f32, f32) = (1.10, 1.128);
+
+// Score row along the top of the band (E2, 291.8 px = 1): seven orange SHINBI digits centred
+// at 12 o'clock (x-height centre 297 px out, 90 px for the row), "SCORE" 14° left of them,
+// the difficulty and level ("NORMAL/Lv.1") 22° right, the song title 46° right.
+/// Score digits: zero-padded width, cell height (as [`COMBO_DIGIT_H`]), centre radius, pitch
+/// along the arc and colour.
+pub const SCORE_DIGITS: usize = 7;
+pub const SCORE_DIGIT_H: f32 = 0.042 * 97.0 / 58.0;
+pub const SCORE_RADIUS: f32 = 1.018 + SCORE_DIGIT_H * 3.5 / 97.0;
+pub const SCORE_PITCH: f32 = 0.044;
+pub const SCORE_COLOR: Rgba = [1.0, 0.68, 0.10, 1.0];
+/// Rim texts: angle clockwise from 12 o'clock (degrees), centre radius, box height and width
+/// stretch (the game spaces its letters wider than the font).
+pub const SCORE_LABEL_AT: (f32, f32, f32, f32) = (-13.8, 1.03, 0.036, 1.2);
+pub const SCORE_LABEL_COLOR: Rgba = [0.86, 0.42, 0.08, 1.0];
+pub const DIFFICULTY_AT: (f32, f32, f32, f32) = (22.0, 1.035, 0.05, 1.25);
+pub const TITLE_AT: (f32, f32, f32, f32) = (46.0, 1.03, 0.05, 1.0);
+pub const TITLE_COLOR: Rgba = [1.0, 0.55, 0.85, 1.0];
+/// Longest title arc (degrees); longer titles are squeezed.
+pub const TITLE_MAX_DEG: f32 = 26.0;
+
+/// Clear gauge: horizontal bar above the combo (E2: y 93 px above the centre, 275 px wide,
+/// ~5 px tall), dark track, pink fill from the left, a marker at the norma line.
+pub const GAUGE_Y: f32 = 0.32;
+pub const GAUGE_HALF_W: f32 = 0.471;
+pub const GAUGE_HALF_H: f32 = 0.008;
+pub const GAUGE_TRACK: Rgba = [0.30, 0.25, 0.36, 0.9];
+pub const GAUGE_FILL: Rgba = [1.0, 0.45, 0.80, 1.0];
+pub const GAUGE_CORE: Rgba = [1.0, 0.85, 0.95, 1.0];
+pub const GAUGE_MARK: Rgba = [0.90, 0.10, 0.60, 1.0];
+pub const GAUGE_MARK_HALF: f32 = 0.009;
+
+/// Touch guide (option, off by default): faint depth-ring circles and pressed sensors.
+pub const TOUCH_GUIDE_RING: Rgba = [0.80, 0.85, 1.0, 0.18];
+pub const TOUCH_GUIDE_RING_HALF_WIDTH: f32 = 0.002;
+pub const TOUCH_GUIDE_PRESSED: Rgba = [0.80, 0.90, 1.0, 0.22];
 /// Measure lines: thin white circles moving with the notes.
 pub const BAR_LINE: Rgba = [1.0, 1.0, 1.0, 0.55];
 pub const BAR_LINE_HALF_WIDTH: f32 = 0.0025;
@@ -55,13 +108,18 @@ pub const R_ACCENT: Rgba = [1.0, 1.0, 1.0, 1.0];
 /// Outer band marking bonus (gauge) notes.
 pub const BONUS_ACCENT: Rgba = [0.55, 0.95, 1.0, 1.0];
 
-/// Slide chevrons: band inside the note (in note thicknesses), chevron length along the arc
-/// (lanes) and scroll speed (lanes per second).
-// UNVERIFIED: the slide/snap materials have no panner; the arrows are animated by the game code,
-// speeds here are eyeballed.
+/// Snap chevrons: band inside the note (in note thicknesses).
 pub const ARROW_BAND: f32 = 2.4;
-pub const SLIDE_ARROW_LANES: f32 = 2.0;
+/// Slide chevrons (E2 frames): a row of separate chevrons inside the note at 0.86 of its
+/// radius, one per [`SLIDE_ARROW_LANES`], growing from the back of the note to its front (the
+/// slide direction) from [`SLIDE_ARROW_MIN`] to [`SLIDE_ARROW_MAX`] of the note radius, and
+/// travelling forwards at [`SLIDE_ARROW_SPEED`] lanes per second.
+// UNVERIFIED: the travel speed (the 0.1 s reference frames only show the conveyor moved).
+pub const SLIDE_ARROW_RADIUS: f32 = 0.86;
+pub const SLIDE_ARROW_LANES: f32 = 1.9;
 pub const SLIDE_ARROW_SPEED: f32 = 8.0;
+pub const SLIDE_ARROW_MIN: f32 = 0.04;
+pub const SLIDE_ARROW_MAX: f32 = 0.19;
 /// Snap chevrons: one per this many lanes, sliding radially once per period (seconds).
 pub const SNAP_ARROW_LANES: f32 = 3.0;
 pub const SNAP_ARROW_PERIOD: f32 = 0.5;

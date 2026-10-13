@@ -247,6 +247,31 @@ pub fn push_rect(out: &mut Vec<Vertex>, c: [f32; 2], half: [f32; 2], paint: &Pai
     );
 }
 
+/// Sprite centred at `c` and turned so that the texture's +v axis points along `dir` (any
+/// non-zero length): `half = [along, across]` half extents, u runs across.
+pub fn push_oriented_rect(
+    out: &mut Vec<Vertex>,
+    c: [f32; 2],
+    half: [f32; 2],
+    dir: [f32; 2],
+    paint: &Paint,
+) {
+    let len = dir[0].hypot(dir[1]).max(1e-9);
+    let d = [dir[0] / len, dir[1] / len];
+    let t = [d[0] * half[0], d[1] * half[0]];
+    let n = [-d[1] * half[1], d[0] * half[1]];
+    let p = |a: f32, b: f32| [c[0] + t[0] * a + n[0] * b, c[1] + t[1] * a + n[1] * b];
+    push_quad(
+        out,
+        [p(-1.0, -1.0), p(1.0, -1.0), p(1.0, 1.0), p(-1.0, 1.0)],
+        [[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]],
+        &Paint {
+            along_v: false,
+            ..*paint
+        },
+    );
+}
+
 /// Thin radial line along a lane edge from `r0` to `r1`.
 pub fn push_radial_line(
     out: &mut Vec<Vertex>,
@@ -768,5 +793,23 @@ mod tests {
             assert!((q.uv[1] - (-0.4 - q.pos[1]) / 0.2).abs() < 1e-6);
             assert!((q.uv[0] - (q.pos[0] + 0.2) / 0.4).abs() < 1e-6);
         }
+    }
+
+    #[test]
+    fn oriented_rect_points_v_along_the_direction() {
+        let mut v = Vec::new();
+        let paint = Paint::image([1.0; 4], [0.0, 0.0, 1.0, 1.0]).along_v();
+        // Pointing down (−y): v grows downwards, u across (x).
+        push_oriented_rect(&mut v, [1.0, 1.0], [0.3, 0.1], [0.0, -2.0], &paint);
+        assert_eq!(v.len(), 6);
+        for q in &v {
+            assert!(
+                (q.uv[1] - (1.0 - q.pos[1] + 0.3) / 0.6).abs() < 1e-6,
+                "{q:?}"
+            );
+            assert!((q.pos[0] - 1.0).abs() <= 0.1 + 1e-6);
+        }
+        let front = v.iter().find(|q| q.uv[1] == 1.0).unwrap();
+        assert!(close(front.pos[1], 0.7));
     }
 }
