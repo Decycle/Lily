@@ -253,11 +253,11 @@ mod tests {
         m.adjust(&mut s, &mut auto, 1);
         assert!(!s.background_video);
         assert_eq!(value(Row::Video, &s, auto), "OFF");
-        // Bar lines and the touch guide start off and toggle.
+        // Bar lines start on (like real guest play), the touch guide off; both toggle.
         m.move_by(1);
-        assert_eq!(value(Row::BarLines, &s, auto), "OFF");
+        assert_eq!(value(Row::BarLines, &s, auto), "ON");
         m.adjust(&mut s, &mut auto, 1);
-        assert!(s.bar_lines);
+        assert!(!s.bar_lines);
         m.move_by(1);
         assert_eq!(value(Row::TouchGuide, &s, auto), "OFF");
         m.adjust(&mut s, &mut auto, -1);

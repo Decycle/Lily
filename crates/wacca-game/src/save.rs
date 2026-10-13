@@ -67,7 +67,7 @@ pub struct Settings {
     pub bonus_effect: bool,
     /// Background movie on/off (`BackMovieSettingTable`, 06-visuals §1).
     pub background_video: bool,
-    /// Measure lines on the playfield (`BarLineTable`; off by default).
+    /// Measure lines on the playfield (`BarLineTable`; on by default, as in real guest play per E2 frames).
     pub bar_lines: bool,
     /// Depth-ring guides and pressed-sensor highlight for touchscreens (not in the real game).
     pub touch_guide: bool,
@@ -85,7 +85,7 @@ impl Default for Settings {
             mirror: false,
             bonus_effect: true,
             background_video: true,
-            bar_lines: false,
+            bar_lines: true,
             touch_guide: false,
             player_name: "PLAYER".to_string(),
             extra: Map::new(),
@@ -385,16 +385,16 @@ mod tests {
     }
 
     #[test]
-    fn bar_lines_and_touch_guide_persist_and_default_off() {
+    fn bar_lines_default_on_touch_guide_default_off_and_persist() {
         let old: Settings = serde_json::from_str(r#"{"noteSpeed": 3.0}"#).unwrap();
-        assert!(!old.bar_lines && !old.touch_guide);
+        assert!(old.bar_lines && !old.touch_guide);
         let on = Settings {
-            bar_lines: true,
+            bar_lines: false,
             touch_guide: true,
             ..Settings::default()
         };
         let json = serde_json::to_string(&on).unwrap();
-        assert!(json.contains(r#""barLines":true"#) && json.contains(r#""touchGuide":true"#));
+        assert!(json.contains(r#""barLines":false"#) && json.contains(r#""touchGuide":true"#));
         assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), on);
     }
 
