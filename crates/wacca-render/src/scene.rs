@@ -7,30 +7,22 @@ use std::f32::consts::PI;
 
 use wacca_chart::{BeatPos, Bonus, Chart, LANES, Note, NoteBody, SlideDir, SnapDir};
 
+use crate::effects::Effects;
 use crate::layout::{
-    Paint, Vertex, depth_to_radius, last_drawable_time, mask_state, paint_sector, polar,
-    push_hold_body, push_radial_line, push_rect, push_sector, raw_depth, sensor_ring, three_slice,
-    tiles,
+    Paint, UvRect, Vertex, depth_to_radius, last_drawable_time, mask_state, paint_sector, polar,
+    push_hold_body, push_radial_line, push_rect, push_sector, raw_depth, three_slice, tiles,
 };
-use crate::sprites::{JudgeSprite, Sprite, SpriteSheet};
-use crate::style::{self, SENSOR_DEPTHS};
+use crate::sprites::{DIGIT_PAD, JudgeSprite, Sprite, SpriteSheet};
+use crate::style;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SceneOptions {
     /// Player note-speed option (1.0..=6.0).
     pub note_speed: f64,
-    /// A background movie plays: guide lanes are drawn translucent so it shows through.
+    /// A background movie plays: no guide sectors over it, only faint lane lines.
     pub movie: bool,
-}
-
-/// A judgement at the line, drawn as a short additive flash over the note's lanes.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Flash {
-    pub lane: u8,
-    pub width: u8,
-    pub kind: JudgeSprite,
-    /// Seconds since the judgement.
-    pub age: f32,
+    /// Measure lines (`BarLineTable` option; off for a guest, the E2 frames show none).
+    pub bar_lines: bool,
 }
 
 /// Live play state drawn on top of the chart.
@@ -39,14 +31,13 @@ pub struct LiveState<'a> {
     /// `judged[i]`: note `i` (index into `Chart::notes`) is decided and no longer drawn.
     /// Shorter than the note list = the rest are not judged.
     pub judged: &'a [bool],
-    /// Pressed sensors: `touched[depth]` bit `lane` (as `wacca_game::input::SensorState`).
-    pub touched: [u64; SENSOR_DEPTHS],
-    /// Recent judgements; flashes older than [`style::FLASH_SECS`] are skipped.
-    pub flashes: &'a [Flash],
+    /// Hit effects, key beams and hold glows.
+    pub effects: Option<&'a Effects>,
     /// Last judgement and its age in seconds (judgement word art).
     pub judgement: Option<(JudgeSprite, f32)>,
-    /// Current combo (the COMBO word shows while it is non-zero).
-    pub combo: u32,
+    /// Current combo (counter and COMBO word show while it is non-zero) and seconds since it
+    /// last changed (count animation).
+    pub combo: (u32, f32),
 }
 
 impl Default for SceneOptions {
@@ -54,34 +45,33 @@ impl Default for SceneOptions {
         Self {
             note_speed: 1.0,
             movie: false,
+            bar_lines: false,
         }
     }
 }
 
-/// Hit-flash opacity `age` seconds after the judgement (quadratic fade, 0 outside).
-pub fn flash_alpha(age: f32) -> f32 {
-    if (0.0..style::FLASH_SECS).contains(&age) {
-        (1.0 - age / style::FLASH_SECS).powi(2)
-    } else {
-        0.0
-    }
-}
-
-/// Judgement sprite `(scale, alpha)` `age` seconds after the judgement: pops in from 1.25×,
-/// holds, fades over the last 40 %; `None` once gone.
-pub fn judge_sprite_anim(age: f32) -> Option<(f32, f32)> {
+/// Judgement sprite opacity `age` seconds after the judgement (E2 recordings: fades in within
+/// a frame or two, holds, fades out over the last [`style::JUDGE_FADE_SECS`]; no scale pop);
+/// `None` once gone.
+pub fn judge_sprite_alpha(age: f32) -> Option<f32> {
     let life = style::JUDGE_SPRITE_SECS;
     if !(0.0..life).contains(&age) {
         return None;
     }
-    let scale = 1.0 + 0.25 * (1.0 - age / style::JUDGE_POP_SECS).max(0.0);
-    let fade_from = 0.6 * life;
-    let alpha = if age < fade_from {
-        1.0
-    } else {
-        1.0 - (age - fade_from) / (life - fade_from)
-    };
-    Some((scale, alpha))
+    let fade_in = 0.4 + 0.6 * (age / style::JUDGE_FADE_IN_SECS).min(1.0);
+    let fade_out = ((life - age) / style::JUDGE_FADE_SECS).min(1.0);
+    Some(fade_in.min(fade_out))
+}
+
+/// Combo counter `(scale, split)` `age` seconds after the count changed: the digits pop from
+/// [`style::COMBO_POP`]× and show a cyan/magenta split of `split` playfield units that closes
+/// over [`style::COMBO_SPLIT_SECS`] (E2 recordings).
+pub fn combo_anim(age: f32) -> (f32, f32) {
+    let ease = |secs: f32| (1.0 - (age / secs).clamp(0.0, 1.0)).powi(2);
+    (
+        1.0 + (style::COMBO_POP - 1.0) * ease(style::COMBO_POP_SECS),
+        style::COMBO_SPLIT * ease(style::COMBO_SPLIT_SECS),
+    )
 }
 
 /// Snap chevrons at time `now`: radial shift (fraction of a note thickness, growing in the snap
@@ -117,32 +107,25 @@ pub fn build_scene(
     let lanes = LANES as usize;
 
     let mask = mask_state(&chart.masks, now);
-    let (flat, tint) = if opts.movie {
-        let mut tint = style::GUIDE_LANE_TINT;
-        tint[3] *= style::GUIDE_LANE_MOVIE_ALPHA;
-        (style::GUIDE_LANE_MOVIE, tint)
-    } else {
-        (style::GUIDE_LANE, style::GUIDE_LANE_TINT)
-    };
+    // Over a movie the real game draws no guide sectors, only faint lane lines (E2 frames).
     let guide = sheet.get(Sprite::GuideLane);
-    for lane in (0..lanes).filter(|&l| mask[l]) {
+    for lane in (0..lanes).filter(|&l| mask[l] && !opts.movie) {
         match guide {
             Some(uv) => {
-                let paint = Paint::image(tint, uv);
+                let paint = Paint::image(style::GUIDE_LANE_TINT, uv);
                 paint_sector(&mut out, 1.0, 0.0, lane as f32, 1.0, &paint);
             }
-            None => push_sector(&mut out, 0.0, 1.0, lane as f32, 1.0, flat),
+            None => push_sector(&mut out, 0.0, 1.0, lane as f32, 1.0, style::GUIDE_LANE),
         }
     }
+    let line = if opts.movie {
+        style::LANE_LINE_MOVIE
+    } else {
+        style::LANE_LINE
+    };
     for lane in (0..lanes).filter(|&l| mask[l] || mask[(l + lanes - 1) % lanes]) {
-        push_radial_line(
-            &mut out,
-            lane as f32,
-            0.0,
-            1.0,
-            style::LANE_LINE_HALF_WIDTH,
-            style::LANE_LINE,
-        );
+        let w = style::LANE_LINE_HALF_WIDTH;
+        push_radial_line(&mut out, lane as f32, 0.0, 1.0, w, line);
     }
 
     let last_time = last_drawable_time(chart, now);
@@ -170,7 +153,9 @@ pub fn build_scene(
             push_hold_body(&mut out, nodes, depth_of, &hold_paint);
         }
     }
-    push_bar_lines(&mut out, chart, now, depth_of);
+    if opts.bar_lines {
+        push_bar_lines(&mut out, chart, now, depth_of);
+    }
     let t = now as f32;
     // Far notes first so nearer ones are drawn on top.
     for (_, note) in chart.notes.iter().enumerate().rev().filter(drawable) {
@@ -196,29 +181,37 @@ pub fn build_scene(
     }
 
     push_judge_ring(&mut out, sheet, &mask);
-    push_flashes(&mut out, sheet, live.flashes);
-    push_sensor_guides(&mut out, live.touched);
+    if let Some(fx) = live.effects {
+        fx.draw(&mut out, sheet);
+    }
     push_hud_sprites(&mut out, sheet, live);
     out
 }
 
-/// Judgement ring colour at `lane`'s start edge: purple at the bottom, pink at the top
-/// (attract-demo capture, `runs/reference`).
+/// Judgement ring colour at `lane`'s start edge: hot pink on the sides, turning purple towards
+/// the bottom and (less) the top (E2 frames).
 // UNVERIFIED: the game likely samples vT_JudgeColor01 by angle; this is an eyeballed gradient.
 pub fn judge_ring_color(lane: u8) -> style::Rgba {
-    let t = (crate::layout::lane_angle(f32::from(lane)).sin() + 1.0) / 2.0;
-    let (a, b) = (style::JUDGE_RING_BOTTOM, style::JUDGE_RING_TOP);
+    let s = crate::layout::lane_angle(f32::from(lane)).sin();
+    let t = s.abs().powf(1.5)
+        * if s > 0.0 {
+            style::JUDGE_RING_TOP_PURPLE
+        } else {
+            1.0
+        };
+    let (a, b) = (style::JUDGE_RING_SIDE, style::JUDGE_RING_PURPLE);
     [0, 1, 2, 3].map(|i| a[i] + (b[i] - a[i]) * t)
 }
 
-/// On every lane that is on: grey rim outside the line, the glowing ring on the line, and soft
-/// additive glow on both sides of it.
+/// On every lane that is on: the thick glowing band from the line outwards (E2: 292–317 px at
+/// a 291.8 px line), soft additive glow on both of its sides, then a dark rim with a thin light
+/// edge.
 fn push_judge_ring(out: &mut Vec<Vertex>, sheet: &SpriteSheet, mask: &[bool]) {
-    let (ring_in, ring_out) = (
-        1.0 - style::JUDGE_RING_WIDTH / 2.0,
-        1.0 + style::JUDGE_RING_WIDTH / 2.0,
-    );
-    let rim_out = 1.0 + style::RIM_WIDTH;
+    let band_out = 1.0 + style::JUDGE_BAND_WIDTH;
+    let rim_out = band_out + style::RIM_WIDTH;
+    // Nothing shows outside the cabinet rim (the movie quad would, E2 frames are black there).
+    let corner = style::VIEW_EXTENT * std::f32::consts::SQRT_2;
+    push_sector(out, rim_out, corner, 0.0, LANES as f32, style::OUTSIDE);
     let glow = sheet.get(Sprite::GuideLane).map(|[u0, v0, u1, v1]| {
         // A single column of the gradient (bright at v0), stretched along the ring.
         let u = (u0 + u1) / 2.0;
@@ -227,30 +220,20 @@ fn push_judge_ring(out: &mut Vec<Vertex>, sheet: &SpriteSheet, mask: &[bool]) {
     for lane in (0..LANES).filter(|&l| mask[usize::from(l)]) {
         let l = f32::from(lane);
         let color = judge_ring_color(lane);
-        push_sector(out, ring_out, rim_out, l, 1.0, style::RIM);
+        push_sector(out, band_out, rim_out, l, 1.0, style::RIM);
+        let e = style::RIM_EDGE_HALF_WIDTH;
+        push_sector(out, rim_out - e, rim_out + e, l, 1.0, style::RIM_EDGE);
+        push_sector(out, 1.0, band_out, l, 1.0, color);
         if let Some(uv) = glow {
             let paint = Paint::image([color[0], color[1], color[2], style::JUDGE_GLOW_ALPHA], uv)
                 .additive();
-            paint_sector(
-                out,
-                ring_in,
-                ring_in - style::JUDGE_GLOW_WIDTH,
-                l,
-                1.0,
-                &paint,
-            );
-            paint_sector(
-                out,
-                ring_out,
-                ring_out + style::JUDGE_GLOW_WIDTH / 2.0,
-                l,
-                1.0,
-                &paint,
-            );
+            let w = style::JUDGE_GLOW_WIDTH;
+            paint_sector(out, 1.0, 1.0 - w, l, 1.0, &paint);
+            // Hot core in the middle of the band.
+            let mid = 1.0 + style::JUDGE_BAND_WIDTH / 2.0;
+            paint_sector(out, mid, 1.0, l, 1.0, &paint);
+            paint_sector(out, mid, band_out, l, 1.0, &paint);
         }
-        push_sector(out, ring_in, ring_out, l, 1.0, color);
-        let w = style::JUDGE_CORE_HALF_WIDTH;
-        push_sector(out, 1.0 - w, 1.0 + w, l, 1.0, style::JUDGE_CORE);
     }
 }
 
@@ -278,78 +261,81 @@ fn push_bar_lines(out: &mut Vec<Vertex>, chart: &Chart, now: f64, depth_of: impl
     }
 }
 
-fn push_flashes(out: &mut Vec<Vertex>, sheet: &SpriteSheet, flashes: &[Flash]) {
-    let glow = sheet.get(Sprite::Glow);
-    for f in flashes {
-        let mut color = style::flash_color(f.kind);
-        color[3] *= flash_alpha(f.age);
-        if color[3] <= 0.0 {
-            continue;
-        }
-        let paint = match glow {
-            Some(uv) => Paint::image(color, uv),
-            None => Paint::flat(color),
-        }
-        .additive();
-        let (lane, width) = (f32::from(f.lane), f32::from(f.width));
-        paint_sector(out, style::FLASH_OUT, style::FLASH_IN, lane, width, &paint);
-    }
-}
-
-/// Judgement word art and the COMBO word at the centre (only with their sprites loaded).
+/// Judgement word art, the combo counter (SHINBI digits) and the COMBO word at the centre
+/// (each only with its sprites loaded). Layout measured on the E2 frames, see `style`.
 fn push_hud_sprites(out: &mut Vec<Vertex>, sheet: &SpriteSheet, live: &LiveState) {
     if let Some((j, age)) = live.judgement
-        && let Some((scale, alpha)) = judge_sprite_anim(age)
+        && let Some(alpha) = judge_sprite_alpha(age)
         && let (Some(uv), Some(aspect)) =
             (sheet.get(Sprite::Judge(j)), sheet.aspect(Sprite::Judge(j)))
     {
-        let hw = style::JUDGE_SPRITE_W / 2.0 * scale;
+        let hw = style::JUDGE_SPRITE_W / 2.0;
         let paint = Paint::image([1.0, 1.0, 1.0, alpha], uv);
         push_rect(out, [0.0, style::JUDGE_SPRITE_Y], [hw, hw * aspect], &paint);
     }
-    if live.combo > 0
-        && let (Some(uv), Some(aspect)) = (sheet.get(Sprite::Combo), sheet.aspect(Sprite::Combo))
-    {
+    let (combo, age) = live.combo;
+    if combo == 0 {
+        return;
+    }
+    let (scale, split) = combo_anim(age);
+    // Main copy plus, while the count animation runs, cyan and magenta copies either side.
+    let copies = [
+        (-split, style::COMBO_SPLIT_CYAN),
+        (split, style::COMBO_SPLIT_MAGENTA),
+        (0.0, style::COMBO_TINT),
+    ];
+    let copies = &copies[if split > 1e-4 { 0 } else { 2 }..];
+    if let (Some(uv), Some(aspect)) = (sheet.get(Sprite::Combo), sheet.aspect(Sprite::Combo)) {
         let hw = style::COMBO_SPRITE_W / 2.0;
-        let paint = Paint::image([1.0; 4], uv);
-        push_rect(out, [0.0, style::COMBO_SPRITE_Y], [hw, hw * aspect], &paint);
+        let half = [hw, hw * aspect];
+        let y = style::COMBO_SPRITE_Y;
+        let s = style::COMBO_SHADOW_OFFSET;
+        push_rect(
+            out,
+            [s, y - s],
+            half,
+            &Paint::image(style::COMBO_SHADOW, uv),
+        );
+        for &(dx, c) in copies {
+            push_rect(out, [dx, y], half, &Paint::image(c, uv));
+        }
+    }
+    let cells = digit_cells(sheet, combo, scale);
+    for &(dx, c) in copies {
+        for &(x, uv, half) in &cells {
+            let at = [x + dx, style::COMBO_DIGIT_Y];
+            push_rect(out, at, half, &Paint::image(c, uv));
+        }
     }
 }
 
-/// Faint sensor ring boundaries and the pressed sensors.
-fn push_sensor_guides(out: &mut Vec<Vertex>, touched: [u64; SENSOR_DEPTHS]) {
-    let w = style::SENSOR_GUIDE_HALF_WIDTH;
-    for (depth, &ring) in touched.iter().enumerate() {
-        let (r_in, r_out) = sensor_ring(depth);
-        push_sector(
-            out,
-            r_in - w,
-            r_in + w,
-            0.0,
-            LANES as f32,
-            style::SENSOR_GUIDE,
-        );
-        if depth + 1 == SENSOR_DEPTHS {
-            push_sector(
-                out,
-                r_out - w,
-                r_out + w,
-                0.0,
-                LANES as f32,
-                style::SENSOR_GUIDE,
-            );
-        }
-        for lane in (0..LANES).filter(|&l| ring >> l & 1 == 1) {
-            push_sector(
-                out,
-                r_in,
-                r_out,
-                f32::from(lane),
-                1.0,
-                style::TOUCH_HIGHLIGHT,
-            );
-        }
-    }
+/// Centred row of digit cells for `n` at `scale`: `(centre x, uv, half extents)`; empty unless
+/// every needed digit is loaded.
+fn digit_cells(sheet: &SpriteSheet, n: u32, scale: f32) -> Vec<(f32, UvRect, [f32; 2])> {
+    let cell_h = style::COMBO_DIGIT_H * (1.0 + 2.0 * DIGIT_PAD) * scale;
+    let pad = style::COMBO_DIGIT_H * DIGIT_PAD * scale;
+    let digits: Option<Vec<_>> = n
+        .to_string()
+        .bytes()
+        .map(|b| {
+            let s = Sprite::Digit(b - b'0');
+            Some((sheet.get(s)?, cell_h / sheet.aspect(s)?))
+        })
+        .collect();
+    let Some(digits) = digits else {
+        return Vec::new();
+    };
+    // Cells overlap by their padding so the glyphs keep the font's advance.
+    let total: f32 = digits.iter().map(|(_, w)| w - 2.0 * pad).sum::<f32>() + 2.0 * pad;
+    let mut x = -total / 2.0;
+    digits
+        .into_iter()
+        .map(|(uv, w)| {
+            let cell = (x + w / 2.0, uv, [w / 2.0, cell_h / 2.0]);
+            x += w - 2.0 * pad;
+            cell
+        })
+        .collect()
 }
 
 /// What a note looks like: colour, kind (`None` = hold end) and bonus marking.
@@ -399,6 +385,12 @@ fn push_note(
             }
         }
         None => push_sector(out, r_in, r, start, span, look.color),
+    }
+    let cap = style::NOTE_END_CAP_LANES;
+    if width < LANES && span > 3.0 * cap {
+        for s in [start, start + span - cap] {
+            push_sector(out, r_in, r, s, cap, style::NOTE_END_CAP);
+        }
     }
     if matches!(look.body, Some(NoteBody::Chain))
         && let Some(uv) = sheet.get(Sprite::ChainStripes)
@@ -519,9 +511,10 @@ mod tests {
     /// Every sprite at a distinct fake atlas rectangle.
     fn full_sheet() -> SpriteSheet {
         let mut s = SpriteSheet::default();
-        for (i, sprite) in Sprite::ALL.into_iter().enumerate() {
-            let u = i as f32 / 16.0;
-            s.insert(sprite, [u, 0.5, u + 0.05, 0.75], [256, 64]);
+        let digits = (0..10).map(Sprite::Digit);
+        for (i, sprite) in Sprite::ALL.into_iter().chain(digits).enumerate() {
+            let u = i as f32 / 32.0;
+            s.insert(sprite, [u, 0.5, u + 0.02, 0.75], [256, 64]);
         }
         s
     }
@@ -553,55 +546,43 @@ mod tests {
             ..Default::default()
         };
         let none = SpriteSheet::default();
-        let v = build_scene(&chart(vec![]), 0.0, &movie, &LiveState::default(), &none);
-        assert_eq!(count(&v, style::GUIDE_LANE), 0);
-        assert_eq!(count(&v, style::GUIDE_LANE_MOVIE), 60 * 6);
-        // Textured lanes are dimmed the same way.
-        let v = build_scene(
-            &chart(vec![]),
-            0.0,
-            &movie,
-            &LiveState::default(),
-            &full_sheet(),
-        );
-        let mut dim = style::GUIDE_LANE_TINT;
-        dim[3] *= style::GUIDE_LANE_MOVIE_ALPHA;
-        assert_eq!(count(&v, dim), 60 * 6);
-        assert_eq!(count(&v, style::GUIDE_LANE_TINT), 0);
+        // Over a movie: no guide sectors (flat or textured), faint lane lines.
+        for sheet in [&none, &full_sheet()] {
+            let v = build_scene(&chart(vec![]), 0.0, &movie, &LiveState::default(), sheet);
+            assert_eq!(count(&v, style::GUIDE_LANE), 0);
+            assert_eq!(count(&v, style::GUIDE_LANE_TINT), 0);
+            assert_eq!(count(&v, style::LANE_LINE_MOVIE), 60 * 6);
+        }
     }
 
     #[test]
-    fn ring_colour_runs_purple_bottom_to_pink_top() {
-        assert_eq!(judge_ring_color(45), style::JUDGE_RING_BOTTOM);
+    fn ring_colour_is_pink_on_the_sides_and_purple_at_the_bottom() {
+        let near =
+            |a: style::Rgba, b: style::Rgba| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-5);
+        assert!(near(judge_ring_color(45), style::JUDGE_RING_PURPLE));
+        assert!(near(judge_ring_color(0), style::JUDGE_RING_SIDE));
+        assert!(near(judge_ring_color(30), style::JUDGE_RING_SIDE));
         let top = judge_ring_color(15);
-        assert!(
-            top.iter()
-                .zip(style::JUDGE_RING_TOP)
-                .all(|(a, b)| (a - b).abs() < 1e-6)
-        );
+        assert!(top[2] > style::JUDGE_RING_SIDE[2] && top[2] < style::JUDGE_RING_PURPLE[2]);
     }
 
     #[test]
     fn bar_lines_at_visible_measures() {
         // Default tempo: 120 BPM 4/4, 2 s per measure; at note speed 1 the window is 3.3 s.
-        let v = build_scene(
-            &chart(vec![]),
-            1.0,
-            &SceneOptions::default(),
-            &LiveState::default(),
-            &SpriteSheet::default(),
-        );
+        let on = SceneOptions {
+            bar_lines: true,
+            ..Default::default()
+        };
+        let none = SpriteSheet::default();
+        let v = build_scene(&chart(vec![]), 1.0, &on, &LiveState::default(), &none);
         // Measures at 2 s and 4 s are ahead; 0 s has passed.
         assert_eq!(count(&v, style::BAR_LINE), 2 * 60 * 6);
+        let off = SceneOptions::default();
+        let v = build_scene(&chart(vec![]), 1.0, &off, &LiveState::default(), &none);
+        assert_eq!(count(&v, style::BAR_LINE), 0, "an option, off by default");
         let mut c = chart(vec![]);
         c.end_time = 3.0;
-        let v = build_scene(
-            &c,
-            1.0,
-            &SceneOptions::default(),
-            &LiveState::default(),
-            &SpriteSheet::default(),
-        );
+        let v = build_scene(&c, 1.0, &on, &LiveState::default(), &none);
         assert_eq!(
             count(&v, style::BAR_LINE),
             60 * 6,
@@ -706,14 +687,13 @@ mod tests {
     }
 
     #[test]
-    fn judged_notes_vanish_and_touched_lanes_light_up() {
+    fn judged_notes_vanish_and_notes_get_end_caps() {
         let c = chart(vec![
             note(1.0, NoteBody::Touch, Bonus::None),
             note(1.2, NoteBody::Chain, Bonus::None),
         ]);
         let live = LiveState {
             judged: &[true],
-            touched: [1 | 1 << 59, 0, 0, 1 << 5],
             ..LiveState::default()
         };
         let v = build_scene(
@@ -725,9 +705,7 @@ mod tests {
         );
         assert_eq!(count(&v, style::TOUCH), 0);
         assert_eq!(count(&v, style::CHAIN), 4 * 6);
-        assert_eq!(count(&v, style::TOUCH_HIGHLIGHT), 3 * 6);
-        // Five full guide circles (4 ring starts + the outer edge).
-        assert_eq!(count(&v, style::SENSOR_GUIDE), 5 * 60 * 6);
+        assert_eq!(count(&v, style::NOTE_END_CAP), 2 * 6);
     }
 
     #[test]
@@ -765,31 +743,30 @@ mod tests {
     }
 
     #[test]
-    fn flashes_and_judgement_sprites() {
+    fn effects_and_judgement_sprites() {
         let sheet = full_sheet();
-        let flashes = [
-            Flash {
-                lane: 5,
-                width: 3,
-                kind: JudgeSprite::Great,
-                age: 0.05,
-            },
-            Flash {
-                lane: 9,
-                width: 3,
-                kind: JudgeSprite::Good,
-                age: 5.0,
-            },
-        ];
+        let mut fx = Effects::default();
+        fx.hit(5, 3, JudgeSprite::Great);
         let live = LiveState {
-            flashes: &flashes,
+            effects: Some(&fx),
             judgement: Some((JudgeSprite::Marvelous, 0.1)),
-            combo: 3,
+            combo: (3, 1.0),
             ..LiveState::default()
         };
         let v = build_scene(&chart(vec![]), 0.0, &SceneOptions::default(), &live, &sheet);
-        let glow = sheet.get(Sprite::Glow).unwrap();
-        assert_eq!(uv_range(&v, glow), 3 * 6, "only the fresh flash");
+        let mut alone = Vec::new();
+        fx.draw(&mut alone, &sheet);
+        let without = build_scene(
+            &chart(vec![]),
+            0.0,
+            &SceneOptions::default(),
+            &LiveState {
+                effects: None,
+                ..live
+            },
+            &sheet,
+        );
+        assert_eq!(v.len(), without.len() + alone.len());
         let judge = sheet.get(Sprite::Judge(JudgeSprite::Marvelous)).unwrap();
         let quad: Vec<_> = v
             .iter()
@@ -807,18 +784,49 @@ mod tests {
         );
         assert!((w / h - 4.0).abs() < 1e-3);
         assert!(ys.iter().all(|y| *y < 0.0));
-        assert_eq!(uv_range(&v, sheet.get(Sprite::Combo).unwrap()), 6);
-        // Without sprites: no flash texture, no judgement art, but the flash still draws flat.
-        let flat = build_scene(
+        assert!((w - style::JUDGE_SPRITE_W).abs() < 1e-5);
+        // COMBO word and its shadow; the digit (3) above it in the main tint.
+        assert_eq!(uv_range(&v, sheet.get(Sprite::Combo).unwrap()), 2 * 6);
+        let three = sheet.get(Sprite::Digit(3)).unwrap();
+        let digit: Vec<_> = v
+            .iter()
+            .filter(|p| p.uv[0] >= three[0] && p.uv[0] <= three[2])
+            .collect();
+        assert_eq!(digit.len(), 6);
+        assert!(
+            digit
+                .iter()
+                .all(|p| p.pos[1] > 0.1 && p.color == style::COMBO_TINT)
+        );
+        // Right after a change the count shows two coloured copies more.
+        let fresh = LiveState {
+            combo: (3, 0.0),
+            ..live
+        };
+        let v = build_scene(
             &chart(vec![]),
             0.0,
             &SceneOptions::default(),
-            &live,
-            &SpriteSheet::default(),
+            &fresh,
+            &sheet,
         );
-        let mut c = style::flash_color(JudgeSprite::Great);
-        c[3] *= flash_alpha(0.05);
-        assert_eq!(count(&flat, c), 3 * 6);
+        assert_eq!(uv_range(&v, three), 3 * 6);
+    }
+
+    #[test]
+    fn digit_rows_are_centred_and_need_every_digit() {
+        let sheet = full_sheet();
+        let cells = digit_cells(&sheet, 120, 1.0);
+        assert_eq!(cells.len(), 3);
+        let left = cells[0].0 - cells[0].2[0];
+        let right = cells[2].0 + cells[2].2[0];
+        assert!((left + right).abs() < 1e-5, "centred: {left} {right}");
+        assert!(cells[1].0.abs() < 1e-5);
+        let big = digit_cells(&sheet, 120, 2.0);
+        assert!((big[0].2[1] - 2.0 * cells[0].2[1]).abs() < 1e-6);
+        let mut partial = SpriteSheet::default();
+        partial.insert(Sprite::Digit(1), [0.0; 4], [10, 10]);
+        assert!(digit_cells(&partial, 12, 1.0).is_empty());
     }
 
     #[test]
@@ -832,17 +840,18 @@ mod tests {
 
     #[test]
     fn animation_curves() {
-        assert_eq!(flash_alpha(0.0), 1.0);
-        assert!(flash_alpha(style::FLASH_SECS / 2.0) < 0.5);
-        assert_eq!(flash_alpha(style::FLASH_SECS), 0.0);
-        assert_eq!(flash_alpha(-0.1), 0.0);
+        let life = style::JUDGE_SPRITE_SECS;
+        assert!((judge_sprite_alpha(0.0).unwrap() - 0.4).abs() < 1e-6);
+        assert_eq!(judge_sprite_alpha(life / 2.0), Some(1.0));
+        let late = judge_sprite_alpha(life - style::JUDGE_FADE_SECS / 2.0).unwrap();
+        assert!((late - 0.5).abs() < 1e-3);
+        assert!(judge_sprite_alpha(life).is_none() && judge_sprite_alpha(-0.01).is_none());
 
-        let (s0, a0) = judge_sprite_anim(0.0).unwrap();
-        assert!((s0 - 1.25).abs() < 1e-6 && a0 == 1.0);
-        assert_eq!(judge_sprite_anim(style::JUDGE_POP_SECS).unwrap().0, 1.0);
-        let (_, late) = judge_sprite_anim(style::JUDGE_SPRITE_SECS * 0.9).unwrap();
-        assert!(late > 0.0 && late < 0.5);
-        assert!(judge_sprite_anim(style::JUDGE_SPRITE_SECS).is_none());
+        let (s0, d0) = combo_anim(0.0);
+        assert!((s0 - style::COMBO_POP).abs() < 1e-6 && (d0 - style::COMBO_SPLIT).abs() < 1e-6);
+        assert_eq!(combo_anim(style::COMBO_SPLIT_SECS), (1.0, 0.0));
+        let (s, d) = combo_anim(0.05);
+        assert!(s > 1.0 && s < s0 && d > 0.0 && d < d0);
 
         let (shift, alpha) = snap_arrow_anim(style::SNAP_ARROW_PERIOD * 1.5);
         assert!((shift - 0.5).abs() < 1e-5 && (alpha - 1.0).abs() < 1e-5);

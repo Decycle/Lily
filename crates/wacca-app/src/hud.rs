@@ -64,8 +64,8 @@ pub struct Hud {
     pub note_speed: f64,
     pub paused: bool,
     pub autoplay: bool,
-    /// The playfield draws the judgement word art; skip the text popup.
-    pub judge_art: bool,
+    /// The playfield draws the judgement word art and the combo counter; skip their text.
+    pub art: bool,
 }
 
 /// HUD for a `window` with the square `playfield` inside it: title and score in the top-left
@@ -81,21 +81,23 @@ pub fn view(h: &Hud, title: &str, window: Rect, playfield: Rect) -> View {
     v.text(format_score(h.score), [x, top + 4.5 * u], 6.0 * u, WHITE);
     let cx = playfield.x + playfield.w / 2.0;
     let mid = playfield.y + playfield.h / 2.0;
-    if h.combo > 0 {
+    // Fallback text where the sprites are missing, placed like the art (combo ~0.19 R above
+    // the centre, judgement ~0.2 R below; R ≈ 43 u).
+    if h.combo > 0 && !h.art {
         v.text_in(
             h.combo.to_string(),
-            [cx, mid - 9.0 * u],
-            8.0 * u,
+            [cx, mid - 10.0 * u],
+            4.5 * u,
             WHITE,
             Align::Center,
             None,
         );
     }
-    if let Some((label, color)) = popup(h.last, h.now).filter(|_| !h.judge_art) {
+    if let Some((label, color)) = popup(h.last, h.now).filter(|_| !h.art) {
         v.text_in(
             label,
-            [cx, mid + 1.0 * u],
-            5.0 * u,
+            [cx, mid + 7.0 * u],
+            4.0 * u,
             color,
             Align::Center,
             None,
@@ -166,7 +168,7 @@ mod tests {
             note_speed: 4.0,
             paused: false,
             autoplay: true,
-            judge_art: false,
+            art: false,
         };
         let v = view(&h, "Song", r, r);
         assert_eq!(
@@ -184,15 +186,7 @@ mod tests {
             r,
         );
         assert_eq!(idle.texts(), ["Song", "123,456", "x4.0  AUTO"]);
-        let art = view(
-            &Hud {
-                judge_art: true,
-                ..h
-            },
-            "Song",
-            r,
-            r,
-        );
-        assert_eq!(art.texts(), ["Song", "123,456", "12", "x4.0  AUTO"]);
+        let art = view(&Hud { art: true, ..h }, "Song", r, r);
+        assert_eq!(art.texts(), ["Song", "123,456", "x4.0  AUTO"]);
     }
 }
