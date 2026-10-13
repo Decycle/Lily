@@ -9,9 +9,11 @@ use wacca_game::grade::{Grade, Lamp, PlayResult};
 use wacca_render::style::Rgba;
 use wacca_render::text::Align;
 
+use crate::canvas::Painter;
+use crate::chrome::{self, Player};
 use crate::circle::{self, Canvas, INK, PINK, ease, font_tex, slab};
 use crate::labels;
-use crate::ui::{Action, Item, View, WHITE};
+use crate::ui::{Item, View, WHITE};
 
 /// Everything the results screen shows.
 #[derive(Clone, Debug, PartialEq)]
@@ -27,9 +29,11 @@ pub struct Summary {
     pub new_best: bool,
     /// Why the play was not saved (autoplay, unknown song, write error).
     pub not_saved: Option<String>,
-    /// Name on the player plate (save settings).
-    pub player: String,
+    /// The user plate after this play.
+    pub player: Player,
     pub rating: Rating,
+    /// Reverse Points this play earned ([`wacca_game::points::reverse_points`]).
+    pub rp: u32,
 }
 
 /// Player rating ([`wacca_game::rating::save_rating`]) before and after one play.
@@ -50,6 +54,51 @@ impl Rating {
     pub fn gain(&self) -> Option<u32> {
         let (b, a) = (Self::shown(self.before), Self::shown(self.after));
         (a > b).then(|| a - b)
+    }
+}
+
+/// A sample result for `--screen results` (screenshots): the counts of the E3 real-game result
+/// `runs/e3/20261013-030310/result-5` (NORMAL 3, B, clear, 210 RP), on the given song.
+pub fn demo(title: &str, artist: &str, jacket: &str, player: Player) -> Summary {
+    use wacca_game::score::Counts;
+    let counts = Counts {
+        marvelous: 90,
+        great: 39,
+        good: 39,
+        miss: 65,
+        fast: 40,
+        late: 11,
+    };
+    let r_counts = Counts {
+        marvelous: 2,
+        miss: 2,
+        ..Counts::default()
+    };
+    Summary {
+        title: title.into(),
+        artist: artist.into(),
+        jacket: jacket.into(),
+        difficulty: Some(Difficulty::Normal),
+        level: Some(3.0),
+        result: PlayResult {
+            score: 585_654,
+            grade: Grade::B,
+            lamp: Lamp::Clear,
+            counts,
+            r_counts,
+            max_combo: 50,
+            total_notes: 233,
+            gauge: 0.6,
+        },
+        completed: true,
+        new_best: true,
+        not_saved: None,
+        player,
+        rating: Rating {
+            before: 0.0,
+            after: 1.0,
+        },
+        rp: wacca_game::points::reverse_points(Grade::B, 3.0),
     }
 }
 
@@ -203,78 +252,23 @@ pub fn view(s: &Summary, menu: crate::canvas::Canvas, t: f32) -> View {
     let c = Canvas::new(menu);
     circle::background(&mut v, &c);
     let e = ease(t, INFO_AT, SLIDE);
-    header(&mut v, &c.moved([0.0, -120.0 * (1.0 - e)], e), s);
     info(&mut v, &c.moved([700.0 * (1.0 - e), 0.0], e), s);
     let e = ease(t, LIST_AT, SLIDE);
     let d = 420.0 * (1.0 - e);
     list(&mut v, &c.moved([0.6 * d, 0.8 * d], e), s, t);
     rank(&mut v, &c, s.result.grade, t);
     footer(&mut v, &c.moved([0.0, 0.0], ease(t, FOOTER_AT, 0.3)), s);
+    // The user plate stays on top, as on every menu.
+    let mut p = Painter::new(menu);
+    if t >= FOOTER_AT {
+        chrome::retry_tab(&mut p);
+        chrome::go(&mut p);
+    }
+    chrome::user_plate(&mut p, &s.player);
+    let top = p.finish();
+    v.items.extend(top.items);
+    v.buttons.extend(top.buttons);
     v
-}
-
-/// Regular polygon approximating a circle (for the player icon).
-fn round(center: [f32; 2], r: f32) -> Vec<[f32; 2]> {
-    (0..32)
-        .map(|i| {
-            let a = i as f32 / 32.0 * std::f32::consts::TAU;
-            [center[0] + r * a.cos(), center[1] + r * a.sin()]
-        })
-        .collect()
-}
-
-/// Player plate: title and level bars, icon, name and the rating box (no credit display).
-fn header(v: &mut View, c: &Canvas, s: &Summary) {
-    c.panel(
-        v,
-        &slab(330.0, 420.0, 600.0, 44.0),
-        &[[0.30, 0.30, 0.33, 0.95]],
-    );
-    c.text(
-        v,
-        "Title",
-        [312.0, 434.0],
-        14.0,
-        [0.70, 0.70, 0.73, 1.0],
-        Align::Left,
-    );
-    c.panel(
-        v,
-        &slab(352.0, 467.0, 580.0, 32.0),
-        &[[0.17, 0.17, 0.19, 0.97]],
-    );
-    let plate = [0.90, 0.90, 0.91, 1.0];
-    let plate_low = [0.78, 0.78, 0.80, 1.0];
-    c.panel(
-        v,
-        &slab(285.0, 512.0, 475.0, 76.0),
-        &[plate, plate, plate_low, plate_low],
-    );
-    c.panel(
-        v,
-        &slab(762.0, 512.0, 160.0, 76.0),
-        &[[0.32, 0.32, 0.34, 0.95]],
-    );
-    c.spaced(v, &s.player, [380.0, mid(550.0, 28.0)], 28.0, 21.0, INK);
-    c.panel(v, &round([292.0, 548.0], 68.0), &[WHITE]);
-    c.panel(v, &round([292.0, 548.0], 56.0), &[PINK]);
-    c.panel(v, &round([292.0, 548.0], 46.0), &[WHITE]);
-    c.panel(
-        v,
-        &slab(830.0, 551.0, 60.0, 13.0),
-        &[[0.20, 0.20, 0.22, 1.0]],
-    );
-    c.text(v, "Rate:", [852.0, 551.0], 12.0, WHITE, Align::Center);
-    c.panel(v, &slab(822.0, 565.0, 100.0, 32.0), &[WHITE]);
-    let after = Rating::shown(s.rating.after).to_string();
-    c.numerals(
-        v,
-        &after,
-        [884.0, mid(582.0, 30.0)],
-        30.0,
-        INK,
-        Align::Right,
-    );
 }
 
 /// Jacket, difficulty tag, title, artist and lamp.
@@ -534,7 +528,7 @@ fn rank(v: &mut View, c: &Canvas, g: Grade, t: f32) {
     }
 }
 
-/// Rating strip (rating, up-arrow and gain), RETRY tab and GO.
+/// Rating strip: rating, up-arrow and gain, and the Reverse Points earned.
 fn footer(v: &mut View, c: &Canvas, s: &Summary) {
     let grey = [0.84, 0.84, 0.86, 1.0];
     c.panel(
@@ -580,16 +574,25 @@ fn footer(v: &mut View, c: &Canvas, s: &Summary) {
             Align::Center,
         );
     }
-    if let Some(why) = &s.not_saved {
-        c.text(v, why, [800.0, mid(1265.0, 20.0)], 20.0, PINK, Align::Right);
+    // "Obtained Reverse Points": a three-line label, the RP spaced wide and a small "RP" (E3).
+    for (i, l) in ["Obtained", "Reverse", "Points"].into_iter().enumerate() {
+        let y = 1247.0 + 12.5 * i as f32;
+        c.text(v, l, [618.0, y], 11.0, INK, Align::Left);
     }
-    circle::side_tab(v, c, "RETRY", 700.0, [0.50, 0.75, 1.0, 0.9], Action::Retry);
-    circle::go_button(v, c, Action::Confirm);
+    let rp = s.rp.to_string();
+    let pitch = 32.0;
+    let x = 792.0 - pitch * rp.chars().count() as f32;
+    c.counter(v, &rp, [x, mid(1266.0, 44.0)], 44.0, pitch, INK);
+    c.spaced(v, "RP", [798.0, 1268.0], 15.0, 12.0, INK);
+    if let Some(why) = &s.not_saved {
+        c.text(v, why, [566.0, 1196.0], 20.0, PINK, Align::Center);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::Action;
     use wacca_game::score::Counts;
 
     fn area() -> crate::canvas::Canvas {
@@ -627,11 +630,16 @@ mod tests {
             completed: true,
             new_best,
             not_saved: None,
-            player: "PLAYER".into(),
+            player: Player {
+                name: "PLAYER".into(),
+                rate: 1210,
+                ..Player::default()
+            },
             rating: Rating {
                 before: 1203.9,
                 after: 1210.2,
             },
+            rp: 1260,
         }
     }
 
@@ -690,7 +698,9 @@ mod tests {
         ] {
             assert!(text.contains(want), "{want} missing from {text}");
         }
-        for want in ["0004", "0060", "0950000", "(0007)", "(0001)", "1210", "+7"] {
+        for want in [
+            "0004", "0060", "0950000", "(0007)", "(0001)", "1210", "+7", "1260",
+        ] {
             assert!(text.contains(want), "{want} missing from {text}");
         }
         let img = images(&v);

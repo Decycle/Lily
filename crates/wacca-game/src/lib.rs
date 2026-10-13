@@ -6,6 +6,7 @@ pub mod catalog;
 pub mod grade;
 pub mod input;
 pub mod judge;
+pub mod points;
 pub mod rating;
 pub mod rules;
 pub mod save;

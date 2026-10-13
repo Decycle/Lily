@@ -57,9 +57,49 @@ pub fn next(screen: Screen, event: Event) -> Next {
     }
 }
 
+/// Seconds the arcade gives a menu screen before it moves on by itself (`LimitationTimeTable`:
+/// mode select 30, song select 99, final check 25, results 15). The category wheel is part of the
+/// game's song select screen, so the two share one countdown. Shown and enforced only with the
+/// `menu_timers` setting; this home build has no time limit by default.
+pub fn time_limit(screen: Screen) -> Option<f32> {
+    match screen {
+        Screen::ModeSelect => Some(30.0),
+        Screen::Category | Screen::SongSelect => Some(99.0),
+        Screen::Options => Some(25.0),
+        Screen::Results => Some(15.0),
+        Screen::Title | Screen::Calibrate | Screen::Play => None,
+    }
+}
+
+/// Whether moving `from` → `to` keeps the running countdown (one song select screen).
+pub fn keeps_timer(from: Screen, to: Screen) -> bool {
+    matches!(
+        (from, to),
+        (Screen::Category, Screen::SongSelect) | (Screen::SongSelect, Screen::Category)
+    )
+}
+
+/// Whole seconds shown by a countdown of `limit` after `elapsed` (the game counts 99 … 0).
+pub fn countdown(limit: f32, elapsed: f32) -> u32 {
+    (limit - elapsed).ceil().max(0.0) as u32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn menu_time_limits_follow_the_table() {
+        assert_eq!(time_limit(Screen::ModeSelect), Some(30.0));
+        assert_eq!(time_limit(Screen::SongSelect), Some(99.0));
+        assert_eq!(time_limit(Screen::Results), Some(15.0));
+        assert_eq!(time_limit(Screen::Play), None);
+        assert!(keeps_timer(Screen::Category, Screen::SongSelect));
+        assert!(!keeps_timer(Screen::SongSelect, Screen::Options));
+        assert_eq!(countdown(30.0, 0.0), 30);
+        assert_eq!(countdown(30.0, 3.5), 27);
+        assert_eq!(countdown(15.0, 20.0), 0);
+    }
 
     #[test]
     fn full_loop() {
