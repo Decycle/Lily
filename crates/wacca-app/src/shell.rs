@@ -13,7 +13,7 @@ use wacca_game::rating;
 use wacca_game::save::{self, SaveData};
 use wacca_render::layout::{Rect, letterbox, playfield_viewport};
 use wacca_render::text::{Fonts, TextRenderer};
-use wacca_render::{JudgeSprite, Renderer, Sprite, SpriteSheet, Vertex};
+use wacca_render::{JudgeSprite, MeshVertex, Renderer, Sprite, SpriteSheet, Vertex};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{
@@ -111,6 +111,7 @@ pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
         first_frame: false,
         pacer: Pacer::new(std::time::Duration::ZERO),
         scene: Vec::new(),
+        notes: Vec::new(),
     };
     EventLoop::new()?.run_app(&mut app)?;
     app.error.map_or(Ok(()), Err)
@@ -226,7 +227,7 @@ impl Gfx {
     fn draw(
         &mut self,
         frame: wgpu::SurfaceTexture,
-        scene: &[Vertex],
+        (scene, split, notes): (&[Vertex], usize, &[MeshVertex]),
         view: &View,
         images: &mut Images,
     ) -> DrawTimes {
@@ -239,7 +240,8 @@ impl Gfx {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         let size = [self.config.width, self.config.height];
-        self.renderer.render(&mut encoder, &target, size, scene);
+        self.renderer
+            .render_with_notes(&mut encoder, &target, size, scene, split, notes);
         self.text.begin(size);
         for item in &view.items {
             match item {
@@ -511,6 +513,8 @@ struct App {
     pacer: Pacer,
     /// Playfield triangles, reused every frame.
     scene: Vec<Vertex>,
+    /// 3D note triangles, reused every frame.
+    notes: Vec<MeshVertex>,
 }
 
 impl App {
@@ -925,7 +929,10 @@ impl App {
         self.pacer.acquired(start, acquired);
         self.perf.acquire.push(ms(acquired - start));
         let mut scene = std::mem::take(&mut self.scene);
+        let mut notes = std::mem::take(&mut self.notes);
         scene.clear();
+        notes.clear();
+        let mut split = 0;
         match self.screen {
             Screen::Play => {
                 let over = self.play.as_mut().and_then(PlayState::frame);
@@ -943,7 +950,8 @@ impl App {
                     }
                     let empty = SpriteSheet::default();
                     let sprites = self.gfx.as_ref().map_or(&empty, |g| g.renderer.sprites());
-                    p.scene(sprites, &mut scene);
+                    let meshes = self.gfx.as_ref().and_then(|g| g.renderer.note_meshes());
+                    split = p.scene(sprites, meshes, &mut scene, &mut notes);
                     if p.paused {
                         self.drift.reset();
                     } else {
@@ -992,8 +1000,9 @@ impl App {
         }
         self.perf.build.push(ms(acquired.elapsed()));
         let Some(gfx) = &mut self.gfx else { return };
-        let t = gfx.draw(target, &scene, &view, &mut self.images);
+        let t = gfx.draw(target, (&scene, split, &notes), &view, &mut self.images);
         self.scene = scene;
+        self.notes = notes;
         let p = &mut self.perf;
         (p.image_loads, p.image_ms) = (self.images.loads, ms(self.images.spent));
         p.submit.push(ms(t.submit));

@@ -457,7 +457,8 @@ fn run(a: &Args) -> Result<(), Error> {
         .map(|i| first_note + (last_note - first_note) * (i as f64 + 0.5) / a.compare as f64)
         .collect();
     let (default_k, default_t) = (
-        f64::from(layout::PERSPECTIVE_K),
+        // The 2D edge-curve constant E2 measured (doc 09); the renderer now projects in 3D.
+        0.750,
         layout::APPROACH_SECS / a.speed,
     );
     let script_path = a
@@ -551,6 +552,7 @@ fn run(a: &Args) -> Result<(), Error> {
                     // Real guest play shows bar lines (E2 frames).
                     bar_lines: true,
                     touch_guide: false,
+                    mesh_notes: false,
                 },
                 size: (w, h),
                 g,

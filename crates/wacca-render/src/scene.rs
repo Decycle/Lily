@@ -27,6 +27,9 @@ pub struct SceneOptions {
     /// Touch guide: faint depth-ring circles and pressed sensors (an aid for touchscreens; the
     /// cabinet's rings are physical, the real game draws none).
     pub touch_guide: bool,
+    /// Note heads are drawn as 3D meshes ([`crate::notes3d`]) between the two parts of the
+    /// scene (see [`build_scene_into`]); the 2D scene leaves them out.
+    pub mesh_notes: bool,
 }
 
 /// Score row and song progress along the rim.
@@ -67,6 +70,7 @@ impl Default for SceneOptions {
             movie: false,
             bar_lines: false,
             touch_guide: false,
+            mesh_notes: false,
         }
     }
 }
@@ -132,6 +136,8 @@ pub fn build_scene(
 }
 
 /// [`build_scene`] into `out` (cleared first), so a caller can reuse one buffer every frame.
+/// Returns the length of the part under the notes (guide lanes, hold bodies, 2D notes): with
+/// [`SceneOptions::mesh_notes`] the 3D notes go between `out[..split]` and `out[split..]`.
 pub fn build_scene_into(
     out: &mut Vec<Vertex>,
     chart: &Chart,
@@ -139,7 +145,7 @@ pub fn build_scene_into(
     opts: &SceneOptions,
     live: &LiveState,
     sheet: &SpriteSheet,
-) {
+) -> usize {
     out.clear();
     let lanes = LANES as usize;
 
@@ -216,7 +222,7 @@ pub fn build_scene_into(
             };
             push_note(out, sheet, t, d, end.arc.lane, end.arc.width, &look);
         }
-        if let Some(d) = visible(note.time) {
+        if let Some(d) = visible(note.time).filter(|_| !opts.mesh_notes) {
             let look = NoteLook {
                 color: style::note_color(&note.body),
                 body: Some(&note.body),
@@ -226,6 +232,7 @@ pub fn build_scene_into(
         }
     }
 
+    let split = out.len();
     push_judge_ring(out, sheet, &mask);
     if let Some(rim) = &live.rim {
         push_rim_row(out, sheet, rim);
@@ -234,6 +241,7 @@ pub fn build_scene_into(
         fx.draw(out, sheet);
     }
     push_hud_sprites(out, sheet, live);
+    split
 }
 
 /// Judgement ring colour at `lane`'s start edge: hot pink on the sides, turning purple towards
