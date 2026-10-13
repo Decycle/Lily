@@ -73,24 +73,49 @@ it ~55 ms early (FAST Greats), which explains the counts and confirms FAST = ear
 discontinuity between the game's audio and its frame/judge clock (e.g. an audio hiccup). Consequence: audio-only
 sync can be off by > 100 ms after such an event; the visual phase (δ) must be checked per run.
 
+### 2.1 Per-run visual timing check (`analyze_e2`)
+
+`analyze_e2` now measures δ for every block of 20 notes with the renderer's model fixed (`APPROACH_SECS`,
+`PERSPECTIVE_K`, measured rim) and prints a warning when consecutive blocks differ by more than 30 ms
+(`e2.json`: `visual_timing` = `[chart s, δ ms, matched samples]`, `timing_jumps_at`). Re-run on the recordings:
+
+| Run | δ per 20 notes (ms) | Flag |
+|---|---|---|
+| 234221 | −85 −85 −83 −83 −80 −80 −80 −78 | — |
+| 234943 | −83 −80 −85 −80 −85 −80 −85 −85 | — |
+| 235435 | −75 −75 −80 −78 −88 −80 −83 −85 | — |
+| 235920 | −85 −85 **+35** +40 +35 +30 +25 +25 | jump before chart 40.6 s |
+| 20261013-005606 (KING, aborted) | +370 −400 +213 −278 | 3 jumps — invalid run (machine overloaded, game killed mid-song) |
+
+A clean run keeps δ within ±7 ms of its mean; a jump marks the run (or the part after it) as unusable for
+timing and explains judgement shifts.
+
 ## 3. Constants vs our current values
 
 | Constant | Ours (`wacca-render/src/layout.rs`) | Measured | Note |
 |---|---|---|---|
-| `APPROACH_SECS` (speed 1.0) | 3.3 (UNVERIFIED) | 3.276 s raw, 3.29 s bias-corrected (spread 0.002 s) | between the community 3.2667 and 3.3333; 3.28 recommended |
-| perspective `k` | 10.5/13.825 = 0.7595 | 0.750 (spread < 0.001) | position error of the old value ≤ 2 px at 292 px |
+| `APPROACH_SECS` (speed 1.0) | 3.28 (applied from this doc) | 3.276 s raw (3 runs, spread 0.002 s); **3.29 ± 0.01 s** after the method bias | see below |
+| perspective `k` | 0.750 (applied) | 0.750 (spread < 0.001) | was 10.5/13.825 = 0.7595 |
 | lane 0 / direction | 3 o'clock, CCW | same (±0.01°) | remove the UNVERIFIED note in `layout.rs` and `cells.rs` |
 | judgement line | radius 1 | rim inner edge, 291.8 px; rim band to 315 px | real rim is a thick magenta band, ours a thin white line |
 | default guest options | — | speed 1.5, mask off, timing 0, give-up off | from the options screen |
 
+Method bias: the same edge measurement on our own frames does not return our constant exactly, and the bias
+depends on how our notes are drawn: flat triangles gave 2.191 s for a true 2.200 s (−0.4 %); the real renderer with
+the current textured notes (end caps, glow) gives 2.171 s for a true 2.187 s (−0.7 %, 4 runs, spread 0.001 s).
+Comparing real and ours measured identically: real 2.184 s vs ours 2.171 s at 3.28 → the game is ~0.6 % slower,
+i.e. 3.30 s; with the flat-note bias 3.29 s. Best estimate **3.29 ± 0.01 s** at speed 1.0 — 3.28 is inside the
+uncertainty; changing it is optional. `k` comes out 0.749–0.750 for ours and 0.750 for the game: no change.
+
 ## 4. Side-by-side (`runs/e2/<run>/compare/NN-<t>.png`, real | ours)
 
-10 moments per run, ours rasterised on the measured centre/radius at the frame's chart time. Note radii agree
-within a few px (as the fit says). Visible differences: the real rim is a thick glowing magenta band (ours: thin
-white ring plus sensor guides); real notes are thicker with cyan end caps; masked lanes show the movie/background
-panel in the real game (ours: black) and the real game draws no dark guide-lane sectors; the movie fills the circle
-behind a translucent tunnel; the combo counter ("65 COMBO") is small and centred above the middle; a horizontal
-bar near the top centre and a score row with "o" digits run along the top rim.
+10 moments per run. Ours is now the **real `wacca-render` renderer rendered headless** (`gpu.rs`: offscreen
+wgpu, sprites from `data/ui`, as the playfield example's `WACCA_SHOT`) with live state from our engine's judgement
+of the same injected script (`ours.rs`: judged notes, judgement art, combo with its age, hit effects stepped at
+120 Hz), resampled onto the measured centre/radius (`raster::place`). The first version (flat CPU raster, now
+removed) showed the old thin white ring, dark guide sectors and missing caps — all since changed on main. With the
+current renderer the rim band, note caps and judgement/combo art can be compared like with like; no movie is
+drawn on our side (analysis runs without video decode), so movie dimming is not compared here.
 
 ## 5. Reference set for the visual-parity audit
 
@@ -100,10 +125,16 @@ frame (`frame,pts_s,chart_t`); the full 120 fps lossless `video.mkv` is kept. Ta
 the song start and end (+1 s, +4 s), the first two hits of each note kind at −200…+800 ms (approach, hit effect,
 judgement popup appear/fade; holds also mid-body and end), and combo 10/50/100/145. Best set:
 **`runs/e2/20261012-234943/reference/`** (all Marvelous, 175 frames); `-235435` is the repeat.
-Fragile covers touch, slide cw/ccw, hold, chain. **Not covered:** snap in/out and bonus/R notes — the only reachable
-charts with them need more navigation (うっせぇわ Hard lacks snaps; Expert/Inferno are locked for guests). A
-candidate is ぺこみこ大戦争!! Normal/Hard (FOR BEGINNERS, 1 step right of the default cursor: snap in, bonus) — one
-more live run.
+Fragile covers touch, slide cw/ccw, hold, chain. **Snap in/out and bonus/R notes: pending.** Chart stats found a
+guest-reachable chart with all of them: **KING (3005) Normal Lv 2** (VOCALOID; 23 bonus touches,
+1 snap in, 1 snap out, slides, 19 R touches; no movie). Navigation works (`scripts/e2-guest-king.nav.json`, found
+after 46 left steps from TOUHOU) and `scripts/e2-king-normal.taps.json` is generated. Its first notes come before
+live sync can be ready (first note at BGM 1.44 s, sync ready 3.1 s), so ~38 early edges are skipped. The one
+capture (`runs/e2/20261013-005606`) was aborted on request while the machine was overloaded: its timing check shows
+offsets jumping by up to 600 ms and the game was killed mid-song, so its `reference/` frames are **not** usable. A
+second attempt (`runs/e2/20261013-020813`, started after 60 s of idle) failed in navigation: KING was not centred
+within 60 left steps (other agents started compiling during the run; the seek may have skipped past it while
+the list scrolled). Next try: seek with a longer wait per step and both directions.
 
 ## 6. Recommended code changes
 
@@ -119,16 +150,14 @@ more live run.
 
 ## 7. Open items
 
-- Snap/bonus/R reference frames (one more run, §5).
+- Snap/bonus/R reference frames: one clean KING run (§5); for its first notes, start the injector from a predicted
+  song start (start press + calibrated loading delay) instead of waiting for audio sync.
 - `#OFFSET` sign (needs a chart with a non-zero offset).
 - Judgement window edges vs frame quantisation: a δ sweep run (doc 07 §5.2) now only needs per-note readout of the
   debug panel or popups; the panel's FAST/LATE counters make a coarse sweep possible from totals alone.
 - Hold/chain/slide rules were all Marvelous with autoplay-shaped input (34 ms contacts, ring 0 taps, ring 3 hold
   finger) — consistent with our rules but not a test of their edges.
 
-- After merging main (textured notes, sprites), `raster.rs` still draws every vertex as a flat colour with an empty
-  `SpriteSheet` (UVs and additive/mask flags ignored). The numbers above were measured on the pre-merge flat
-  renderer; the side-by-sides should move to a headless wgpu render of the real renderer.
 
 ## 8. Reproduce
 

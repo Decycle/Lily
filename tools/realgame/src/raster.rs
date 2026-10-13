@@ -1,71 +1,61 @@
-//! CPU rasteriser for our playfield ([`wacca_render::build_scene`] triangles), so comparison frames need no GPU and
-//! can be placed on the real game's measured geometry: playfield point `(x, y)` (rim radius 1, y up) goes to pixel
-//! `(cx + x s, cy - y s)`. Colours are blended "over" in sRGB like the renderer's non-sRGB target.
+//! Image helpers for comparison frames: placing a square playfield render of ours ([`crate::gpu`]) on the real
+//! game's measured geometry, side-by-side composition and PNG encoding.
 
 use crate::frame::Rgb;
-use wacca_render::Vertex;
 
-/// Draws `tris` (a triangle list) onto `img`, pixel centres sampled, alpha-blended in order.
-pub fn draw(img: &mut Rgb, tris: &[Vertex], cx: f64, cy: f64, s: f64) {
-    let px = |v: &Vertex| (cx + f64::from(v.pos[0]) * s, cy - f64::from(v.pos[1]) * s);
-    for t in tris.as_chunks::<3>().0 {
-        let p = [px(&t[0]), px(&t[1]), px(&t[2])];
-        let area = edge(p[0], p[1], p[2]);
-        if area.abs() < 1e-12 {
-            continue;
-        }
-        let x0 = p
-            .iter()
-            .map(|q| q.0)
-            .fold(f64::INFINITY, f64::min)
-            .floor()
-            .max(0.0) as usize;
-        let y0 = p
-            .iter()
-            .map(|q| q.1)
-            .fold(f64::INFINITY, f64::min)
-            .floor()
-            .max(0.0) as usize;
-        let x1 = (p
-            .iter()
-            .map(|q| q.0)
-            .fold(f64::NEG_INFINITY, f64::max)
-            .ceil()
-            .max(0.0) as usize)
-            .min(img.width);
-        let y1 = (p
-            .iter()
-            .map(|q| q.1)
-            .fold(f64::NEG_INFINITY, f64::max)
-            .ceil()
-            .max(0.0) as usize)
-            .min(img.height);
-        let c = t[0].color;
-        let a = c[3].clamp(0.0, 1.0);
-        for y in y0..y1 {
-            for x in x0..x1 {
-                let q = (x as f64 + 0.5, y as f64 + 0.5);
-                let w = [
-                    edge(p[1], p[2], q),
-                    edge(p[2], p[0], q),
-                    edge(p[0], p[1], q),
-                ];
-                let inside = w.iter().all(|&e| e * area >= 0.0);
-                if !inside {
-                    continue;
-                }
-                let i = (y * img.width + x) * 3;
-                for (dst, src) in img.data[i..i + 3].iter_mut().zip(c) {
-                    let v = src.clamp(0.0, 1.0) * a + f32::from(*dst) / 255.0 * (1.0 - a);
-                    *dst = (v * 255.0).round() as u8;
-                }
+/// Resamples `square` (our renderer's square viewport, where playfield radius `view_extent` reaches the edge) into a
+/// `width x height` canvas so that the playfield centre lands on `(cx, cy)` and radius 1 (the judgement line) on
+/// `rim` pixels. Bilinear; outside the square is black.
+pub fn place(
+    square: &Rgb,
+    view_extent: f64,
+    (width, height): (usize, usize),
+    (cx, cy): (f64, f64),
+    rim: f64,
+) -> Rgb {
+    let side = square.width as f64;
+    let mut data = vec![0u8; width * height * 3];
+    for y in 0..height {
+        for x in 0..width {
+            // Playfield coordinates (y up) of the canvas pixel centre, then square texel coordinates.
+            let px = (x as f64 + 0.5 - cx) / rim;
+            let py = (cy - y as f64 - 0.5) / rim;
+            let u = (px / view_extent + 1.0) / 2.0 * side - 0.5;
+            let v = (1.0 - py / view_extent) / 2.0 * side - 0.5;
+            if let Some(p) = bilinear(square, u, v) {
+                data[(y * width + x) * 3..][..3].copy_from_slice(&p);
             }
         }
     }
+    Rgb {
+        width,
+        height,
+        data,
+    }
 }
 
-fn edge(a: (f64, f64), b: (f64, f64), p: (f64, f64)) -> f64 {
-    (b.0 - a.0) * (p.1 - a.1) - (b.1 - a.1) * (p.0 - a.0)
+fn bilinear(img: &Rgb, u: f64, v: f64) -> Option<[u8; 3]> {
+    let (w, h) = (img.width as f64, img.height as f64);
+    if u < -0.5 || v < -0.5 || u > w - 0.5 || v > h - 0.5 {
+        return None;
+    }
+    let (u, v) = (u.clamp(0.0, w - 1.0), v.clamp(0.0, h - 1.0));
+    let (x0, y0) = (u.floor() as usize, v.floor() as usize);
+    let (x1, y1) = ((x0 + 1).min(img.width - 1), (y0 + 1).min(img.height - 1));
+    let (fx, fy) = (u - x0 as f64, v - y0 as f64);
+    let (a, b, c, d) = (
+        img.pixel(x0, y0),
+        img.pixel(x1, y0),
+        img.pixel(x0, y1),
+        img.pixel(x1, y1),
+    );
+    let mut out = [0u8; 3];
+    for (i, o) in out.iter_mut().enumerate() {
+        let top = f64::from(a[i]) * (1.0 - fx) + f64::from(b[i]) * fx;
+        let bottom = f64::from(c[i]) * (1.0 - fx) + f64::from(d[i]) * fx;
+        *o = (top * (1.0 - fy) + bottom * fy).round() as u8;
+    }
+    Some(out)
 }
 
 /// Two frames of the same height next to each other (`left | right`).
@@ -99,46 +89,25 @@ pub fn png(img: &Rgb) -> Result<Vec<u8>, png::EncodingError> {
 mod tests {
     use super::*;
 
-    fn v(x: f32, y: f32, color: [f32; 4]) -> Vertex {
-        Vertex {
-            pos: [x, y],
-            color,
-            ..Vertex::default()
-        }
-    }
-
     #[test]
-    fn fills_and_blends_triangles_in_playfield_space() {
-        let mut img = Rgb::new(10, 10, vec![0; 300]).unwrap();
-        let red = [1.0, 0.0, 0.0, 1.0];
-        // Quad covering x in [-1, 0], y in [0, 1] (top-left quarter after the y flip).
-        let quad = [
-            v(-1.0, 0.0, red),
-            v(0.0, 0.0, red),
-            v(0.0, 1.0, red),
-            v(-1.0, 0.0, red),
-            v(0.0, 1.0, red),
-            v(-1.0, 1.0, red),
-        ];
-        draw(&mut img, &quad, 5.0, 5.0, 5.0);
-        assert_eq!(img.pixel(2, 2), [255, 0, 0]);
-        assert_eq!(img.pixel(7, 2), [0, 0, 0]);
-        assert_eq!(img.pixel(2, 7), [0, 0, 0]);
-        let half_blue = [0.0, 0.0, 1.0, 0.5];
-        draw(
-            &mut img,
-            &[
-                v(-1.0, 0.0, half_blue),
-                v(0.0, 1.0, half_blue),
-                v(0.0, 0.0, half_blue),
-            ],
-            5.0,
-            5.0,
-            5.0,
-        );
-        assert_eq!(img.pixel(4, 4), [128, 0, 128]);
+    fn places_the_square_on_the_measured_geometry() {
+        // 4x4 square: left half red, right half blue; view extent 2 (radius 1 = a quarter of the side).
+        let sq = Rgb::new(
+            4,
+            4,
+            (0..16)
+                .flat_map(|i| if i % 4 < 2 { [200, 0, 0] } else { [0, 0, 200] })
+                .collect(),
+        )
+        .unwrap();
+        // Radius 1 -> 10 px, centre (20, 20): the square spans 0..40.
+        let img = place(&sq, 2.0, (50, 40), (20.0, 20.0), 10.0);
+        assert_eq!(img.pixel(5, 5), [200, 0, 0]);
+        assert_eq!(img.pixel(35, 30), [0, 0, 200]);
+        assert_eq!(img.pixel(45, 20), [0, 0, 0]);
+        assert_eq!(img.pixel(20, 20)[1], 0);
         let sbs = side_by_side(&img, &img).unwrap();
-        assert_eq!((sbs.width, sbs.pixel(10, 0)), (20, [255, 0, 0]));
+        assert_eq!((sbs.width, sbs.pixel(55, 5)), (100, [200, 0, 0]));
         assert!(side_by_side(&img, &Rgb::new(1, 1, vec![0; 3]).unwrap()).is_none());
         let bytes = png(&img).unwrap();
         assert_eq!(&bytes[1..4], b"PNG");

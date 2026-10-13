@@ -1,5 +1,5 @@
 //! `analyze_e2 <run dir> [--chart <mer>] [--assets DIR] [--ffmpeg PATH] [--speed 1.5] [--video-latency-ms 0]
-//!  [--compare 10] [--ours-every 15] [--geometry cx,cy,r]`: experiment E2 analysis of a song run (doc 09).
+//!  [--compare 10] [--ours-every 15] [--geometry cx,cy,r] [--ui data/ui] [--script taps.json] [--movie true]`: experiment E2 analysis of a song run (doc 09).
 //!
 //! 1. Song time: aligns `audio.wav` with the chart's BGM ([`wacca_realgame::sync`]); the match, its correlation
 //!    and residuals at 25/50/75 % of the song give `bgm0_ms` and its confidence (compared with the live match).
@@ -20,16 +20,17 @@ use std::process::ExitCode;
 use std::sync::mpsc;
 use wacca_chart::Chart;
 use wacca_realgame::frame::Rgb;
+use wacca_realgame::gpu::Offscreen;
+use wacca_realgame::ours;
 use wacca_realgame::playfield::{self, Approach, Candidate, Geometry};
 use wacca_realgame::record::{video, wav};
 use wacca_realgame::{raster, reference, sync};
-use wacca_render::sprites::SpriteSheet;
-use wacca_render::{LiveState, SceneOptions, build_scene, layout};
+use wacca_render::{SceneOptions, build_scene, layout};
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
     #[error(
-        "usage: analyze_e2 <run dir> [--chart <mer>] [--assets DIR] [--ffmpeg PATH] [--speed 1.5] [--video-latency-ms 0] [--compare 10] [--ours-every 15] [--geometry cx,cy,r]"
+        "usage: analyze_e2 <run dir> [--chart <mer>] [--assets DIR] [--ffmpeg PATH] [--speed 1.5] [--video-latency-ms 0] [--compare 10] [--ours-every 15] [--geometry cx,cy,r] [--ui data/ui] [--script taps.json] [--movie true]"
     )]
     Usage,
     #[error("{}: {source}", path.display())]
@@ -64,6 +65,12 @@ struct Args {
     ours_every: usize,
     /// Overrides of the fitted rim: centre x, centre y, judgement radius (px).
     geometry: Option<[f64; 3]>,
+    /// Sprite directory for our renderer.
+    ui: PathBuf,
+    /// The injected script (default: `inject.script` in meta.json), fed to our engine for judgement art.
+    script: Option<PathBuf>,
+    /// The chart has a background movie (our guide lanes are then translucent).
+    movie: bool,
 }
 
 fn parse_args(args: &[String]) -> Option<Args> {
@@ -78,6 +85,9 @@ fn parse_args(args: &[String]) -> Option<Args> {
         compare: 10,
         ours_every: 15,
         geometry: None,
+        ui: PathBuf::from("data/ui"),
+        script: None,
+        movie: true,
     };
     while let Some(flag) = it.next() {
         let v = it.next()?;
@@ -89,6 +99,9 @@ fn parse_args(args: &[String]) -> Option<Args> {
             "--video-latency-ms" => a.latency_ms = v.parse().ok()?,
             "--compare" => a.compare = v.parse().ok()?,
             "--ours-every" => a.ours_every = v.parse().ok().filter(|&n| n > 0)?,
+            "--ui" => a.ui = v.into(),
+            "--script" => a.script = Some(v.into()),
+            "--movie" => a.movie = v.parse().ok()?,
             "--geometry" => {
                 let n: Vec<f64> = v
                     .split(',')
@@ -257,34 +270,42 @@ fn measure(f: &Rgb, g: &Geometry, rim: f64, cands: &[Candidate]) -> Vec<Sample> 
         .collect()
 }
 
-/// Our playfield at chart time `t`, rasterised on the real frame's geometry (rim radius `rim` px).
-fn render_ours(
-    chart: &Chart,
-    t: f64,
-    speed: f64,
+/// Our real renderer (headless, with sprites) fed with our engine's judgements of the injected script, placed on
+/// the real frame's geometry (centre, judgement line at `rim` px).
+struct Ours<'a> {
+    chart: &'a Chart,
+    events: Vec<wacca_game::rules::JudgeEvent>,
+    gpu: Offscreen,
+    opts: SceneOptions,
     size: (usize, usize),
-    g: &Geometry,
+    g: Geometry,
     rim: f64,
-) -> Rgb {
-    let scene = build_scene(
-        chart,
-        t,
-        &SceneOptions {
-            note_speed: speed,
-            movie: false,
-            bar_lines: false,
-            touch_guide: false,
-        },
-        &LiveState::default(),
-        &SpriteSheet::default(),
-    );
-    let mut img = Rgb {
-        width: size.0,
-        height: size.1,
-        data: vec![0; size.0 * size.1 * 3],
-    };
-    raster::draw(&mut img, &scene, g.cx, g.cy, rim);
-    img
+    fx: ours::EffectClock,
+}
+
+impl Ours<'_> {
+    fn frame(&mut self, t: f64) -> Result<Rgb, Error> {
+        let live = ours::live_at(self.chart, &self.events, t);
+        self.fx.advance(self.chart, &self.events, t);
+        let scene = build_scene(
+            self.chart,
+            t,
+            &self.opts,
+            &live.state(&self.fx.effects),
+            self.gpu.sprites(),
+        );
+        let square = self
+            .gpu
+            .render(&scene)
+            .map_err(|e| Error::Data(e.to_string()))?;
+        Ok(raster::place(
+            &square,
+            f64::from(wacca_render::style::VIEW_EXTENT),
+            self.size,
+            (self.g.cx, self.g.cy),
+            self.rim,
+        ))
+    }
 }
 
 /// Two-pass fit: match runs against `first` (within 6 px + 30 % of the expected radius), fit, re-match against
@@ -435,7 +456,24 @@ fn run(a: &Args) -> Result<(), Error> {
     let targets: Vec<f64> = (0..a.compare)
         .map(|i| first_note + (last_note - first_note) * (i as f64 + 0.5) / a.compare as f64)
         .collect();
-    let (default_k, default_t) = (10.5 / 13.825, layout::APPROACH_SECS / a.speed);
+    let (default_k, default_t) = (
+        f64::from(layout::PERSPECTIVE_K),
+        layout::APPROACH_SECS / a.speed,
+    );
+    let script_path = a
+        .script
+        .clone()
+        .or_else(|| meta.pointer("/inject/script")?.as_str().map(PathBuf::from))
+        .ok_or_else(|| Error::Data("no --script and no inject.script in meta.json".into()))?;
+    let script = wacca_realgame::timeline::parse(
+        &std::fs::read_to_string(&script_path).map_err(io(&script_path))?,
+    )
+    .map_err(|e| Error::Data(format!("{}: {e}", script_path.display())))?;
+    let mut our_events = Some(ours::events(
+        &chart,
+        &wacca_realgame::timeline::expand(&script.taps),
+    ));
+    let mut our_view: Option<Ours> = None;
     let lower = |d: f64| (195.0..345.0).contains(&d);
 
     let mut child = video::spawn_decoder(&ff, &a.dir.join("video.mkv"), "rgb24")?;
@@ -502,8 +540,25 @@ fn run(a: &Args) -> Result<(), Error> {
                 g.cx, g.cy
             );
             geo = Some((g, r));
+            let side = (2.0 * r * f64::from(wacca_render::style::VIEW_EXTENT)).ceil() as u32;
+            our_view = Some(Ours {
+                chart: &chart,
+                events: our_events.take().unwrap_or_default(),
+                gpu: Offscreen::new(&a.ui, side).map_err(|e| Error::Data(e.to_string()))?,
+                opts: SceneOptions {
+                    note_speed: a.speed,
+                    movie: a.movie,
+                    // Real guest play shows bar lines (E2 frames).
+                    bar_lines: true,
+                    touch_guide: false,
+                },
+                size: (w, h),
+                g,
+                rim: r,
+                fx: ours::EffectClock::default(),
+            });
         }
-        if let Some((g, rim)) = geo {
+        if let (Some((g, rim)), Some(view)) = (geo, our_view.as_mut()) {
             let first = Approach {
                 t: default_t,
                 k: default_k,
@@ -514,12 +569,12 @@ fn run(a: &Args) -> Result<(), Error> {
             if !cands.is_empty() && t <= last_note + 0.1 {
                 real.extend(measure(&f, &g, rim, &cands));
                 if frames.is_multiple_of(a.ours_every) {
-                    let o = render_ours(&chart, t, a.speed, (w, h), &g, rim);
+                    let o = view.frame(t)?;
                     ours.extend(measure(&o, &g, rim, &cands));
                 }
             }
             if next_target < targets.len() && t >= targets[next_target] {
-                let o = render_ours(&chart, t, a.speed, (w, h), &g, rim);
+                let o = view.frame(t)?;
                 if let Some(img) = raster::side_by_side(&f, &o) {
                     write_png(
                         &compare_dir.join(format!("{next_target:02}-{t:07.3}.png")),
@@ -582,6 +637,32 @@ fn run(a: &Args) -> Result<(), Error> {
         mean_sd(&ang_ours)
     );
 
+    // Visual timing check: the offset per block of 20 notes must stay constant (doc 09 §2: it can jump).
+    let deltas = playfield::grid(-0.4, 0.4, 0.005);
+    let mut timing = Vec::new();
+    for block in 0..chart.notes.len().div_ceil(20) {
+        let notes = block * 20..(block * 20 + 20).min(chart.notes.len());
+        let samples: Vec<(f64, &[(f64, f64)])> = real
+            .iter()
+            .filter(|s| notes.contains(&s.note))
+            .map(|s| (s.tau, s.runs.as_slice()))
+            .collect();
+        if let Some((d, n)) = playfield::best_delta(&samples, &first, &deltas) {
+            timing.push((chart.notes[notes.start].time, d * 1000.0, n));
+        }
+    }
+    let timing_ms: Vec<f64> = timing.iter().map(|x| x.1).collect();
+    let timing_jumps: Vec<f64> = playfield::jumps(&timing_ms, 30.0)
+        .into_iter()
+        .map(|i| timing[i + 1].0)
+        .collect();
+    println!("visual timing per 20 notes (chart s, delta ms, matches): {timing:.0?}");
+    if !timing_jumps.is_empty() {
+        println!(
+            "WARNING: visual-vs-audio offset jumps > 30 ms before chart times {timing_jumps:.1?}"
+        );
+    }
+
     let residuals: Vec<(f64, f64, f64)> = kept_real
         .iter()
         .filter_map(|(s, r)| Some((s.tau, *r, playfield::model_radius(s.tau, &fit_real.model)?)))
@@ -599,6 +680,8 @@ fn run(a: &Args) -> Result<(), Error> {
         "lane0_offset_deg_real": mean_sd(&ang_real),
         "lane0_offset_deg_ours": mean_sd(&ang_ours),
         "angle_samples_real": ang_real.len(),
+        "visual_timing": timing,
+        "timing_jumps_at": timing_jumps,
         "samples_real": residuals,
         "raw_real": raw(&real),
         "raw_ours": raw(&ours),
