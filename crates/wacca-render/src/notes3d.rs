@@ -327,7 +327,9 @@ pub fn build_mesh_notes(
             items.push((d, mesh, 0.0, LANES, MaterialId::BarLine));
         }
     }
-    items.sort_by(|a, b| b.0.total_cmp(&a.0));
+    // Far first; at equal depth the bar line under the note (its outer edge is nearer).
+    let is_note = |m: MaterialId| m != MaterialId::BarLine;
+    items.sort_by(|a, b| b.0.total_cmp(&a.0).then(is_note(a.4).cmp(&is_note(b.4))));
     for (d, mesh, lane, width, material) in items {
         push_mesh(out, mesh, d, lane, width, material);
     }

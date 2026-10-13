@@ -534,28 +534,6 @@ pub(crate) fn read_png(path: &Path) -> Result<Image, SpriteError> {
     })
 }
 
-/// Mip chain of `img` down to 1×1 (2×2 box filter on the stored values; odd edges clamp),
-/// starting with the image itself.
-pub fn mip_chain(img: Image) -> Vec<Image> {
-    let mut out = vec![img];
-    loop {
-        let last = &out[out.len() - 1];
-        let [w, h] = last.size;
-        if w.max(h) <= 1 {
-            return out;
-        }
-        let next = Image::from_fn([(w / 2).max(1), (h / 2).max(1)], |x, y| {
-            let px = |dx: u32, dy: u32| last.px((2 * x + dx).min(w - 1), (2 * y + dy).min(h - 1));
-            let q = [px(0, 0), px(1, 0), px(0, 1), px(1, 1)];
-            std::array::from_fn(|c| {
-                let sum: u32 = q.iter().map(|p| u32::from(p[c])).sum();
-                ((sum + 2) / 4) as u8
-            })
-        });
-        out.push(next);
-    }
-}
-
 /// Read and bake every sprite found under `ui_dir`; missing or unreadable ones are logged.
 pub fn load_sources(ui_dir: &Path) -> Vec<(Sprite, Image)> {
     let mut cache: HashMap<&str, Option<Image>> = HashMap::new();
@@ -581,16 +559,6 @@ pub fn load_sources(ui_dir: &Path) -> Vec<(Sprite, Image)> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn mip_chain_box_filters_down_to_one_pixel() {
-        let img = Image::from_fn([4, 2], |x, _| [(x * 60) as u8, 0, 255, 255]);
-        let mips = mip_chain(img);
-        let sizes: Vec<_> = mips.iter().map(|m| m.size).collect();
-        assert_eq!(sizes, [[4, 2], [2, 1], [1, 1]]);
-        assert_eq!(mips[1].px(0, 0), [30, 0, 255, 255]);
-        assert_eq!(mips[2].px(0, 0), [90, 0, 255, 255]);
-    }
-
     use super::*;
 
     fn img(size: [u32; 2], f: impl Fn(u32, u32) -> [u8; 4]) -> Image {

@@ -233,7 +233,8 @@ fn vertex_buffer(device: &wgpu::Device, size: u64) -> wgpu::Buffer {
     })
 }
 
-/// Texture with its full mip chain.
+/// Texture without mips, like the game's (the RenderDoc captures show one level; mips would blur
+/// the opacity mask and widen the notes).
 fn upload(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -241,8 +242,7 @@ fn upload(
     img: Image,
     srgb: bool,
 ) -> wgpu::TextureView {
-    let mips = sprites::mip_chain(img);
-    let [width, height] = mips[0].size;
+    let [width, height] = img.size;
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
@@ -250,7 +250,7 @@ fn upload(
             height,
             depth_or_array_layers: 1,
         },
-        mip_level_count: mips.len() as u32,
+        mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: if srgb {
@@ -261,28 +261,16 @@ fn upload(
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    for (level, mip) in mips.iter().enumerate() {
-        let [w, h] = mip.size;
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: level as u32,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &mip.rgba,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * w),
-                rows_per_image: Some(h),
-            },
-            wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
-        );
-    }
+    queue.write_texture(
+        texture.as_image_copy(),
+        &img.rgba,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4 * width),
+            rows_per_image: Some(height),
+        },
+        texture.size(),
+    );
     texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
