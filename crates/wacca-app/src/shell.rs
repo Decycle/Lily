@@ -29,7 +29,9 @@ use crate::play::{PlayOptions, PlaySpec, PlayState, VideoSetup, load_chart, movi
 use crate::results::Summary;
 use crate::screen::{self, Event, Next, Screen};
 use crate::ui::{Action, Item, View, WHITE};
-use crate::{category, hud, jacket, options, preview, record, results, select_ui};
+use crate::{
+    category, hud, jacket, mode, options, preview, record, results, select_ui, title, wipe,
+};
 
 /// Contact id used for the mouse (touch ids come from the OS).
 const MOUSE_ID: u64 = u64::MAX;
@@ -73,7 +75,9 @@ pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
         s: setup,
         fonts: Some(fonts),
         gfx: None,
-        screen: Screen::Category,
+        screen: Screen::Title,
+        entered: Instant::now(),
+        wipe: None,
         play: None,
         summary: None,
         results_at: Instant::now(),
@@ -351,6 +355,10 @@ struct App {
     fonts: Option<Fonts>,
     gfx: Option<Gfx>,
     screen: Screen,
+    /// When the current screen appeared (title / mode select animations).
+    entered: Instant,
+    /// Screen being wiped away and when the wipe started ([`wipe`]).
+    wipe: Option<(Screen, Instant)>,
     play: Option<PlayState>,
     summary: Option<Summary>,
     /// When the results screen appeared (its entry animation).
@@ -386,11 +394,28 @@ impl App {
     }
 
     fn view(&self) -> View {
+        let [w, h] = self.size();
+        let Some((from, at)) = self.wipe else {
+            return self.screen_view(self.screen);
+        };
+        let t = at.elapsed().as_secs_f32();
+        let shown = if wipe::covering(t) { from } else { self.screen };
+        let mut v = self.screen_view(shown);
+        v.items.extend(wipe::view(Canvas::fit(w, h), t).items);
+        // No input while the screens change.
+        v.buttons.clear();
+        v
+    }
+
+    fn screen_view(&self, screen: Screen) -> View {
         let area = self.area();
         let m = &self.s.menu;
         let [w, h] = self.size();
         let canvas = Canvas::fit(w, h);
-        match self.screen {
+        let since = self.entered.elapsed().as_secs_f32();
+        match screen {
+            Screen::Title => title::view(canvas, since),
+            Screen::ModeSelect => mode::view(canvas, since),
             Screen::Category => {
                 category::view(canvas, &m.list, m.category, self.wheel, &self.s.save)
             }
@@ -444,7 +469,13 @@ impl App {
                     None => log::warn!("no chart selected"),
                 }
             }
-            Next::Go(s) => self.screen = s,
+            Next::Go(s) => {
+                if wipe::applies(self.screen, s) {
+                    self.wipe = Some((self.screen, Instant::now()));
+                }
+                self.screen = s;
+                self.entered = Instant::now();
+            }
         }
     }
 
@@ -566,6 +597,9 @@ impl App {
     }
 
     fn action(&mut self, event_loop: &ActiveEventLoop, a: Action) {
+        if self.wipe.is_some() {
+            return;
+        }
         let (screen, before) = (self.screen, self.wheel_pos());
         if let Some(e) = self.s.menu.act(self.screen, a) {
             self.event(event_loop, e);
@@ -698,7 +732,9 @@ impl App {
                 }
             }
             Screen::SongSelect | Screen::Options => self.preview.update(&self.s),
-            Screen::Category => self.preview.stop(&self.s.player),
+            Screen::Title | Screen::ModeSelect | Screen::Category => {
+                self.preview.stop(&self.s.player)
+            }
             Screen::Results => {}
         }
         let now = Instant::now();
@@ -707,6 +743,12 @@ impl App {
             .replace(now)
             .map_or(0.0, |t| (now - t).as_secs_f32());
         self.wheel = ease(self.wheel, dt, WHEEL_TAU);
+        if self
+            .wipe
+            .is_some_and(|(_, at)| wipe::done(at.elapsed().as_secs_f32()))
+        {
+            self.wipe = None;
+        }
         if self.screen != Screen::Play
             && let Some(gfx) = &mut self.gfx
         {
