@@ -16,7 +16,7 @@ Priority: **1) play area — fully faithful visual + control port**, 2) menus, 3
 - [x] RenderDoc capture of a real gameplay frame (draw order, blend states, constants, meshes) — 16 captures, exact camera/transforms, port spec (doc 11 §2–3)
 - [x] Real note meshes in our renderer (601 meshes; real camera; ported note shader; bar lines) — ring/lanes in progress
 - [x] Port key shaders to WGSL — done: notes (all types, R aura, sync band), hold ribbons + end caps, chevrons, snap arrows, guide lanes + ring, movie, colour pipeline (1–3/255 vs RenderDoc frames); sync connector (opaque, from assets + KING frames), hit effects (Cascade particle systems + 8 ported Vfx materials)
-- [~] Side-by-side audit vs real frames: every difference fixed or listed (final audit running → doc 13)
+- [x] Side-by-side audit vs real frames (doc 13: Fragile mean diff 7.15→3.45; menus doc 14) — remaining: no-movie background scene (in progress), HUD banners
 
 ## 1. Play area: controls
 - [x] E3: real judgement windows per class, hold drop, slide/snap thresholds (doc 10; chord rule + snap-out + Hard not measured)
