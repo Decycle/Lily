@@ -94,6 +94,11 @@ impl SongList {
         self.wanted
     }
 
+    /// Every song of the catalog (with a chart), in catalog order.
+    pub fn songs(&self) -> &[Song] {
+        &self.songs
+    }
+
     pub fn song_at(&self, i: usize) -> Option<&Song> {
         self.order.get(i).map(|&s| &self.songs[s])
     }

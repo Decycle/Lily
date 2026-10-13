@@ -93,6 +93,18 @@ fn font_candidates(data: &Path, assets: &Path) -> Vec<Vec<PathBuf>> {
     ]
 }
 
+/// Face of `DF-KaGei-W6.ttc` used for results counters and scores: `DFPKaGei-W6` (proportional).
+// UNVERIFIED: chosen by comparing E2 result frames; the widgets name the `DF-KaGei-W6_Font`
+// composite, whose sub-typeface ranges are not decoded.
+const NUMERAL_FACE: u32 = 1;
+
+fn numeral_candidates(data: &Path, assets: &Path) -> Vec<Vec<PathBuf>> {
+    vec![vec![
+        data.join("fonts").join("DF-KaGei-W6.ttc"),
+        assets.join("UI").join("Font").join("DF-KaGei-W6.ufont"),
+    ]]
+}
+
 /// First path of each group for which `exists` holds.
 fn pick_fonts(groups: Vec<Vec<PathBuf>>, exists: impl Fn(&Path) -> bool) -> Vec<PathBuf> {
     groups
@@ -186,6 +198,11 @@ fn run(args: &Args) -> Result<(), Error> {
         font_candidates(&args.data, &args.assets),
         Path::exists,
     ))?;
+    let fonts = match pick_fonts(numeral_candidates(&args.data, &args.assets), Path::exists).first()
+    {
+        Some(p) => fonts.with_numerals(p, NUMERAL_FACE),
+        None => fonts,
+    };
     shell::run(
         Setup {
             assets: args.assets.clone(),

@@ -2,6 +2,13 @@
 //!
 //! Rates are derived data: recompute them from the save's best scores, never persist them.
 
+use crate::catalog::Song;
+use crate::save::SaveData;
+
+/// `MusicParameterTable.Version` of Reverse songs: the "new" songs of the rating.
+/// UNVERIFIED (doc 05 §1.4); the table's own rule is a release date ≥ 2021081007.
+pub const NEW_VERSION: u8 = 5;
+
 /// `UserRateCoefficientTable`: (RequiredScore, CalcRateCoefficient), best first.
 const COEFFICIENTS: [(u32, f64); 19] = [
     (990_000, 4.0),
@@ -66,9 +73,30 @@ pub fn player_rating(charts: &[RatedChart]) -> f64 {
     best(true, NEW_CHARTS) + best(false, OLD_CHARTS)
 }
 
+/// Player rating from the save's best scores of every played chart in `songs`.
+pub fn save_rating(save: &SaveData, songs: &[Song]) -> f64 {
+    let charts: Vec<RatedChart> = songs
+        .iter()
+        .flat_map(|s| {
+            s.charts.iter().filter_map(move |c| {
+                let r = save.record(s.id, c.difficulty)?;
+                (r.play_count > 0).then(|| RatedChart {
+                    rate: chart_rate(c.level, r.best_score),
+                    is_new: s.version == NEW_VERSION,
+                })
+            })
+        })
+        .collect();
+    player_rating(&charts)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::ChartEntry;
+    use crate::grade::{Grade, Lamp, PlayResult};
+    use crate::score::Counts;
+    use wacca_chart::Difficulty;
 
     #[test]
     fn coefficient_boundaries() {
@@ -115,5 +143,61 @@ mod tests {
         // new: 6..=20 → 195; old: 10 × (6..=40) = 8050
         assert_eq!(player_rating(&charts), 195.0 + 8050.0);
         assert_eq!(player_rating(&[]), 0.0);
+    }
+
+    fn song(id: u32, version: u8, levels: &[(Difficulty, f32)]) -> Song {
+        Song {
+            id,
+            folder: String::new(),
+            title: String::new(),
+            artist: String::new(),
+            reading: String::new(),
+            bpm: String::new(),
+            genre: 0,
+            version,
+            jacket: String::new(),
+            preview_begin: 0.0,
+            preview_seconds: 0.0,
+            charts: levels
+                .iter()
+                .map(|&(difficulty, level)| ChartEntry {
+                    difficulty,
+                    level,
+                    norma: 0.5,
+                    movie: None,
+                    chart_path: String::new(),
+                })
+                .collect(),
+        }
+    }
+
+    fn play(save: &mut SaveData, id: u32, d: Difficulty, score: u32) {
+        let r = PlayResult {
+            score,
+            grade: Grade::of(score, 1),
+            lamp: Lamp::Clear,
+            counts: Counts::default(),
+            r_counts: Counts::default(),
+            max_combo: 0,
+            total_notes: 1,
+            gauge: 1.0,
+        };
+        save.merge(id, d, &r);
+    }
+
+    #[test]
+    fn save_rating_sums_played_charts() {
+        use Difficulty::{Expert, Hard, Normal};
+        let songs = [
+            song(1, 5, &[(Normal, 1.0), (Expert, 12.5)]),
+            song(2, 4, &[(Hard, 9.0)]),
+        ];
+        let mut save = SaveData::default();
+        assert_eq!(save_rating(&save, &songs), 0.0);
+        play(&mut save, 1, Normal, 1_000_000); // new: 1.0 × 4
+        play(&mut save, 1, Expert, 950_000); // new: 12.5 × 3
+        play(&mut save, 2, Hard, 800_000); // old: 9 × 1
+        play(&mut save, 9, Hard, 1_000_000); // not in the catalog
+        assert_eq!(save_rating(&save, &songs), 4.0 + 37.5 + 9.0);
     }
 }

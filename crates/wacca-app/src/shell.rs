@@ -9,6 +9,7 @@ use std::time::Instant;
 
 use wacca_audio::{BgmBank, DEFAULT_SE_SET, HitSounds, Player, SeBank};
 use wacca_game::grade::PlayResult;
+use wacca_game::rating;
 use wacca_game::save::{self, SaveData};
 use wacca_render::layout::{Rect, letterbox, playfield_viewport};
 use wacca_render::text::{Fonts, TextRenderer};
@@ -174,7 +175,10 @@ impl Gfx {
                     color,
                     align,
                     max_width,
-                } => self.text.text(text, *at, *px, *color, *align, *max_width),
+                    face,
+                } => self
+                    .text
+                    .text(text, *at, *px, *color, *align, *max_width, *face),
                 Item::Jacket { rect, key } => {
                     jackets.ensure(&mut self.text, key);
                     if self.text.has_image(key) {
@@ -188,6 +192,16 @@ impl Gfx {
                     let key = format!("{UI_IMAGE}{key}");
                     jackets.ensure(&mut self.text, &key);
                     self.text.image(&key, *rect, *tint);
+                }
+                Item::ImagePoly {
+                    key,
+                    points,
+                    uvs,
+                    tint,
+                } => {
+                    let key = format!("{UI_IMAGE}{key}");
+                    jackets.ensure(&mut self.text, &key);
+                    self.text.image_poly(&key, points, uvs, *tint);
                 }
             }
         }
@@ -478,10 +492,8 @@ impl App {
         let Some(play) = self.play.take() else { return };
         let spec = &play.spec;
         let key = spec.song_id.zip(spec.difficulty);
-        let previous_best = key
-            .and_then(|(id, d)| self.s.save.record(id, d))
-            .filter(|r| r.play_count > 0)
-            .map(|r| r.best_score);
+        let songs = self.s.menu.list.songs();
+        let before = rating::save_rating(&self.s.save, songs);
         let (mut new_best, mut not_saved) = (false, None);
         match (key, &self.s.save_path) {
             _ if play.opts.autoplay => not_saved = Some("AUTOPLAY: NOT SAVED".to_string()),
@@ -504,16 +516,27 @@ impl App {
                 }
             }
         }
+        let songs = self.s.menu.list.songs();
+        let artist = spec
+            .song_id
+            .and_then(|id| songs.iter().find(|s| s.id == id))
+            .map(|s| s.artist.clone())
+            .unwrap_or_default();
         self.summary = Some(Summary {
             title: spec.title.clone(),
+            artist,
             jacket: spec.jacket.clone(),
             difficulty: spec.difficulty,
             level: spec.level,
             result,
             completed,
-            previous_best,
             new_best,
             not_saved,
+            player: self.s.save.settings.player_name.clone(),
+            rating: results::Rating {
+                before,
+                after: rating::save_rating(&self.s.save, songs),
+            },
         });
         self.results_at = Instant::now();
         self.event(event_loop, Event::PlayOver);

@@ -67,6 +67,8 @@ pub struct Settings {
     pub bonus_effect: bool,
     /// Background movie on/off (`BackMovieSettingTable`, 06-visuals §1).
     pub background_video: bool,
+    /// Name on the results screen's player plate (the game shows the card's user name).
+    pub player_name: String,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -79,6 +81,7 @@ impl Default for Settings {
             mirror: false,
             bonus_effect: true,
             background_video: true,
+            player_name: "PLAYER".to_string(),
             extra: Map::new(),
         }
     }
@@ -278,6 +281,7 @@ mod tests {
             grade: Grade::of(score, counts.hits()),
             lamp,
             counts,
+            r_counts: Counts::default(),
             max_combo,
             total_notes: 100,
             gauge: 0.9,
@@ -364,6 +368,7 @@ mod tests {
     fn background_video_setting_persists_and_defaults_on() {
         let old: Settings = serde_json::from_str(r#"{"noteSpeed": 3.0}"#).unwrap();
         assert!(old.background_video);
+        assert_eq!(old.player_name, "PLAYER");
         let off = Settings {
             background_video: false,
             ..Settings::default()

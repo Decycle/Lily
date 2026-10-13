@@ -7,7 +7,7 @@ use wacca_render::layout::Rect;
 use wacca_render::style::Rgba;
 use wacca_render::text::Align;
 
-use crate::ui::{self, Action, View};
+use crate::ui::{self, Action, Item, View};
 
 /// The round screen in canvas units.
 // UNVERIFIED: measured from E2 frames (675 × 1200 captures × 1.6).
@@ -165,32 +165,113 @@ impl Canvas {
         );
     }
 
-    /// Text cut to `max` canvas units wide.
+    /// Centred text cut to `max` canvas units wide.
     pub fn text_fit(&self, v: &mut View, s: &str, at: [f32; 2], px: f32, color: Rgba, max: f32) {
+        self.fit(v, s, at, px, color, max, Align::Center);
+    }
+
+    /// Text cut to `max` canvas units wide, anchored per `align`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn fit(
+        &self,
+        v: &mut View,
+        s: &str,
+        at: [f32; 2],
+        px: f32,
+        color: Rgba,
+        max: f32,
+        align: Align,
+    ) {
         let sc = self.scale;
         v.text_in(
             s,
             self.p(at),
             px * sc,
             self.fade(color),
-            Align::Center,
+            align,
             Some(max * sc),
         );
     }
 
-    /// Characters on a fixed `pitch` (the game's wide-spaced counters), first cell from `x`.
-    pub fn spaced(
+    /// One line in the game's numeral face.
+    pub fn numerals(
+        &self,
+        v: &mut View,
+        s: &str,
+        at: [f32; 2],
+        px: f32,
+        color: Rgba,
+        align: Align,
+    ) {
+        v.numerals(s, self.p(at), px * self.scale, self.fade(color), align);
+    }
+
+    /// Characters on a fixed `pitch` (the game's wide-spaced labels), first cell from `x`.
+    pub fn spaced(&self, v: &mut View, s: &str, at: [f32; 2], px: f32, pitch: f32, color: Rgba) {
+        self.cells(v, s, at, pitch, |v, ch, at| {
+            self.text(v, ch, at, px, color, Align::Center)
+        });
+    }
+
+    /// [`Canvas::spaced`] in the numeral face (counters, scores).
+    pub fn counter(&self, v: &mut View, s: &str, at: [f32; 2], px: f32, pitch: f32, color: Rgba) {
+        self.cells(v, s, at, pitch, |v, ch, at| {
+            self.numerals(v, ch, at, px, color, Align::Center)
+        });
+    }
+
+    fn cells(
         &self,
         v: &mut View,
         s: &str,
         [x, y]: [f32; 2],
-        px: f32,
         pitch: f32,
-        color: Rgba,
+        mut draw: impl FnMut(&mut View, &str, [f32; 2]),
     ) {
         for (i, ch) in s.chars().enumerate() {
             let cx = x + (i as f32 + 0.5) * pitch;
-            self.text(v, &ch.to_string(), [cx, y], px, color, Align::Center);
+            draw(v, &ch.to_string(), [cx, y]);
+        }
+    }
+
+    /// Texture `key` repeated on tiles `[x, y, w, h]`, `[x + w, y, w, h]`, … (both ways), cut to
+    /// the convex polygon `poly` and the round screen. `flip` mirrors each tile left-right.
+    pub fn tiled(
+        &self,
+        v: &mut View,
+        key: String,
+        poly: &[[f32; 2]],
+        tile: [f32; 4],
+        flip: bool,
+        alpha: f32,
+    ) {
+        let poly: Vec<_> = poly.iter().map(|&p| (self.shift(p), ui::WHITE)).collect();
+        let shape = clip(&poly, &disc());
+        let [tx, ty] = self.shift([tile[0], tile[1]]);
+        let [tw, th] = [tile[2], tile[3]];
+        let xs = shape.iter().map(|(p, _)| p[0]);
+        let lo = xs.clone().fold(f32::MAX, f32::min);
+        let hi = xs.fold(f32::MIN, f32::max);
+        for i in ((lo - tx) / tw).floor() as i32..((hi - tx) / tw).ceil() as i32 {
+            let x = tx + i as f32 * tw;
+            let cell = [[x, ty], [x + tw, ty], [x + tw, ty + th], [x, ty + th]];
+            let part = clip(&shape, &cell);
+            if part.len() < 3 {
+                continue;
+            }
+            let uv = |[px, py]: [f32; 2]| {
+                let u = (px - x) / tw;
+                [if flip { 1.0 - u } else { u }, (py - ty) / th]
+            };
+            v.items.push(Item::ImagePoly {
+                key: key.clone(),
+                points: part
+                    .iter()
+                    .map(|&(p, _)| ui::canvas(self.area, p))
+                    .collect(),
+                uvs: part.iter().map(|&(p, _)| uv(p)).collect(),
+                tint: [1.0, 1.0, 1.0, self.alpha * alpha],
+            });
         }
     }
 
@@ -326,5 +407,36 @@ mod tests {
         };
         assert_eq!((key.as_str(), tint[3]), ("UI/Textures/FONT/x", 0.5));
         assert_eq!(rect.w, 50.0);
+    }
+
+    #[test]
+    fn tiled_texture_repeats_and_maps_uvs() {
+        let area = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 1080.0,
+            h: 1920.0,
+        };
+        let mut v = View::default();
+        // 300 wide around the centre, tiles 200 wide from x = 400: [400, 600) and [600, 800).
+        let poly = [[450.0, 880.0], [750.0, 880.0], [750.0, 920.0], [450.0, 920.0]];
+        Canvas::new(area).tiled(&mut v, "k".into(), &poly, [400.0, 880.0, 200.0, 40.0], true, 1.0);
+        assert_eq!(v.items.len(), 2);
+        for item in &v.items {
+            let Item::ImagePoly { points, uvs, .. } = item else {
+                panic!("{item:?}")
+            };
+            assert_eq!(points.len(), uvs.len());
+            for (p, uv) in points.iter().zip(uvs) {
+                let x = if p[0] < 600.0 || (p[0] == 600.0 && uv[0] == 0.0) {
+                    400.0
+                } else {
+                    600.0
+                };
+                // flipped: u = 1 - (x - tile x) / w
+                assert!((uv[0] - (1.0 - (p[0] - x) / 200.0)).abs() < 1e-4, "{p:?} {uv:?}");
+                assert!((uv[1] - (p[1] - 880.0) / 40.0).abs() < 1e-4);
+            }
+        }
     }
 }

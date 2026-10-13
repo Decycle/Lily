@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use super::atlas::Shelves;
-use super::fonts::Fonts;
+use super::fonts::{Face, Fonts};
 use super::layout::{Align, align_x, fit, measure};
 use crate::layout::Rect;
 use crate::style::Rgba;
@@ -175,7 +175,7 @@ impl TextRenderer {
 
     /// Width of `text` at pixel height `px`.
     pub fn measure(&self, text: &str, px: f32) -> f32 {
-        measure(text, |c| self.fonts.advance(c, px))
+        measure(text, |c| self.fonts.advance(c, px, Face::Ui))
     }
 
     /// Empty the atlas and put the white block back.
@@ -329,7 +329,8 @@ impl TextRenderer {
     }
 
     /// One line of `text` at pixel height `px`. `at` = (anchor x per `align`, top of the line);
-    /// with `max_width` the line is cut with an ellipsis to fit.
+    /// with `max_width` the line is cut with an ellipsis to fit; `face` picks the typeface.
+    #[allow(clippy::too_many_arguments)]
     pub fn text(
         &mut self,
         text: &str,
@@ -338,23 +339,24 @@ impl TextRenderer {
         color: Rgba,
         align: Align,
         max_width: Option<f32>,
+        face: Face,
     ) {
         let px = px.round().max(1.0);
         let fonts = &self.fonts;
-        let advance = |c| fonts.advance(c, px);
+        let advance = |c| fonts.advance(c, px, face);
         let line = match max_width {
             Some(max) => fit(text, max, advance),
             None => text.into(),
         };
         let mut x = align_x(at[0], measure(&line, advance), align);
-        let baseline = (at[1] + fonts.ascent(px)).round();
+        let baseline = (at[1] + fonts.ascent(px, face)).round();
         let glyphs: Vec<_> = line
             .chars()
             .map(|c| {
                 let pen = x;
-                x += fonts.advance(c, px);
-                let (face, id) = fonts.glyph_key(c);
-                ((face, id, px as u32), pen.round())
+                x += fonts.advance(c, px, face);
+                let (i, id) = fonts.glyph_key(c, face);
+                ((i, id, px as u32), pen.round())
             })
             .collect();
         for (key, pen) in glyphs {
@@ -400,6 +402,25 @@ impl TextRenderer {
         if self.has_image(key) {
             self.quad(Some(key), rect, [0.0, 0.0, 1.0, 1.0], tint);
         }
+    }
+
+    /// Draw image `key` over the convex polygon `points` (window pixels) with one texture
+    /// coordinate per point, multiplied by `tint`. Unknown keys draw nothing.
+    pub fn image_poly(&mut self, key: &str, points: &[[f32; 2]], uvs: &[[f32; 2]], tint: Rgba) {
+        if !self.has_image(key) || uvs.len() != points.len() {
+            return;
+        }
+        let start = self.vertices.len() as u32;
+        for i in 1..points.len().saturating_sub(1) {
+            for k in [0, i, i + 1] {
+                self.vertices.push(OverlayVertex {
+                    pos: to_clip(points[k], self.size),
+                    uv: uvs[k],
+                    color: tint,
+                });
+            }
+        }
+        self.batch(Some(key), start);
     }
 
     /// Draw everything queued since [`TextRenderer::begin`] onto `target` (kept, not cleared).
