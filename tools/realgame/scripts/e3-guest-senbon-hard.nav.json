@@ -10,14 +10,12 @@
   {"do":"expect","name":"mode-select","all":[]},
   {"do":"touch","lane":44,"width":3,"hold_ms":150,"wait_ms":2500},
   {"do":"expect","name":"category-select","timeout_ms":25000,"all":[{"region":[0.3511,0.5717,0.2963,0.0133],"color":[16,112,240],"tol":30,"min_frac":0.5}]},
-  {"do":"touch","lane":49,"width":2,"hold_ms":100,"wait_ms":700},
-  {"do":"touch","lane":49,"width":2,"hold_ms":100,"wait_ms":700},
-  {"do":"touch","lane":49,"width":2,"hold_ms":100,"wait_ms":700},
-  {"do":"touch","lane":49,"width":2,"hold_ms":100,"wait_ms":900},
-  {"do":"expect","name":"vocaloid","all":[]},
+  {"do":"seek","name":"category-touhou","image":"data/nav/cat-touhou.png","region":[0.28,0.36,0.44,0.2],"max_diff":8,"max_steps":6,"then":{"do":"touch","lane":49,"width":2,"hold_ms":80,"wait_ms":900},"back":{"do":"touch","lane":40,"width":2,"hold_ms":80,"wait_ms":900}},
   {"do":"touch","lane":44,"width":3,"hold_ms":120,"wait_ms":2500},
-  {"do":"seek","name":"noushou","image":"data/jackets/S02/uT_J_S02_34.png","region":[0.38815,0.43833,0.22222,0.125],"max_steps":30,"then":{"do":"touch","lane":40,"width":2,"hold_ms":80,"wait_ms":900},"back":{"do":"touch","lane":49,"width":2,"hold_ms":80,"wait_ms":900}},
-  {"do":"seek","name":"noushou-settled","image":"data/jackets/S02/uT_J_S02_34.png","region":[0.38815,0.43833,0.22222,0.125],"max_steps":0,"then":{"do":"press","buttons":[],"hold_ms":10,"wait_ms":0}},
+  {"do":"seek","name":"senbon","image":"data/jackets/S00/uT_J_S00_007.png","region":[0.38815,0.43833,0.22222,0.125],"max_steps":12,"then":{"do":"touch","lane":40,"width":2,"hold_ms":80,"wait_ms":900},"back":{"do":"touch","lane":49,"width":2,"hold_ms":80,"wait_ms":900}},
+  {"do":"seek","name":"senbon-settled","image":"data/jackets/S00/uT_J_S00_007.png","region":[0.38815,0.43833,0.22222,0.125],"max_steps":0,"then":{"do":"press","buttons":[],"hold_ms":10,"wait_ms":0}},
+  {"do":"touch","lane":30,"width":2,"depths":8,"hold_ms":120,"wait_ms":1500},
+  {"do":"expect","name":"difficulty","all":[]},
   {"do":"touch","lane":44,"width":3,"hold_ms":120,"wait_ms":1500},
-  {"do":"seek","name":"options","image":"data/jackets/S02/uT_J_S02_34.png","region":[0.6933,0.5383,0.0948,0.0533],"max_steps":10,"then":{"do":"press","buttons":[],"hold_ms":10,"wait_ms":500}}
+  {"do":"seek","name":"options","image":"data/jackets/S00/uT_J_S00_007.png","region":[0.6933,0.5383,0.0948,0.0533],"max_steps":10,"then":{"do":"press","buttons":[],"hold_ms":10,"wait_ms":500}}
 ]}

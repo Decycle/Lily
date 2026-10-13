@@ -12,6 +12,7 @@ use std::sync::mpsc;
 use wacca_realgame::e3::{self, Plan};
 use wacca_realgame::e3_analysis::{self, RunResult};
 use wacca_realgame::frame::Rgb;
+use wacca_realgame::inject::{Kind, Record};
 use wacca_realgame::panel::{self, Event};
 use wacca_realgame::record::video;
 
@@ -115,10 +116,60 @@ fn analyse(dir: &Path, ff: &Path) -> Result<RunResult, String> {
         .map(|e| e.t)
         .collect();
     let lag = e3_analysis::estimate_lag(&judged, &times).ok_or("no panel changes near notes")?;
-    let outcomes: Vec<_> = plan
+    let inject = std::fs::read_to_string(dir.join("inject.jsonl")).map_err(|e| e.to_string())?;
+    let edges: Vec<Record> = inject
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Record>(l).ok())
+        .filter(|r| r.kind == Kind::Edge)
+        .collect();
+    let errors: Vec<f64> = edges.iter().map(Record::write_error_ms).collect();
+    let (write_p95_ms, write_max_ms) = e3_analysis::write_stats(&errors);
+    // `t_script_ms` is chart time (ms) for song runs.
+    let late: Vec<f64> = edges
+        .iter()
+        .filter(|r| r.write_error_ms() > e3_analysis::MAX_WRITE_ERROR_MS)
+        .map(|r| r.t_script_ms / 1000.0)
+        .collect();
+    let (dropped, kept): (Vec<_>, Vec<_>) = plan
         .tests
         .iter()
-        .map(|t| e3_analysis::resolve(t, &events, lag))
+        .partition(|t| e3_analysis::touched_by(t, &late));
+    println!(
+        "  injector write error p95 {write_p95_ms:.2} ms, max {write_max_ms:.2} ms ({} edges); {} late edges drop tests {:?}",
+        errors.len(),
+        late.len(),
+        dropped.iter().map(|t| t.note).collect::<Vec<_>>()
+    );
+    // Clock drift from the visual timing check (`analyze_e2` on the same run, `e2.json`).
+    let blocks: Vec<(f64, f64)> = read_json::<serde_json::Value>(&dir.join("e2.json"))
+        .ok()
+        .and_then(|v| v.get("visual_timing").cloned())
+        .and_then(|v| serde_json::from_value::<Vec<(f64, f64, f64)>>(v).ok())
+        .map(|b| b.into_iter().map(|(t, d, _)| (t, d)).collect())
+        .unwrap_or_default();
+    if blocks.is_empty() {
+        println!("  WARNING: no e2.json visual timing: clock drift not corrected (run analyze_e2 first)");
+    } else {
+        println!("  visual timing blocks (chart s, δ ms): {blocks:.0?}");
+    }
+    // Expected spans: every note, test notes with their shift.
+    let mut spans: Vec<(f64, f64)> = chart.notes.iter().map(e3::span).collect();
+    for t in &plan.tests {
+        if let (e3::Probe::Shift { ms }, Some(sp)) = (t.probe, spans.get_mut(t.note)) {
+            sp.0 += ms / 1000.0;
+            sp.1 = sp.1.max(sp.0);
+        }
+    }
+    let assigned = e3_analysis::assign(&events, &spans, lag);
+    let outcomes: Vec<_> = kept
+        .into_iter()
+        .map(|t| {
+            let hits: Vec<&Event> = assigned[t.note].iter().map(|&k| &events[k]).collect();
+            e3_analysis::Outcome {
+                clock_ms: e3_analysis::clock_at(&blocks, t.time),
+                ..e3_analysis::resolve(t, &hits, lag)
+            }
+        })
         .collect();
     let centre_ms = e3_analysis::touch_centre(&outcomes, 20);
     // Timing check: the touch centre of each half of the song must agree (a clock jump moves it).
@@ -153,6 +204,8 @@ fn analyse(dir: &Path, ff: &Path) -> Result<RunResult, String> {
             .map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
         lag,
         centre_ms,
+        write_p95_ms,
+        write_max_ms,
         outcomes,
     };
     let json = serde_json::to_string_pretty(&run).map_err(|e| e.to_string())?;

@@ -346,7 +346,10 @@ mod imp {
                 let mut last = f64::NAN;
                 'search: for (pass, ((plan, wait_ms), steps)) in passes.iter().enumerate() {
                     for n in 0..=*steps {
-                        let frame = video::grab_frame(ffmpeg, grabber, window.rect, &png)?;
+                        // Every step's frame is kept for diagnosis; the last one also as `png`.
+                        let step_png = dir.join(format!("{tag}-{i:02}-{name}-{pass}-{n:02}.png"));
+                        let frame = video::grab_frame(ffmpeg, grabber, window.rect, &step_png)?;
+                        let _ = std::fs::copy(&step_png, &png);
                         last = nav::region_diff(&frame, *region, &reference, 8);
                         if last <= *max_diff {
                             log::info!(
