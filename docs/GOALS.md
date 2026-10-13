@@ -26,7 +26,7 @@ Priority: **1) play area — fully faithful visual + control port**, 2) menus, 3
 - [x] Timing calibration screen (unit-tested; live tap check blocked by permission system → user to try by hand)
 
 ## 2. Menus
-- [ ] Menu scale = play-ring scale on landscape (circle-matched; off-circle UI uses side space)
+- [x] Menu scale = play-ring scale on landscape (circle-matched; off-circle UI uses side space) — menu circle 331→581 px radius on 1920x1200
 - [ ] Remaining details (Reverse Points, player level/title, countdowns, title glitch)
 
 ## 3. Finish
