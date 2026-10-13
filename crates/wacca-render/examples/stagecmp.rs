@@ -6,7 +6,7 @@
 //! `WACCA_SHOT_MOVIE`.
 //! `stagecmp compare <real.png> <ours.png> <out.png>`: crops the real 675×1200 window to its view
 //! square (0, 228, 675, 675), writes real | ours | |difference|×4 and prints the mean absolute
-//! difference per radius band (px from the centre).
+//! difference per radius band (px from the centre) and its pixel count.
 
 use std::error::Error;
 use std::path::Path;
@@ -97,7 +97,7 @@ fn compare(real: &str, ours: &str, out: &str) -> Result<(), Box<dyn Error>> {
     for (i, (sum, n)) in bands.iter().enumerate().filter(|(_, b)| b.1 > 0) {
         let r0 = i as f32 * BAND;
         println!(
-            "r {r0:>5.0}-{:<5.0} mean |diff| {:6.2}",
+            "r {r0:>5.0}-{:<5.0} mean |diff| {:6.2} px {n}",
             r0 + BAND,
             sum / f64::from(*n)
         );

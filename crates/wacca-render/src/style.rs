@@ -9,21 +9,22 @@ use wacca_chart::{Bonus, NoteBody, SlideDir, SnapDir};
 
 pub type Rgba = [f32; 4];
 
-/// Judgement band outside the line (E2: 292–315 px for a 291.8 px line); the dark rim starts
-/// at its outer edge. The band itself is drawn by the 3D guide lanes (`stage`).
-pub const JUDGE_BAND_WIDTH: f32 = 0.08;
-/// Dark band outside the ring (E2: 315–331 px, (20, 18, 30)) and its thin outer edge. It goes
-/// all the way round, also over masked lanes.
-pub const RIM: Rgba = [0.08, 0.07, 0.12, 1.0];
-/// Everything outside the rim.
-pub const OUTSIDE: Rgba = [0.0, 0.0, 0.0, 1.0];
-pub const RIM_WIDTH: f32 = 0.053;
-pub const RIM_EDGE: Rgba = [0.18, 0.18, 0.26, 1.0];
-pub const RIM_EDGE_HALF_WIDTH: f32 = 0.003;
-/// Song progress on the dark rim: lit from 12 o'clock counter-clockwise by the played
-/// fraction (E2: 18 % at 20 s, 86 % at 100 s), radii 321–329 px, (45, 36, 57).
-pub const PROGRESS: Rgba = [0.18, 0.14, 0.23, 1.0];
-pub const PROGRESS_RADII: (f32, f32) = (1.10, 1.128);
+/// The HUD rim (UMG, drawn over the 3D view by the stage composition, `compose.wgsl`), in px of
+/// the game's 675 px view. Outside the judgement ring the 3D view shows through (the guide-lane
+/// glow fades out to 331 px); the HUD only adds the song-progress gauge and black beyond the
+/// round screen. Measured on the E3 Fragile frames against our 3D-only renders (doc 13 §2):
+/// * the HUD circle is centred [`HUD_RAISE_PX`] above the 3D view's centre (band edges 4 px
+///   further out at 12 o'clock than at 6 o'clock);
+/// * black beyond [`HUD_EDGE_PX`] (1 px soft edge);
+/// * the time gauge (`BP_Game_time` → `M_time_guage`, material `uM_RGguage000`: ColorAndOpacity
+///   black × 0.5, a band `|d − 0.96| < 0.01` of the radial distance `d` of its widget, lit
+///   where `angle > 1 − Around`) darkens the part of the song still to play, from 12 o'clock
+///   counter-clockwise: display values × (1 − [`GAUGE_SHADE`]) between 321.7 and 327.9 px, so
+///   the widget radius is [`GAUGE_RADIUS_PX`].
+pub const HUD_RAISE_PX: f32 = 2.0;
+pub const HUD_EDGE_PX: f32 = 330.75;
+pub const GAUGE_RADIUS_PX: f32 = 338.4;
+pub const GAUGE_SHADE: f32 = 0.45;
 
 // Score row along the top of the band (E2, 291.8 px = 1): seven orange SHINBI digits centred
 // at 12 o'clock (x-height centre 297 px out, 90 px for the row), "SCORE" 14° left of them,
@@ -158,7 +159,15 @@ pub const SENSOR_DEPTHS: usize = 4;
 /// 675 px square (NDC 1 = 337.5 px, doc 11 §2.2) whose rim inner edge (radius 1) is at 291.8 px (E2).
 pub const VIEW_EXTENT: f32 = 337.5 / 291.8;
 /// Playfield-space radius of the rim's outer edge: the edge of the visible round screen.
-pub const SCREEN_EDGE: f32 = 1.0 + JUDGE_BAND_WIDTH + RIM_WIDTH;
+pub const SCREEN_EDGE: f32 = HUD_EDGE_PX / 291.8;
+
+/// Time-gauge coverage at `r` px (675 px view) from the HUD centre: the band of
+/// `uM_RGguage000`, `sat(10·(1 − 100·|d − 0.96|))` with `d = r / GAUGE_RADIUS_PX` (the
+/// material's `frac(d + 0.54) − 0.5` is `d − 0.96` near the band). Mirrored in `compose.wgsl`.
+pub fn gauge_band(r: f32) -> f32 {
+    let d = r / GAUGE_RADIUS_PX;
+    (10.0 * (1.0 - 100.0 * (d - 0.96).abs())).clamp(0.0, 1.0)
+}
 
 pub fn note_color(body: &NoteBody) -> Rgba {
     match body {
@@ -177,5 +186,22 @@ pub fn accent_color(bonus: Bonus) -> Option<Rgba> {
         Bonus::None => None,
         Bonus::Bonus => Some(BONUS_ACCENT),
         Bonus::R => Some(R_ACCENT),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gauge_band_is_where_the_recordings_darken() {
+        // E3 Fragile: × 0.55 from 321.7 to 327.9 px, untouched at 320.5 and 329.
+        for r in [322.5, 324.8, 327.0] {
+            assert_eq!(gauge_band(r), 1.0, "{r}");
+        }
+        for r in [320.5, 329.0, 300.0] {
+            assert_eq!(gauge_band(r), 0.0, "{r}");
+        }
+        assert!((SCREEN_EDGE * 291.8 - HUD_EDGE_PX).abs() < 1e-3);
     }
 }

@@ -315,52 +315,78 @@ fn snapshot(
         renderer.show_video(true);
     }
     // Perfect play up to `at` (WACCA_SHOT_JUDGE=great|good for other judgements): every
-    // note judged on time, effects stepped at 120 Hz.
+    // note judged on time, effects stepped at 120 Hz. WACCA_SHOT_REPLAY=<json> replays a
+    // recorded play instead (see `Replay`).
     let kind = match std::env::var("WACCA_SHOT_JUDGE").as_deref() {
         Ok("great") => JudgeSprite::Great,
         Ok("good") => JudgeSprite::Good,
         Ok("miss") => JudgeSprite::Miss,
         _ => JudgeSprite::Marvelous,
     };
-    let done: Vec<&Note> = chart.notes.iter().filter(|n| n.time <= at).collect();
+    let replay = match std::env::var_os("WACCA_SHOT_REPLAY") {
+        Some(path) => serde_json::from_slice::<Replay>(&std::fs::read(path)?)?.complete(chart),
+        None => Replay::perfect(chart, kind),
+    };
     let mut fx = Effects::default();
     fx.set_library(renderer.effect_library());
     let dt = 1.0 / 120.0;
     let mut t = at - 0.5;
     while t < at {
-        for n in done.iter().filter(|n| n.time > t - dt && n.time <= t) {
-            fx.hit_note(n.arc.lane, n.arc.width, kind, n.bonus);
-        }
-        // Each note's sensors are pressed for a 34 ms tap (or the hold), as the E3 taps.
-        let pressed = chart.notes.iter().filter(|n| {
-            let end = match &n.body {
-                NoteBody::Hold { nodes } => nodes.last().map_or(n.time, |e| e.time),
-                _ => n.time + 0.034,
+        let now = |x: f64| x > t - dt && x <= t;
+        for h in &replay.hits {
+            let Some(n) = chart.notes.get(h.note) else {
+                continue;
             };
-            n.time <= t && t < end
-        });
-        fx.touch(pressed.fold(0, |m, n| {
-            (0..n.arc.width).fold(m, |m, i| m | 1u64 << ((n.arc.lane + i) % 60))
-        }));
-        let holds = chart.notes.iter().filter_map(|n| match &n.body {
-            NoteBody::Hold { nodes } if n.time <= t && nodes.last()?.time > t => {
-                wacca_render::effects::hold_arc_at(nodes, t)
+            if now(h.hit) {
+                fx.hit_note(n.arc.lane, n.arc.width, h.kind.sprite(), n.bonus);
             }
-            _ => None,
-        });
+            // Holds pop again over their end arc when judged.
+            if let NoteBody::Hold { nodes } = &n.body
+                && let Some(end) = nodes.last().filter(|_| now(h.shown))
+            {
+                fx.hit_note(end.arc.lane, end.arc.width, h.kind.sprite(), n.bonus);
+            }
+        }
+        fx.touch(replay.touched_at(t));
+        let holds = replay
+            .held_at(chart, t)
+            .filter_map(|i| match &chart.notes[i].body {
+                NoteBody::Hold { nodes } => wacca_render::effects::hold_arc_at(nodes, t),
+                _ => None,
+            });
         fx.set_holds(holds.collect());
         fx.update(dt as f32);
         t += dt;
     }
-    let last = done.last().map(|n| (at - n.time) as f32);
-    // Rim texts and score as for a perfect play (WACCA_SHOT_TITLE names the song).
+    let shown = replay.shown(at);
+    let judged: Vec<bool> = (0..chart.notes.len())
+        .map(|i| replay.hits.iter().any(|h| h.note == i && h.shown <= at))
+        .collect();
+    let holding: Vec<usize> = replay.held_at(chart, at).collect();
+    let last = shown
+        .last()
+        .map(|h| (h.kind.sprite(), (at - h.shown) as f32));
+    let mut combo = (0u32, f64::NEG_INFINITY);
+    for h in &shown {
+        combo = match h.kind {
+            ReplayJudgement::Miss if combo.0 > 0 => (0, h.shown),
+            ReplayJudgement::Miss => combo,
+            _ => (combo.0 + 1, h.shown),
+        };
+    }
+    // Rim texts (WACCA_SHOT_LEVEL, default NORMAL/Lv.1; WACCA_SHOT_TITLE names the song) and a
+    // score from the judgements (Marvelous full, Great 70 %, Good 50 %).
     let title = std::env::var("WACCA_SHOT_TITLE").unwrap_or_default();
-    renderer.set_rim_texts("NORMAL/Lv.1", &title);
-    let share = done.len() as f32 / chart.notes.len().max(1) as f32;
+    let level = std::env::var("WACCA_SHOT_LEVEL").unwrap_or_else(|_| "NORMAL/Lv.1".into());
+    renderer.set_rim_texts(&level, &title);
+    let n = chart.notes.len().max(1) as f32;
+    let share = shown.iter().map(|h| h.kind.weight()).sum::<f32>() / n;
     let live = LiveState {
+        judged: &judged,
+        holding: &holding,
         effects: Some(&fx),
-        judgement: last.map(|age| (kind, age)),
-        combo: (done.len() as u32, last.unwrap_or(0.0)),
+        judgement: last,
+        combo: (combo.0, (at - combo.1).min(1e3) as f32),
         rim: Some(RimState {
             score: (share * 1_000_000.0) as u32,
             progress: (at / chart.end_time) as f32,
@@ -424,6 +450,143 @@ fn snapshot(
     image::save_buffer(out, &pixels, side, side, image::ExtendedColorType::Rgba8)?;
     log::info!("wrote {}", out.display());
     Ok(())
+}
+
+/// A play to render (`WACCA_SHOT_REPLAY`, JSON): judgements and pressed sensors in chart time,
+/// e.g. from a recording of the real game (`tools/research/parity_audit.py`).
+#[derive(Debug, Default, serde::Deserialize)]
+struct Replay {
+    hits: Vec<ReplayHit>,
+    /// `(time, lanes)`: from `time` on, the lanes with a set bit are touched (any depth).
+    /// Empty: the perfect play's taps.
+    #[serde(default)]
+    touches: Vec<(f64, u64)>,
+    /// Judgement of the notes without a hit (on time).
+    #[serde(default)]
+    default: Option<ReplayJudgement>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ReplayHit {
+    note: usize,
+    kind: ReplayJudgement,
+    /// Hit effect onset (hold: the head).
+    hit: f64,
+    /// Judgement art shown and the note removed (hold: its end).
+    shown: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+enum ReplayJudgement {
+    Marvelous,
+    Great,
+    Good,
+    Miss,
+}
+
+impl ReplayJudgement {
+    fn sprite(self) -> JudgeSprite {
+        match self {
+            Self::Marvelous => JudgeSprite::Marvelous,
+            Self::Great => JudgeSprite::Great,
+            Self::Good => JudgeSprite::Good,
+            Self::Miss => JudgeSprite::Miss,
+        }
+    }
+
+    fn weight(self) -> f32 {
+        match self {
+            Self::Marvelous => 1.0,
+            Self::Great => 0.7,
+            Self::Good => 0.5,
+            Self::Miss => 0.0,
+        }
+    }
+}
+
+impl Replay {
+    /// Every note judged `kind` on time; each note's sensors pressed for a 34 ms tap (or the
+    /// hold), as the E3 taps.
+    fn perfect(chart: &Chart, kind: JudgeSprite) -> Self {
+        let kind = match kind {
+            JudgeSprite::Marvelous => ReplayJudgement::Marvelous,
+            JudgeSprite::Great => ReplayJudgement::Great,
+            JudgeSprite::Good => ReplayJudgement::Good,
+            JudgeSprite::Miss => ReplayJudgement::Miss,
+        };
+        let end = |n: &Note| match &n.body {
+            NoteBody::Hold { nodes } => nodes.last().map_or(n.time, |e| e.time),
+            _ => n.time + 0.034,
+        };
+        let hits = chart.notes.iter().enumerate().map(|(note, n)| ReplayHit {
+            note,
+            kind,
+            hit: n.time,
+            shown: match &n.body {
+                NoteBody::Hold { .. } => end(n),
+                _ => n.time,
+            },
+        });
+        let mut edges: Vec<f64> = chart.notes.iter().flat_map(|n| [n.time, end(n)]).collect();
+        edges.sort_by(f64::total_cmp);
+        edges.dedup();
+        let touches = edges.iter().map(|&t| {
+            let lanes = chart.notes.iter().filter(|n| n.time <= t && t < end(n));
+            let mask = lanes.fold(0, |m, n| {
+                (0..n.arc.width).fold(m, |m, i| m | 1u64 << ((n.arc.lane + i) % 60))
+            });
+            (t, mask)
+        });
+        Self {
+            hits: hits.collect(),
+            touches: touches.collect(),
+            default: None,
+        }
+    }
+
+    /// Fills in the notes without a hit (as `default`, on time) and missing touches.
+    fn complete(mut self, chart: &Chart) -> Self {
+        let kind = self.default.unwrap_or(ReplayJudgement::Marvelous);
+        let perfect = Self::perfect(chart, kind.sprite());
+        let missing: Vec<ReplayHit> = perfect
+            .hits
+            .into_iter()
+            .filter(|p| !self.hits.iter().any(|h| h.note == p.note))
+            .collect();
+        self.hits.extend(missing);
+        if self.touches.is_empty() {
+            self.touches = perfect.touches;
+        }
+        self
+    }
+
+    fn touched_at(&self, t: f64) -> u64 {
+        self.touches
+            .iter()
+            .take_while(|e| e.0 <= t)
+            .last()
+            .map_or(0, |e| e.1)
+    }
+
+    /// Hits shown by `t`, in order.
+    fn shown(&self, t: f64) -> Vec<&ReplayHit> {
+        let mut out: Vec<&ReplayHit> = self.hits.iter().filter(|h| h.shown <= t).collect();
+        out.sort_by(|a, b| a.shown.total_cmp(&b.shown));
+        out
+    }
+
+    /// Holds whose head was hit (not missed) and that have not ended at `t`.
+    fn held_at<'a>(&'a self, chart: &'a Chart, t: f64) -> impl Iterator<Item = usize> + 'a {
+        self.hits
+            .iter()
+            .filter(move |h| {
+                h.kind != ReplayJudgement::Miss
+                    && h.hit <= t
+                    && matches!(&chart.notes.get(h.note).map(|n| &n.body),
+                        Some(NoteBody::Hold { nodes }) if nodes.last().is_some_and(|e| e.time > t))
+            })
+            .map(|h| h.note)
+    }
 }
 
 /// ~30 s of every note kind, a wrapping hold, mask sweeps, hi-speed, a stop and a negative hi-speed.

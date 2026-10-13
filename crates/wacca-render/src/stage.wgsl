@@ -121,6 +121,12 @@ fn hold_tile(uv: vec2<f32>, n: f32) -> vec3<f32> {
     return textureSample(hold_tex, hold_samp, (uv + tile) * vec2<f32>(1.0 / U_TILING, 1.0)).rgb;
 }
 
+// vMX_2_Hold_004 (held; runs/shaders/vfx/vMX_2_Hold_004/08_ps_*.asm): Alpha_RangePos, Mask_Pos and
+// NoteLength_0.5 (picked by MPC NoteHeight 0.5).
+const HELD_ALPHA_RANGE: f32 = 175.0;
+const HELD_MASK_POS: f32 = 0.886;
+const HELD_NOTE_LENGTH: f32 = 222.5;
+
 @fragment
 fn fs_hold(in: VsOut) -> @location(0) vec4<f32> {
     let f = fract(HOLD_COLOR_NUMBER);
@@ -128,7 +134,17 @@ fn fs_hold(in: VsOut) -> @location(0) vec4<f32> {
     // CustomRotator by 180° about (0.45, 0.5).
     let uv = vec2<f32>(0.95 - in.uv.x, 1.0 - in.uv.y);
     let rgb = mix(hold_tile(uv, n), hold_tile(uv, n + 1.0), f);
-    return vec4<f32>(max(rgb, vec3<f32>(0.0)), HOLD_OPACITY);
+    if in.material == 0u {
+        return vec4<f32>(max(rgb, vec3<f32>(0.0)), HOLD_OPACITY);
+    }
+    // Held: the tile screened with itself, ×1.3·(1.2 − 0.2·(w/430)²); opacity 0.3..0.6 by
+    // smoothstep(w/175), cut off below w = 0.886·222.5 (just before the line).
+    let s = 1.0 - (1.0 - rgb) * (1.0 - rgb);
+    let fw = min(pow(max(in.w * 0.002326, 0.0), 2.0), 1.0);
+    let col = s * (1.2 - 0.2 * fw) * 1.3;
+    let a = 0.3 + 0.3 * min(smooth01(in.w / HELD_ALPHA_RANGE), 1.0);
+    let cut = min(ceil(smooth01((in.w / HELD_NOTE_LENGTH - HELD_MASK_POS) / 0.1)), 1.0);
+    return vec4<f32>(max(col, vec3<f32>(0.0)), a * cut);
 }
 
 // --- vMX_2_SlideL/R_002 chevrons, vMX_2_SnapIn/Out_001 arrows (masked) ---

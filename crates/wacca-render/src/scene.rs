@@ -47,6 +47,9 @@ pub struct LiveState<'a> {
     /// `judged[i]`: note `i` (index into `Chart::notes`) is decided and no longer drawn.
     /// Shorter than the note list = the rest are not judged.
     pub judged: &'a [bool],
+    /// Notes (indices into `Chart::notes`) of the holds being held: their ribbons use the held
+    /// material.
+    pub holding: &'a [usize],
     /// Hit effects, key beams and hold glows.
     pub effects: Option<&'a Effects>,
     /// Last judgement and its age in seconds (judgement word art).
@@ -188,7 +191,6 @@ pub fn build_scene_into(
         }
     }
 
-    push_rim(out);
     if let Some(rim) = &live.rim {
         push_rim_row(out, sheet, rim);
     }
@@ -196,20 +198,6 @@ pub fn build_scene_into(
         fx.draw(out, sheet);
     }
     push_hud_sprites(out, sheet, live);
-}
-
-/// The dark rim (UMG HUD) outside the judgement ring with its thin outer edge, black beyond it
-/// (E2: 315–331 px at a 291.8 px line). The ring itself is the guide-lane shader's.
-fn push_rim(out: &mut Vec<Vertex>) {
-    let band_out = 1.0 + style::JUDGE_BAND_WIDTH;
-    let rim_out = band_out + style::RIM_WIDTH;
-    let all = LANES as f32;
-    // Nothing shows outside the cabinet rim (the movie quad would, E2 frames are black there).
-    let corner = style::VIEW_EXTENT * std::f32::consts::SQRT_2;
-    push_sector(out, rim_out, corner, 0.0, all, style::OUTSIDE);
-    push_sector(out, band_out, rim_out, 0.0, all, style::RIM);
-    let e = style::RIM_EDGE_HALF_WIDTH;
-    push_sector(out, rim_out - e, rim_out + e, 0.0, all, style::RIM_EDGE);
 }
 
 /// Lane at `deg` degrees clockwise from 12 o'clock.
@@ -228,14 +216,10 @@ fn push_bent(out: &mut Vec<Vertex>, uv: UvRect, lane: f32, r: f32, size: [f32; 2
     paint_sector(out, top, bottom, lane - lanes / 2.0, lanes, &paint);
 }
 
-/// Song progress on the dark rim, the score row ("SCORE", seven SHINBI digits), the
-/// difficulty/level and the song title along the top of the band (layout in `style`).
+/// The score row ("SCORE", seven SHINBI digits), the difficulty/level and the song title along
+/// the top of the band (layout in `style`). The rim itself and the song progress are drawn by
+/// the stage composition (`style::GAUGE_RADIUS_PX`).
 fn push_rim_row(out: &mut Vec<Vertex>, sheet: &SpriteSheet, rim: &RimState) {
-    let (r0, r1) = style::PROGRESS_RADII;
-    let progress = rim.progress.clamp(0.0, 1.0) * LANES as f32;
-    if progress > 0.0 {
-        push_sector(out, r0, r1, LANES as f32 / 4.0, progress, style::PROGRESS);
-    }
     let texts = [
         (
             TextSprite::ScoreLabel,
@@ -641,7 +625,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_chart_has_only_the_rim() {
+    fn empty_chart_draws_nothing() {
         let none = SpriteSheet::default();
         let v = build_scene(
             &chart(vec![]),
@@ -650,12 +634,11 @@ mod tests {
             &LiveState::default(),
             &none,
         );
-        // Lanes and the judgement ring are 3D (stage); the dark rim goes all the way round.
-        assert_eq!(count(&v, style::RIM), 60 * 6);
-        assert_eq!(count(&v, style::OUTSIDE), 60 * 6);
-        assert_eq!(v.len(), 3 * 60 * 6, "outside, rim, rim edge");
-        // Into a reused buffer: cleared first, same triangles, no reallocation.
+        // Lanes, the judgement ring and the rim are drawn by the stage.
+        assert!(v.is_empty());
+        // Into a reused buffer: cleared first, no reallocation.
         let mut reused = v.clone();
+        reused.reserve(64);
         let capacity = reused.capacity();
         build_scene_into(
             &mut reused,
@@ -669,7 +652,7 @@ mod tests {
     }
 
     #[test]
-    fn rim_row_progress_and_gauge() {
+    fn rim_row_and_gauge() {
         let mut sheet = full_sheet();
         for t in [
             TextSprite::ScoreLabel,
@@ -694,10 +677,6 @@ mod tests {
             &live(0.25),
             &sheet,
         );
-        // Progress: a quarter of the ring from 12 o'clock counter-clockwise (to 9 o'clock).
-        let lit: Vec<_> = v.iter().filter(|p| p.color == style::PROGRESS).collect();
-        assert_eq!(lit.len(), 15 * 6);
-        assert!(lit.iter().all(|p| p.pos[0] <= 1e-4 && p.pos[1] >= -1e-4));
         // Seven score digits "0082759", all at the top, orange.
         let digits: Vec<_> = v.iter().filter(|p| p.color == style::SCORE_COLOR).collect();
         assert!(digits.len() >= 7 * 6);
@@ -725,14 +704,6 @@ mod tests {
         assert_eq!(fill.len(), 6);
         assert!(fill.iter().all(|p| p.pos[0] <= 1e-5));
         assert_eq!(count(&v, style::GAUGE_MARK), 3 * 6);
-        let none = build_scene(
-            &chart(vec![]),
-            0.0,
-            &SceneOptions::default(),
-            &live(0.0),
-            &sheet,
-        );
-        assert_eq!(count(&none, style::PROGRESS), 0);
     }
 
     #[test]
