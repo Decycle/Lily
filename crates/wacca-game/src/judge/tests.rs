@@ -395,13 +395,13 @@ fn hold_start_judged_and_body_followed() {
 #[test]
 fn hold_drop_allowance() {
     let held = |a| on(a, 0..1);
-    // Released 0.2 s mid-hold (within the 215 ms allowance): keeps the start judgement.
+    // Released 0.15 s mid-hold (within the 175 ms allowance): keeps the start judgement.
     let short = run(
         vec![hold_note()],
         &[
             fr(T, held(arc(10, 1))),
             empty(T + 0.2),
-            fr(T + 0.4, held(arc(10, 1))),
+            fr(T + 0.35, held(arc(10, 1))),
             fr(T + 0.5, held(arc(20, 1))),
             empty(T + 1.0),
         ],
@@ -439,6 +439,94 @@ fn hold_drop_allowance() {
         ],
     );
     assert_eq!(judgements(&early_release), vec![(0, Judgement::Marvelous)]);
+}
+
+/// `hold_note` pressed at `T` (Marvelous), released mid-hold at `T + 0.1` for `gap` seconds.
+fn hold_with_gap(gap: f64) -> Judgement {
+    let ev = run(
+        vec![hold_note()],
+        &[
+            fr(T, on(arc(10, 1), 0..1)),
+            empty(T + 0.1),
+            fr(T + 0.1 + gap, on(arc(10, 1), 0..1)),
+            fr(T + 0.5, on(arc(20, 1), 0..1)),
+            fr(T + 1.0, on(arc(20, 1), 0..1)),
+        ],
+    );
+    assert_eq!(ev.len(), 1);
+    ev[0].judgement
+}
+
+/// `hold_note` pressed at `T + start_frames * F`, followed, released `before_end` s before its end.
+fn hold_released_before_end(start_frames: f64, before_end: f64) -> Judgement {
+    let ev = run(
+        vec![hold_note()],
+        &[
+            fr(T + start_frames * F, on(arc(10, 1), 0..1)),
+            fr(T + start_frames.max(0.0) * F, on(arc(10, 1), 0..1)),
+            fr(T + 0.5, on(arc(20, 1), 0..1)),
+            empty(T + 1.0 - before_end),
+        ],
+    );
+    assert_eq!(ev.len(), 1);
+    ev[0].judgement
+}
+
+#[test]
+fn hold_gap_167ms_keeps_start_judgement() {
+    // Doc 10 §0: a mid-hold release of ≤ 167 ms keeps the start judgement.
+    assert_eq!(hold_with_gap(0.167), Judgement::Marvelous);
+}
+
+#[test]
+fn hold_gap_183ms_is_good() {
+    // Doc 10 §0: ≥ 183 ms is a drop.
+    assert_eq!(hold_with_gap(0.183), Judgement::Good);
+}
+
+#[test]
+fn hold_release_233ms_before_end_keeps_start_judgement() {
+    // Checked until end − 7 f: the gap is 233 − 117 = 117 ms (doc 10 §6.2).
+    assert_eq!(hold_released_before_end(0.0, 0.233), Judgement::Marvelous);
+}
+
+#[test]
+fn hold_release_267ms_before_end_keeps_start_judgement() {
+    // Gap 267 − 117 = 150 ms.
+    assert_eq!(hold_released_before_end(0.0, 0.267), Judgement::Marvelous);
+}
+
+#[test]
+fn hold_release_300ms_before_end_is_good() {
+    // Gap 300 − 117 = 183 ms: dropped.
+    assert_eq!(hold_released_before_end(0.0, 0.300), Judgement::Good);
+}
+
+#[test]
+fn hold_input_in_last_seven_frames_is_ignored() {
+    // A release 6 f before the end and a re-press after it do not count.
+    let ev = run(
+        vec![hold_note()],
+        &[
+            fr(T, on(arc(10, 1), 0..1)),
+            fr(T + 0.5, on(arc(20, 1), 0..1)),
+            empty(T + 1.0 - 6.0 * F),
+            fr(T + 1.0, on(arc(20, 1), 0..1)),
+        ],
+    );
+    assert_eq!(judgements(&ev), vec![(0, Judgement::Marvelous)]);
+}
+
+#[test]
+fn hold_missed_start_and_dropped_is_miss() {
+    // Doc 10 §0: start at −8 f (outside the window), released 300 ms before the end.
+    assert_eq!(hold_released_before_end(-8.0, 0.300), Judgement::Miss);
+}
+
+#[test]
+fn hold_missed_start_but_held_is_good() {
+    // Start at −8 f, body held to the end.
+    assert_eq!(hold_released_before_end(-8.0, 0.0), Judgement::Good);
 }
 
 #[test]
