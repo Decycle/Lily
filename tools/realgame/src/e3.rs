@@ -10,7 +10,7 @@ use crate::perfect::{self, Contact};
 use crate::timeline::{self, Tap};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use wacca_chart::{Arc, Chart, LANES, Note, NoteBody, SlideDir};
+use wacca_chart::{Arc, Chart, LANES, Note, NoteBody, SlideDir, SnapDir};
 use wacca_game::input::{DEPTHS, InputFrame};
 use wacca_game::judge::{Judge, JudgeTable};
 use wacca_game::rules::{FRAME_SECS, JudgeEvent, Judgement};
@@ -23,8 +23,21 @@ pub enum Class {
     Hold,
     Chain,
     Slide,
+    /// Snap in (and, in plans made before E6, snap out).
     Snap,
+    /// Snap out (E6).
+    SnapOut,
+    /// E6 two-note groups ([`isolated_pairs`]): two touches at the same time with disjoint / overlapping arcs, and
+    /// two touches less than [`PAIR_DT`] apart with disjoint / overlapping arcs. The test note is the earlier one,
+    /// its partner the next note.
+    Chord,
+    ChordOverlap,
+    Pair,
+    PairOverlap,
 }
+
+/// Largest start distance (s) of a close pair (E6).
+pub const PAIR_DT: f64 = 0.19;
 
 pub fn class(body: &NoteBody) -> Class {
     match body {
@@ -32,8 +45,39 @@ pub fn class(body: &NoteBody) -> Class {
         NoteBody::Hold { .. } => Class::Hold,
         NoteBody::Chain => Class::Chain,
         NoteBody::Slide(_) => Class::Slide,
-        NoteBody::Snap(_) => Class::Snap,
+        NoteBody::Snap(SnapDir::In) => Class::Snap,
+        NoteBody::Snap(SnapDir::Out) => Class::SnapOut,
     }
+}
+
+/// Which lanes a group press covers (E6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Cover {
+    /// The shortest arc covering both notes (lanes between them included).
+    Union,
+    /// The earlier (first) note's arc only.
+    First,
+    /// The later (second) note's arc only.
+    Second,
+    /// Only the lanes both arcs share.
+    Overlap,
+}
+
+/// The group class of the pair `(i, i + 1)`, if both are touches.
+pub fn group_class(chart: &Chart, i: usize) -> Option<Class> {
+    let (a, b) = (chart.notes.get(i)?, chart.notes.get(i + 1)?);
+    let touchy = |n: &Note| matches!(n.body, NoteBody::Touch | NoteBody::Hold { .. });
+    if !touchy(a) || !touchy(b) {
+        return None;
+    }
+    let ovl = arcs_overlap(a.arc, b.arc);
+    Some(match ((b.time - a.time).abs() < 1e-6, ovl) {
+        (true, false) => Class::Chord,
+        (true, true) => Class::ChordOverlap,
+        (false, false) => Class::Pair,
+        (false, true) => Class::PairOverlap,
+    })
 }
 
 /// One controlled change of the perfect input for one note.
@@ -50,9 +94,18 @@ pub enum Probe {
     SlideJump { lanes: f64 },
     /// Snap: the whole arc on ring `from`, then on ring `to` (0 = innermost).
     SnapMove { from: u8, to: u8 },
-    /// Chain (E5): its contact replaced by one held from `from_ms` to `to_ms` (relative to the note) on ring 0 of
+    /// Chain (E5) or touch (E6): its contact replaced by one held from `from_ms` to `to_ms` (relative to the note) on ring 0 of
     /// every lane of the arc — a finger landing early and staying, resting long before, or landing late.
     Press { from_ms: f64, to_ms: f64 },
+    /// Group (E6): both notes' own input removed; one contact on ring 0 of the `cover` lanes at the *second*
+    /// note's time + `ms`.
+    GroupPress { cover: Cover, ms: f64 },
+    /// Group (E6): both notes' own input removed; the first note's arc pressed (ring 0) at its time + `a_ms`, the
+    /// second's (ring 1) at its time + `b_ms`. `None`: that note is not pressed.
+    GroupSplit {
+        a_ms: Option<f64>,
+        b_ms: Option<f64>,
+    },
 }
 
 /// A probe list in a spec file, expanded by [`ProbeSpec::expand`].
@@ -81,6 +134,14 @@ pub enum ProbeSpec {
     /// Contacts `[from, to]` in frames relative to the note.
     Press {
         frames: Vec<[f64; 2]>,
+    },
+    /// One group press per `(cover, frames)`.
+    GroupPress {
+        presses: Vec<(Cover, f64)>,
+    },
+    /// Split presses `[a, b]` in frames (`null`: not pressed).
+    GroupSplit {
+        frames: Vec<[Option<f64>; 2]>,
     },
 }
 
@@ -115,6 +176,20 @@ impl ProbeSpec {
                     to_ms: to * FRAME_SECS * 1000.0,
                 })
                 .collect(),
+            Self::GroupPress { presses } => presses
+                .iter()
+                .map(|&(cover, f)| Probe::GroupPress {
+                    cover,
+                    ms: f * FRAME_SECS * 1000.0,
+                })
+                .collect(),
+            Self::GroupSplit { frames } => frames
+                .iter()
+                .map(|&[a, b]| Probe::GroupSplit {
+                    a_ms: a.map(|f| f * FRAME_SECS * 1000.0),
+                    b_ms: b.map(|f| f * FRAME_SECS * 1000.0),
+                })
+                .collect(),
         }
     }
 }
@@ -141,6 +216,19 @@ pub struct Test {
     pub class: Class,
     pub probe: Probe,
     pub ours: Option<Judgement>,
+    /// Group probes (E6): the second note and our verdict for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partner: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ours_partner: Option<Judgement>,
+}
+
+/// Whether a class is an E6 two-note group.
+pub fn is_group(c: Class) -> bool {
+    matches!(
+        c,
+        Class::Chord | Class::ChordOverlap | Class::Pair | Class::PairOverlap
+    )
 }
 
 /// `*.plan.json`, written next to the tap script.
@@ -183,6 +271,30 @@ pub fn isolated(chart: &Chart, gap: f64, min_time: f64) -> Vec<usize> {
         .collect()
 }
 
+/// Pairs of notes `(i, j)`, `i < j`, starting at most `max_dt` apart (chords: 0) whose joint span keeps `gap` seconds
+/// from every other note's span, at or after `min_time` (E6 chord probes, doc 10 §10).
+pub fn isolated_pairs(chart: &Chart, gap: f64, min_time: f64, max_dt: f64) -> Vec<(usize, usize)> {
+    let spans: Vec<(f64, f64)> = chart.notes.iter().map(span).collect();
+    (0..spans.len().saturating_sub(1))
+        .filter_map(|i| {
+            let j = i + 1;
+            let (s, e) = (spans[i].0, spans[i].1.max(spans[j].1));
+            let ok = s >= min_time
+                && spans[j].0 - spans[i].0 <= max_dt
+                && spans
+                    .iter()
+                    .enumerate()
+                    .all(|(k, &(s2, e2))| k == i || k == j || e2 < s - gap || s2 > e + gap);
+            ok.then_some((i, j))
+        })
+        .collect()
+}
+
+/// Whether two arcs share a lane.
+pub fn arcs_overlap(a: Arc, b: Arc) -> bool {
+    arc_bits(a) & arc_bits(b) != 0
+}
+
 /// Whether `p` can be applied to `n` (right note kind, long enough hold, wide enough slide).
 pub fn feasible(n: &Note, p: &Probe) -> bool {
     let (start, end) = span(n);
@@ -200,7 +312,11 @@ pub fn feasible(n: &Note, p: &Probe) -> bool {
         (Probe::SnapMove { from, to }, NoteBody::Snap(_)) => {
             usize::from(*from) < DEPTHS && usize::from(*to) < DEPTHS && from != to
         }
-        (Probe::Press { from_ms, to_ms }, NoteBody::Chain) => to_ms > from_ms,
+        (Probe::Press { from_ms, to_ms }, NoteBody::Chain | NoteBody::Touch) => to_ms > from_ms,
+        (
+            Probe::GroupPress { .. } | Probe::GroupSplit { .. },
+            NoteBody::Touch | NoteBody::Hold { .. },
+        ) => true,
         _ => false,
     }
 }
@@ -230,6 +346,10 @@ impl Rng {
 pub fn assign(chart: &Chart, spec: &Spec) -> Vec<(usize, Probe)> {
     let mut rng = Rng(spec.seed.max(1));
     let candidates = isolated(chart, spec.isolation, spec.min_time);
+    let groups: Vec<(usize, Class)> = isolated_pairs(chart, spec.isolation, spec.min_time, PAIR_DT)
+        .into_iter()
+        .filter_map(|(i, _)| Some((i, group_class(chart, i)?)))
+        .collect();
     let mut out = Vec::new();
     for (class_, specs) in &spec.probes {
         let probes: Vec<Probe> = specs.iter().flat_map(ProbeSpec::expand).collect();
@@ -237,10 +357,20 @@ pub fn assign(chart: &Chart, spec: &Spec) -> Vec<(usize, Probe)> {
             continue;
         }
         let mut queue: std::collections::VecDeque<Probe> = Default::default();
-        for &i in candidates
-            .iter()
-            .filter(|&&i| class(&chart.notes[i].body) == *class_)
-        {
+        let notes: Vec<usize> = if is_group(*class_) {
+            groups
+                .iter()
+                .filter(|g| g.1 == *class_)
+                .map(|g| g.0)
+                .collect()
+        } else {
+            candidates
+                .iter()
+                .copied()
+                .filter(|&i| class(&chart.notes[i].body) == *class_)
+                .collect()
+        };
+        for i in notes {
             if queue.is_empty() {
                 let mut deck = probes.clone();
                 rng.shuffle(&mut deck);
@@ -333,6 +463,56 @@ fn snap_move(n: &Note, from: u8, to: u8, on: f64) -> Vec<Contact> {
     out
 }
 
+/// A group press on `lanes` (ring `depth`) at `t` for `on`; on the start lanes of a hold in `notes` it is held
+/// until `held_to`, where the hold's perfect input resumes (the probes cut it up to there).
+fn group_cells(
+    lanes: &[u8],
+    depth: usize,
+    t: f64,
+    on: f64,
+    notes: [&Note; 2],
+    held_to: f64,
+) -> Vec<Contact> {
+    let holds = notes
+        .iter()
+        .filter(|n| matches!(n.body, NoteBody::Hold { .. }))
+        .fold(0, |m, n| m | arc_bits(n.arc));
+    lanes
+        .iter()
+        .map(|&lane| {
+            let end = if holds & lane_bit(lane) != 0 {
+                held_to.max(t + on)
+            } else {
+                t + on
+            };
+            Contact {
+                lane: lane % LANES,
+                depth,
+                start: t,
+                end,
+            }
+        })
+        .collect()
+}
+
+/// Lanes of the shortest arc covering both arcs.
+fn union_arc(a: Arc, b: Arc) -> u64 {
+    let n = u16::from(LANES);
+    // From one arc's start round to the other's end; the shorter of the two ways.
+    let cover = |x: Arc, y: Arc| {
+        let len = (u16::from(y.lane) + u16::from(y.width) + n - u16::from(x.lane)) % n;
+        let len = if len == 0 { n } else { len };
+        let len = len.max(u16::from(x.width)).min(n);
+        let mask = (0..len).fold(0u64, |m, o| {
+            m | lane_bit(((u16::from(x.lane) + o) % n) as u8)
+        });
+        (len, mask)
+    };
+    let (la, ma) = cover(a, b);
+    let (lb, mb) = cover(b, a);
+    if la <= lb { ma } else { mb }
+}
+
 /// Moves a note (a hold: its start node only) by `dt` seconds.
 fn shift(n: &mut Note, dt: f64) {
     n.time += dt;
@@ -373,6 +553,35 @@ pub fn contacts(chart: &Chart, probes: &[(usize, Probe)], on: f64, min_gap: f64)
             (Probe::SnapMove { from, to }, _) => {
                 cs = cut(&cs, bits, start - 0.2, start + 0.2);
                 cs.extend(snap_move(n, from, to, on));
+            }
+            (Probe::GroupPress { cover, ms }, _) => {
+                let Some(m) = chart.notes.get(i + 1) else {
+                    continue;
+                };
+                cs = cut(&cs, bits | note_bits(m), start - 0.2, m.time + 0.2);
+                let lanes = match cover {
+                    Cover::Union => union_arc(n.arc, m.arc),
+                    Cover::First => arc_bits(n.arc),
+                    Cover::Second => arc_bits(m.arc),
+                    Cover::Overlap => arc_bits(n.arc) & arc_bits(m.arc),
+                };
+                let lanes: Vec<u8> = (0..LANES).filter(|&l| lanes & lane_bit(l) != 0).collect();
+                let t = m.time + ms / 1000.0;
+                cs.extend(group_cells(&lanes, 0, t, on, [n, m], m.time + 0.2));
+            }
+            (Probe::GroupSplit { a_ms, b_ms }, _) => {
+                let Some(m) = chart.notes.get(i + 1) else {
+                    continue;
+                };
+                cs = cut(&cs, bits | note_bits(m), start - 0.2, m.time + 0.2);
+                for (note, off, depth) in [(n, a_ms, 0), (m, b_ms, 1)] {
+                    if let Some(ms) = off {
+                        let lanes: Vec<u8> =
+                            (0..note.arc.width).map(|o| note.arc.lane + o).collect();
+                        let t = note.time + ms / 1000.0;
+                        cs.extend(group_cells(&lanes, depth, t, on, [n, m], m.time + 0.2));
+                    }
+                }
             }
             (Probe::Press { from_ms, to_ms }, _) => {
                 let (from, to) = (start + from_ms / 1000.0, start + to_ms / 1000.0);
@@ -428,13 +637,24 @@ pub fn build(chart: &Chart, spec: &Spec) -> (Vec<Tap>, Vec<Test>) {
         .map(|&(i, probe)| {
             let n = &chart.notes[i];
             let (time, end) = span(n);
+            let group = matches!(probe, Probe::GroupPress { .. } | Probe::GroupSplit { .. });
+            let partner = group.then_some(i + 1);
+            let end = partner
+                .and_then(|j| chart.notes.get(j))
+                .map_or(end, |m| span(m).1.max(end));
             Test {
                 note: i,
                 time,
                 end,
-                class: class(&n.body),
+                class: if group {
+                    group_class(chart, i).unwrap_or(Class::Chord)
+                } else {
+                    class(&n.body)
+                },
                 probe,
                 ours: ours[i],
+                partner,
+                ours_partner: partner.and_then(|j| ours.get(j).copied().flatten()),
             }
         })
         .collect();
@@ -505,7 +725,7 @@ pub fn fit_interval(points: &[(f64, bool)]) -> Option<(f64, f64, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wacca_chart::{BeatPos, Bonus, ChartHeader, HoldNode, SnapDir};
+    use wacca_chart::{BeatPos, Bonus, ChartHeader, HoldNode};
 
     fn note(time: f64, lane: u8, width: u8, body: NoteBody) -> Note {
         Note {
@@ -759,12 +979,54 @@ mod tests {
         assert_eq!(judged(&c, &press(-10.0, -5.0)), [Some(Judgement::Miss)]);
         assert_eq!(judged(&c, &press(5.0, 15.0)), [Some(Judgement::Miss)]);
         assert!(!feasible(
-            &note(2.0, 20, 4, NoteBody::Touch),
+            &note(2.0, 20, 4, NoteBody::Slide(SlideDir::Cw)),
             &Probe::Press {
                 from_ms: 0.0,
                 to_ms: 10.0
             }
         ));
+    }
+
+    #[test]
+    fn group_probes_reach_our_judge() {
+        // A side-by-side chord and an overlapping pair 9.5 f apart, isolated from each other.
+        let c = chart(vec![
+            note(2.0, 10, 4, NoteBody::Touch),
+            note(2.0, 30, 4, NoteBody::Touch),
+            note(4.0, 35, 10, NoteBody::Touch),
+            note(4.0 + 9.5 * FRAME_SECS, 41, 10, NoteBody::Touch),
+        ]);
+        assert_eq!(isolated_pairs(&c, 0.35, 1.0, PAIR_DT), [(0, 1), (2, 3)]);
+        assert_eq!(group_class(&c, 0), Some(Class::Chord));
+        assert_eq!(group_class(&c, 2), Some(Class::PairOverlap));
+        let probe = |class, p| spec(vec![(class, p)]);
+        let split = probe(
+            Class::Chord,
+            ProbeSpec::GroupSplit {
+                frames: vec![[Some(0.0), Some(4.0)]],
+            },
+        );
+        let (_, tests) = build(&c, &split);
+        assert_eq!(
+            (tests[0].ours, tests[0].partner, tests[0].ours_partner),
+            (Some(Judgement::Marvelous), Some(1), Some(Judgement::Great))
+        );
+        // One press over the pair 4.2 f before the second goes to the second only.
+        let press = probe(
+            Class::PairOverlap,
+            ProbeSpec::GroupPress {
+                presses: vec![(Cover::Union, -4.2)],
+            },
+        );
+        let (_, tests) = build(&c, &press);
+        assert_eq!(
+            (tests[0].ours, tests[0].ours_partner),
+            (Some(Judgement::Miss), Some(Judgement::Great))
+        );
+        assert_eq!(
+            union_arc(Arc { lane: 58, width: 4 }, Arc { lane: 2, width: 2 }).count_ones(),
+            6
+        );
     }
 
     #[test]

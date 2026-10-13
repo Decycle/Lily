@@ -141,6 +141,7 @@ fn early_press_outside_window_is_ignored() {
 
 #[test]
 fn resting_finger_does_not_hit_touch() {
+    // Measured (doc 10 §10): a finger landing 8–16 f early and held through the note is a Miss.
     let ev = run(
         vec![note(T, arc(10, 4), NoteBody::Touch)],
         &[fr(0.5, on(arc(10, 1), 0..1)), fr(T, on(arc(10, 1), 0..1))],
@@ -778,4 +779,84 @@ fn autoplay_hold_finger_waits_before_entering_a_tap() {
         hold(&[(2.0, arc(40, 10)), (2.5, arc(41, 10)), (3.0, arc(44, 10))]),
         note(2.9, arc(45, 4), NoteBody::Touch),
     ]);
+}
+
+/// Two notes, a press list of `(time, arc, ring)` contacts 25 ms long; verdicts by note.
+fn presses(notes: Vec<Note>, contacts: &[(f64, Arc, usize)]) -> Vec<(usize, Judgement)> {
+    let mut edges: Vec<f64> = contacts
+        .iter()
+        .flat_map(|&(t, _, _)| [t, t + 0.025])
+        .collect();
+    edges.sort_by(f64::total_cmp);
+    let frames: Vec<InputFrame> = edges
+        .iter()
+        .map(|&t| {
+            let mut s = SensorState::default();
+            for &(start, a, ring) in contacts {
+                if t >= start - 1e-9 && t < start + 0.025 - 1e-9 {
+                    for d in 0..4 {
+                        s.rings[d] |= on(a, ring..ring + 1).rings[d];
+                    }
+                }
+            }
+            fr(t, s)
+        })
+        .collect();
+    judgements(&run(notes, &frames))
+}
+
+#[test]
+fn chord_notes_are_judged_on_their_own_presses() {
+    // E6 (doc 10 §10): side-by-side notes at the same time pressed separately each get the
+    // judgement of their own press; one press over both hits both with its timing.
+    use Judgement::*;
+    let chord = || {
+        vec![
+            note(T, arc(10, 4), NoteBody::Touch),
+            note(T, arc(30, 4), NoteBody::Touch),
+        ]
+    };
+    let split = presses(chord(), &[(T, arc(10, 4), 0), (T + 4.0 * F, arc(30, 4), 1)]);
+    assert_eq!(split, [(0, Marvelous), (1, Great)]);
+    let split = presses(
+        chord(),
+        &[(T - 4.0 * F, arc(10, 4), 0), (T + 4.0 * F, arc(30, 4), 1)],
+    );
+    assert_eq!(split, [(0, Great), (1, Great)]);
+    let one = presses(chord(), &[(T + 4.0 * F, arc(10, 24), 0)]);
+    assert_eq!(one, [(0, Great), (1, Great)]);
+}
+
+#[test]
+fn close_overlapping_pair_press_goes_to_the_nearer_note() {
+    // E6 (doc 10 §10): two overlapping touches 9.5 f apart. A press covering both 4.2 f before
+    // the second (5.3 f after the first, still inside its Good window) hits only the second;
+    // the first is missed. A press near the first hits only the first.
+    use Judgement::*;
+    let pair = || {
+        vec![
+            note(T, arc(35, 10), NoteBody::Touch),
+            note(T + 9.5 * F, arc(41, 10), NoteBody::Touch),
+        ]
+    };
+    let late = presses(pair(), &[(T + 5.3 * F, arc(35, 16), 0)]);
+    assert_eq!(late, [(0, Miss), (1, Great)]);
+    let early = presses(pair(), &[(T + 1.0 * F, arc(35, 16), 0)]);
+    assert_eq!(early, [(0, Marvelous), (1, Miss)]);
+    // Only the first note's arc (overlapping the second) at the same time: the second is hit.
+    let first_arc = presses(pair(), &[(T + 5.3 * F, arc(35, 10), 0)]);
+    assert_eq!(first_arc, [(0, Miss), (1, Great)]);
+}
+
+#[test]
+fn one_press_hits_an_earlier_open_note_beside_the_target() {
+    // E6 (doc 10 §10): side-by-side touches 9.5 f apart, one press over both 5.6 f after the
+    // first: the first is still open (Good) and the second is hit early (Great) by the same press.
+    use Judgement::*;
+    let notes = vec![
+        note(T, arc(10, 4), NoteBody::Touch),
+        note(T + 9.5 * F, arc(16, 4), NoteBody::Touch),
+    ];
+    let both = presses(notes, &[(T + 5.6 * F, arc(10, 10), 0)]);
+    assert_eq!(both, [(0, Good), (1, Great)]);
 }

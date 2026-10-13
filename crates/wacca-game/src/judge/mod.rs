@@ -146,8 +146,9 @@ impl Judge {
     /// Newly pressed lanes hit the earliest open touch / hold start they overlap, together with
     /// every other such note at the same time (stacked chords). The hit notes' lanes are then
     /// used up, so notes stacked at different times need separate presses while side-by-side
-    /// notes can share one. Returns whether a note was hit.
-    // UNVERIFIED: `ProtectInvolveRockFrameNum = -1` may mean one press can hit several notes.
+    /// notes can share one. Returns whether a note was hit. Measured (doc 10 §10): chord notes
+    /// pressed separately each take their own press's timing, one press over a chord hits all of
+    /// it, and one press over two close side-by-side notes hits both (the earlier one late).
     fn press(
         &mut self,
         pressed: &mut u64,
@@ -362,7 +363,9 @@ pub(crate) fn hold_path_at(nodes: &[HoldNode], t: f64) -> Option<Arc> {
 
 /// Where an earlier note's late window overlaps a later note's early window on shared lanes,
 /// both are cut at the midpoint between the two notes.
-// UNVERIFIED: Saturn `ChartLoader` / MercuryMapper `CutOverlappingJudgementWindows`.
+// Saturn `ChartLoader` / MercuryMapper `CutOverlappingJudgementWindows`; consistent with the real
+// game on overlapping touches 9.5 f apart (doc 10 §10: a press up to 4.7 f after the earlier note
+// hits it, from 4.9 f on only the later one).
 fn cut_overlaps(notes: &[Note], slots: &mut [Slot]) {
     let reach = slots.iter().map(|s| s.early).fold(0.0, f64::max);
     for i in 0..notes.len() {
