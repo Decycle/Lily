@@ -22,7 +22,7 @@ import renderdoc as rd
 
 CAP, OUT = os.environ["WACCA_RDC_DUMP"].split(";")
 os.makedirs(OUT, exist_ok=True)
-for d in ("shaders", "cbuffers", "tex", "rt"):
+for d in ("shaders", "cbuffers", "tex", "rt", "buffers"):
     os.makedirs(os.path.join(OUT, d), exist_ok=True)
 LOG = open(os.path.join(OUT, "dump.log"), "w", encoding="utf-8", buffering=1)
 
@@ -58,7 +58,20 @@ def flatten(actions):
         yield from flatten(a.children)
 
 
-def stage_info(ctl, st, saved_tex, texdesc):
+# RenderDoc 1.46 D3D11 descriptor store: one block of 222 entries per stage (VS, HS, DS, GS, PS, CS);
+# in a block: 14 constant buffers, 128 SRVs, then samplers (16) at +142.
+STAGE_BLOCK = {"vs": 0, "ps": 4 * 222}
+
+
+def descriptors(ctl, s):
+    r = rd.DescriptorRange()
+    r.offset = 0
+    r.count = s.descriptorCount
+    r.descriptorSize = s.descriptorByteSize
+    return ctl.GetDescriptors(s.descriptorStore, [r]), ctl.GetSamplerDescriptors(s.descriptorStore, [r])
+
+
+def stage_info(ctl, st, saved_tex, texdesc, descs, samps, base):
     out = {}
     try:
         out["shader"] = rid(st.resourceId)
@@ -69,22 +82,21 @@ def stage_info(ctl, st, saved_tex, texdesc):
         out["shader_err"] = repr(e)
     cbs = []
     try:
-        for slot, cb in enumerate(st.constantBuffers):
-            res = cb.resourceId
+        for slot in range(14):
+            d = descs[base + slot]
+            res = d.resource
             if res == rd.ResourceId.Null():
                 continue
-            off = cb.vecOffset * 16
-            n = cb.vecCount * 16
-            data = bytes(ctl.GetBufferData(res, off, n)) if n else bytes(ctl.GetBufferData(res, 0, 0))
+            data = bytes(ctl.GetBufferData(res, d.byteOffset, 0))
             cbs.append({"slot": slot, "res": rid(res), "bytes": len(data), "blob": save_blob("cbuffers", data)})
     except Exception as e:  # noqa: BLE001
         out["cb_err"] = repr(e)
     out["cbs"] = cbs
     srvs = []
     try:
-        for slot, v in enumerate(st.srvs):
-            res = getattr(v, "resourceResourceId", None) or getattr(v, "resource", None)
-            if res is None or res == rd.ResourceId.Null():
+        for slot in range(128):
+            res = descs[base + 14 + slot].resource
+            if res == rd.ResourceId.Null():
                 continue
             e = {"slot": slot, "res": rid(res)}
             td = texdesc.get(rid(res))
@@ -107,8 +119,9 @@ def stage_info(ctl, st, saved_tex, texdesc):
     out["srvs"] = srvs
     try:
         out["samplers"] = [{"slot": i, "addr": [enum_name(s.addressU), enum_name(s.addressV)],
-                            "filter": str(s.filter.minify) + "/" + str(s.filter.magnify)}
-                           for i, s in enumerate(st.samplers) if s.resourceId != rd.ResourceId.Null()]
+                            "filter": enum_name(s.filter.minify) + "/" + enum_name(s.filter.magnify)}
+                           for i, s in ((i, samps[base + 142 + i]) for i in range(16))
+                           if s.object != rd.ResourceId.Null()]
     except Exception as e:  # noqa: BLE001
         out["sampler_err"] = repr(e)
     return out
@@ -170,8 +183,9 @@ def main():
                      base_vertex=a.baseVertex, vertex_offset=a.vertexOffset)
             try:
                 s = ctl.GetD3D11PipelineState()
-                d["vs"] = stage_info(ctl, s.vertexShader, saved_tex, texdesc)
-                d["ps"] = stage_info(ctl, s.pixelShader, saved_tex, texdesc)
+                descs, samps = descriptors(ctl, s)
+                d["vs"] = stage_info(ctl, s.vertexShader, saved_tex, texdesc, descs, samps, STAGE_BLOCK["vs"])
+                d["ps"] = stage_info(ctl, s.pixelShader, saved_tex, texdesc, descs, samps, STAGE_BLOCK["ps"])
                 om = s.outputMerger
                 d["blend"] = blend_info(om)
                 try:
@@ -210,6 +224,18 @@ def main():
                     d["vbs"] = [{"slot": i, "res": rid(vb.resourceId), "stride": vb.byteStride,
                                  "off": vb.byteOffset}
                                 for i, vb in enumerate(ia.vertexBuffers) if vb.resourceId != rd.ResourceId.Null()]
+                    # raw IB / VB / VS SRV buffers (UE manual vertex fetch: UVs/tangents in VS t0/t1), once each
+                    bufs = [ia.indexBuffer.resourceId] + [vb.resourceId for vb in ia.vertexBuffers]
+                    bufs += [descs[STAGE_BLOCK["vs"] + 14 + i].resource for i in range(4)]
+                    for b in bufs:
+                        if b == rd.ResourceId.Null():
+                            continue
+                        p = os.path.join(OUT, "buffers", "%s.bin" % rid(b))
+                        if not os.path.exists(p):
+                            data = bytes(ctl.GetBufferData(b, 0, 0))
+                            if len(data) <= 8 << 20:
+                                with open(p, "wb") as f:
+                                    f.write(data)
                 except Exception as e:  # noqa: BLE001
                     d["ia_err"] = repr(e)
             except Exception:  # noqa: BLE001

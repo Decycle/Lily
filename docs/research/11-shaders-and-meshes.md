@@ -117,7 +117,93 @@ meshes — that comes from the capture (§2).
 
 ## 2. RenderDoc capture of real gameplay
 
-(in progress)
+### 2.1 How (CONFIRMED working, 2026-10-12)
+RenderDoc 1.46 cannot simply launch the game: injected at process start (or `renderdoccmd capture
+--opt-hook-children` on `inject.exe`) the segatools and RenderDoc IAT hooks on LoadLibrary*/GetProcAddress recurse
+(stack overflow, 0xC00000FD, ~1.5 s in); injected after segatools, RenderDoc bypasses segatools' DLL redirection and
+the game stops at **ERROR 1202-1** (LED board `USBIntLED.DLL` not emulated). Working recipe
+(`runs/renderdoc/launch_inject.ps1`, `launch_nod.bat`):
+1. start the install's `launch.bat` equivalent (amdaemon + `inject -d -k mercuryhook.dll Mercury...`),
+2. as soon as `mercuryhook.dll` is in the game process, snapshot its main-module IAT
+   (`tools/research/iat_restore.py snapshot`),
+3. ~1.1 s after process start (segatools initialised, D3D11 device not created yet — the NVIDIA UMD loads at
+   ~1.6 s) `renderdoccmd inject --PID=<pid> -c <dir>\wacca`,
+4. `iat_restore.py restore` puts segatools' LoadLibraryA/W/ExA/ExW + GetProcAddress hooks back.
+The overlay then shows "Capturing D3D11" and the game runs normally (title, guest play). Captures are triggered
+through RenderDoc target control from qrenderdoc's embedded Python (`tools/research/rdc_capture.py`, `cmd`
+file "capture" lines) at chart times scheduled from the harness' live audio sync (`runs/renderdoc/sched.py`).
+Dump: `qrenderdoc --python tools/research/rdc_dump.py` (env `WACCA_RDC_DUMP=<rdc>;<out>`) → `draws.json`,
+cbuffers, shaders (DXBC; sha1-matched to §1.2 by `tools/research/rdc_analyze.py`), textures, RT snapshots.
+In RenderDoc 1.46 the D3D11 bindings are read from the descriptor store (`GetDescriptors`): per stage a block of
+222 entries (VS 0, HS 222, DS 444, GS 666, PS 888, CS 1110): +0..13 cbuffers, +14..141 SRVs, +142.. samplers.
+
+Captured run: フラジール Normal, guest options (speed 1.5), 16 frames at chart t = 9.30 9.50 12.0 22.8 38.0 46.2
+46.42 53.9 66.2 67.5 69.05 70.2 75.6 85.3 93.6 113.5 s → `runs/renderdoc/cap3/wacca_frame{9006,9009,9153,9794,
+10699,11184,11192,11634,12365,12436,12521,12583,12901,13476,13967,15154}.rdc` (≈ 28 MB each; dumps in
+`cap3/d<frame>/`). Each capture stalls the game ~0.2 s, so notes right after a capture are judged Miss — judgement
+art/hit effects after the first capture are not representative of perfect play (the 9.50 frame shows the first
+Marvelous).
+
+### 2.2 Frame structure (D3D11, 675×1200 window; frame 9153, CONFIRMED)
+1. **Scene capture** of the background-effect scene into a 1080² HDR target (`176692`, R16G16B16A16F): depth
+   prepass, base pass (`vMX_3_BGN03_*`, `vMX_3_BGBoss_004` ... — the no-movie 3D background scenes), its own
+   bloom + tonemap + FXAA. (Also draws the main-scene actors; only used as a texture.)
+2. GPU particle simulation (`TParticleSimulationPS`, 1024² float targets) for GPU sprite emitters.
+3. **Main view**: one view rendered into a 1080² R16G16B16A16F scene colour with viewport **(0, 228, 675, 675)**
+   — i.e. a square 675×675 view whose centre is (337.5, 565.5) in the window (E2 measured (337.5, 565.3)).
+   Depth prepass (reversed Z) → opaque/masked base pass (`depth GreaterEqual`, no depth write) → velocity →
+   **separate translucency** RT (`177486`, cleared, depth-tested against the scene depth): `uM_BgMask000`
+   (alpha), `vMX_2_GuideLane_000` (alpha, 60 lane sections), hold/hit effects (`vMX_2_Tap_000` MIs, alpha and
+   `One/One` additive, mesh particles; `vM_1_Base_004_AUS_m_MarvPt*` GPU sprites additive; `vM_2_Scroll_003_TUD_HitMarv000`
+   additive) → composited onto scene colour (`FPostProcessBokehDOFRecombinePS`) → **TAA**
+   (`FPostProcessTemporalAAPS`) → bloom: downsample 540/270/135/68/34/17 (R11G11B10F) + `TFilterPS` Gaussian
+   up-chain → eye adaptation pass (auto exposure off in ini; pass still runs) → `FLUTBlenderPS` (32³ LUT) →
+   `FPostProcessTonemapPS` straight into the back buffer (675×1200 R8G8B8A8, viewport 0,228,675,675).
+4. **UMG/Slate HUD** on the back buffer (`TSlateElementPS`, alpha blend; `uM_RGready*`, `uM_RGguage000` UI materials),
+   incl. the debug panel below the playfield.
+
+### 2.3 Camera (main view, VS cb1 = View uniform buffer, CONFIRMED)
+* World: UE units (cm). Camera at **(0, +190, 0)** looking along **−Y**; up = +Z, right = +X
+  (`TranslatedWorldToView` rows: X→right, Z→up, Y→−forward). `PreViewTranslation = (0, −190, 0)`.
+* `ViewToClip` = UE reversed-Z infinite perspective, **near 10**, x/y scale **1.0 → 90° FOV, aspect 1**, plus TAA
+  sub-pixel jitter (≈1e-4 NDC). So NDC = (X/d, Z/d) with depth d = 190 − Y, mapped to the 675 px square (NDC 1 =
+  337.5 px).
+* The movie is a quad at Y = −620 (scale 1, rotated 90° about Z; `mv_<song>_Texture_Mat`, opaque), a `LineMaterial`
+  quad at Y = −621, `uM_BgMask000` (alpha) at Y = −619.
+
+### 2.4 Notes and bar lines (VS cb2 = Primitive: LocalToWorld rows 0–3, CONFIRMED)
+Notes are ordinary **StaticMeshComponents** (`FLocalVertexFactory`, the §1.4 meshes, one draw per mesh section =
+per lane), not particles. Each note's LocalToWorld is **uniform scale s, rotation about world Y by the lane angle,
+translation (0, Y, 0)**, with
+
+    Y = 600·(s − 1)          (s = 0 at Y = −600 = RhythmGamePosTable NoteAppearPos, s = 1 at Y = 0)
+
+and s linear in time. Two notes in one frame (12.0 s capture, onsets 12.283 s and 13.228 s, exactly 0.9449 s
+apart): s = 0.81994 / 0.39474, Y = −108.036 / −363.154 → **ds/dt = 0.4500 /s at speed 1.5**, i.e. the travel
+from s = 0 to s = 1 takes **2.2222 s at speed 1.5 = 3.333 s at speed 1.0** (= 10/3 s; E2's 3.276/3.29 s came
+from the outer edge with a different projection model). Bar lines (`vMX_2_BarLine_000`, 60 sections × 4 tris, mesh
+`vMsh_BarLine00_60_s`) use the same transform as a note at the measure start (s = 0.39474 at 13.228 s = measure 7).
+Rotation: **φ = 6°·lane_start** (the width-N mesh covers local angles 0…6N° from +X): notes at lanes 40, 45, 50
+(width 10) have φ = 240°, 270°, 300° (frames 9009/9153; lanes as in `e2-fragile-normal.taps.json`). In UE row-vector
+form LocalToWorld rows are `s·(cosφ, 0, sinφ)`, `(0, s, 0)`, `s·(−sinφ, 0, cosφ)`, `(0, 600(s−1), 0)` (e.g. lane 45:
+row0 = (0, 0, −0.82), row2 = (0.82, 0, 0)). A local vertex (x_l, y_l, z_l) with polar angle α = atan2(z_l, x_l) and
+radius ρ goes to
+
+    X_w = s·ρ·cos(α+φ),   Z_w = s·ρ·sin(α+φ),   Y_w = 600(s−1) + s·y_l
+    d   = 190 − Y_w = 790 − s·(600 + y_l)
+    ndc = (X_w, Z_w) / d        → screen x right, screen y up (world +Z), angle CCW from 3 o'clock
+
+so lane 0 is at 3 o'clock and lanes run counter-clockwise on screen, as E2 found. `rdc_analyze.py --prims`
+prints the decoded (s, Y, φ) for every base-pass draw (its `rotY` column is −φ mod 360).
+
+Note draw state: base pass, opaque (masked: `discard` below `OpacityMaskClipValue` 0.3333, MSAA off → no
+alpha-to-coverage), depth test GreaterEqual against the prepass depth, back-face culling, `front CCW`. PS
+cbuffers: `cb3` = MPC NoteCustomize (row 0 = NoteHeight 0.5, HoldColorNumber 2; rows 1–13 the colours, equal to
+the MPC defaults), `cb4` = Material (= §1.3 table with the MI values, e.g. Normal00 NoteColor (1, .0356, .863));
+`t0` = `vT_NoteBase00_00_m` (1024×2048 BC3), `t1` = `vT_NoteBase01_00_m` (256×512 BC3), sampler s0
+anisotropic clamp.
+
+(continued below as the remaining captures are analysed)
 
 ## 3. Port spec
 
