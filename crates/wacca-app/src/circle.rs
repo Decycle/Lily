@@ -292,6 +292,34 @@ impl Canvas {
         }
     }
 
+    /// Texture `key` on the quad `corners` (canvas units; texture corners top-left, top-right,
+    /// bottom-right, bottom-left), clipped to the convex `within` and the round screen.
+    pub fn image_quad(
+        &self,
+        v: &mut View,
+        key: String,
+        corners: [[f32; 2]; 4],
+        within: &[[f32; 2]],
+        tint: Rgba,
+    ) {
+        // The clipper interpolates its colour payload: carry the texture coordinates in it.
+        let uvs = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+        let quad: Vec<_> = corners
+            .iter()
+            .zip(uvs)
+            .map(|(&p, [u, w])| (self.shift(p), [u, w, 0.0, 0.0]))
+            .collect();
+        let part = clip(&clip(&quad, within), &disc());
+        if part.len() >= 3 {
+            v.items.push(Item::ImagePoly {
+                key,
+                points: part.iter().map(|&(p, _)| self.on_circle(p)).collect(),
+                uvs: part.iter().map(|&(_, c)| [c[0], c[1]]).collect(),
+                tint: self.fade(tint),
+            });
+        }
+    }
+
     /// Texture `key` centred on `c`, `size` canvas units.
     pub fn image(&self, v: &mut View, key: String, c: [f32; 2], [w, h]: [f32; 2], alpha: f32) {
         let r = self.rect(c[0] - w / 2.0, c[1] - h / 2.0, w, h);

@@ -252,6 +252,9 @@ pub fn view(s: &Summary, menu: crate::canvas::Canvas, t: f32) -> View {
     let c = Canvas::new(menu);
     circle::background(&mut v, &c);
     ring(&mut v, &c);
+    if s.result.lamp == Lamp::Clear {
+        clear_stamp(&mut v, &c);
+    }
     let e = ease(t, INFO_AT, SLIDE);
     info(&mut v, &c.moved([700.0 * (1.0 - e), 0.0], e), s);
     let e = ease(t, LIST_AT, SLIDE);
@@ -272,16 +275,48 @@ pub fn view(s: &Summary, menu: crate::canvas::Canvas, t: f32) -> View {
     v
 }
 
-/// Bands of the ring art behind the panels (`uM_Ring01` / `BP_Circle_Text` in `BP_Result`):
+/// Bands of the ring art behind the panels (the rings of the play's end stamp, `Clear02/ring`):
 /// (inner, outer radius in canvas units, colour), measured on the E3 result frames along the
 /// rim left of GO: a dark band (behind the ring letters), the teal ring, a dark purple rim.
-// UNVERIFIED: the ring's letters (grey with a pink outline, mostly hidden by the panels) are
-// left out, and the colours are the B-grade frame's (the ring may follow the grade).
+// UNVERIFIED: the colours are the B-grade frame's (the ring may follow the grade); the letters
+// on it are the play's end stamp ([`clear_stamp`]).
 const RING: [(f32, f32, Rgba); 3] = [
     (260.0, 442.0, [0.086, 0.090, 0.133, 1.0]),
     (442.0, 502.0, [0.055, 0.608, 0.525, 1.0]),
     (502.0, 540.0, [0.239, 0.184, 0.282, 1.0]),
 ];
+
+/// The play's end stamp stays behind the results (BP_RhythmGame `BP_Result_clear02`,
+/// `Clear02/ROT00`): the gradient rim `uT_FTclear_906` (-475..505 x -245..245 design units)
+/// under the white letters `uT_FTclear_900..904` (280 units each, -130..150), the whole turned
+/// -13° about the centre (the R seen right of the R-Notes column on the E3 frames lands at
+/// (364, -73)). Only between the pink stripes, like the ring.
+// UNVERIFIED: the rim's strength in the settled frame (~0.6 measured on the R's outline);
+// only the CLEAR stamp is drawn (Missless / Full Combo / All Marvelous / Failed have their own).
+const STAMP_TURN: f32 = -13.0;
+const STAMP_LETTERS: [(&str, f32); 5] = [
+    ("uT_FTclear_900", -510.0),
+    ("uT_FTclear_901", -330.0),
+    ("uT_FTclear_902", -164.0),
+    ("uT_FTclear_903", 28.0),
+    ("uT_FTclear_904", 230.0),
+];
+
+fn clear_stamp(v: &mut View, c: &Canvas) {
+    let between = slab(607.0, 380.0, 738.0, 1100.0);
+    let (s, k) = STAMP_TURN.to_radians().sin_cos();
+    let [cx, cy] = circle::CENTER;
+    let quad = |x0: f32, y0: f32, x1: f32, y1: f32| {
+        [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(|[x, y]| [cx + k * x - s * y, cy + s * x + k * y])
+    };
+    let font = |name: &str| format!("UI/Textures/FONT/{name}");
+    let rim = quad(-475.0, -245.0, 505.0, 245.0);
+    c.image_quad(v, font("uT_FTclear_906"), rim, &between, [1.0, 1.0, 1.0, 0.6]);
+    for (name, x) in STAMP_LETTERS {
+        let q = quad(x, -130.0, x + 280.0, 150.0);
+        c.image_quad(v, font(name), q, &between, WHITE);
+    }
+}
 
 /// The ring art, only between the two pink stripes of [`circle::background`].
 fn ring(v: &mut View, c: &Canvas) {
