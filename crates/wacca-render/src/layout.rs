@@ -12,8 +12,8 @@ use wacca_chart::{Chart, HoldNode, LANES, MaskDir, MaskEvent};
 
 use crate::style::{SENSOR_DEPTHS, SENSOR_INNER, SENSOR_OUTER};
 
-/// Seconds a note is visible at note speed 1.0. Measured on the real game: 3.276–3.29 s (09 §E2).
-pub const APPROACH_SECS: f64 = 3.28;
+/// Seconds a note is visible at note speed 1.0. Measured on the real game: 3.29 ± 0.01 s (09, same-method comparison).
+pub const APPROACH_SECS: f64 = 3.29;
 /// Perspective constant `k` of [`depth_to_radius`]. Measured on the real game: 0.750 (09 §E2);
 /// the community formula `3.325x / (13.825 − 10.5x)` is the same curve with k = 0.7595.
 pub const PERSPECTIVE_K: f32 = 0.750;
