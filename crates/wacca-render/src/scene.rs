@@ -161,7 +161,7 @@ pub fn build_scene_into(
             .map(|d| d as f32)
     };
 
-    if opts.bar_lines {
+    if opts.bar_lines && !opts.mesh_notes {
         push_bar_lines(out, chart, now, depth_of);
     }
     let t = now as f32;
@@ -328,8 +328,8 @@ fn push_gauge(out: &mut Vec<Vertex>, (fill, norma): (f32, f32)) {
     }
 }
 
-/// Thin white circles at measure starts, travelling like notes (vMsh_BarLine00_60_s).
-fn push_bar_lines(out: &mut Vec<Vertex>, chart: &Chart, now: f64, depth_of: impl Fn(f64) -> f64) {
+/// Chart times of the next measure starts from `now` (at most [`style::BAR_LINE_MAX`]).
+pub(crate) fn bar_line_times(chart: &Chart, now: f64) -> impl Iterator<Item = f64> + '_ {
     let ticks = BeatPos {
         measure: 1,
         tick: 0,
@@ -338,11 +338,14 @@ fn push_bar_lines(out: &mut Vec<Vertex>, chart: &Chart, now: f64, depth_of: impl
     let first = (chart.sec_to_tick(chart.view_time(now)) / ticks)
         .floor()
         .max(0.0) as u32;
-    for measure in first..first + style::BAR_LINE_MAX {
-        let t = chart.tick_to_sec(BeatPos { measure, tick: 0 }.abs_tick());
-        if t > chart.end_time {
-            break;
-        }
+    (first..first + style::BAR_LINE_MAX)
+        .map(|measure| chart.tick_to_sec(BeatPos { measure, tick: 0 }.abs_tick()))
+        .take_while(|&t| t <= chart.end_time)
+}
+
+/// Thin white circles at measure starts, travelling like notes (vMsh_BarLine00_60_s).
+fn push_bar_lines(out: &mut Vec<Vertex>, chart: &Chart, now: f64, depth_of: impl Fn(f64) -> f64) {
+    for t in bar_line_times(chart, now) {
         let d = depth_of(t);
         if (0.0..=1.0).contains(&d) {
             let r = depth_to_radius(d as f32);

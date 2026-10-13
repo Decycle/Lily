@@ -185,7 +185,7 @@ pub fn push_hold_ribbon(
     for k in 0..=rows {
         let t = (first.time + k as f64 * HOLD_ROW_SECS).min(last.time);
         let s = scale_at(t);
-        if s > 1.0 {
+        if s >= 1.0 {
             pending = Some((t, 1.0));
             continue;
         }
@@ -352,14 +352,17 @@ mod tests {
 
     #[test]
     fn judgement_ring_peak_is_where_the_capture_puts_it() {
-        // doc 11 §3.3: v 0.2054 -> Y -4.05, r 173.8, w 194.05, 302 px of 337.5.
+        // doc 11 §3.3: v 0.2054 -> Y -4.05, r 173.8 at the lane edges, w 194.05, 302 px of
+        // 337.5 (E2 measured the band at 292–315 px). Mid-lane the flat triangle is cos 3° nearer.
         assert!((RING_PEAK_V - 0.2054).abs() < 1e-4);
         let p = lane_point(0.0, RING_PEAK_V);
         assert!((p[1] + 4.05).abs() < 0.01, "{p:?}");
+        let chord = 3f32.to_radians().cos();
         let r = p[0].hypot(p[2]);
-        assert!((r - 173.8).abs() < 0.1, "{r}");
+        assert!((r - 173.82 * chord).abs() < 0.05, "{r}");
         let v = vertex(p, [0.0; 2], 0);
-        assert!((px(&v)[0].hypot(px(&v)[1]) - 302.3).abs() < 0.5);
+        let edge_px = 337.5 * 173.82 / 194.05;
+        assert!((px(&v)[0].hypot(px(&v)[1]) - edge_px * chord).abs() < 0.5);
     }
 
     /// Frame 12365 (`cap3/d12365b`, hold lanes 40..50 -> 0..15 over 170 frames): the captured

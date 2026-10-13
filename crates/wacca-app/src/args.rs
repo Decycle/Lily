@@ -8,7 +8,7 @@ use crate::screen::Screen;
 
 pub const USAGE: &str = "usage: wacca-app --assets <dir> [--data <dir>] [--save <file>] [--windowed] \
 [--autoplay] [--speed 1.0..6.0] [--offset-ms N] \
-[--screen title|mode|category|select|options|calibrate] \
+[--screen title|mode|category|select|options|calibrate|results] \
 [--chart <MusicData/<song>/<song>_NN.mer | MusicData/<song>> [--difficulty normal|hard|expert|inferno]]";
 
 pub const SPEED_RANGE: std::ops::RangeInclusive<f64> = 1.0..=6.0;
@@ -56,6 +56,7 @@ fn screen(v: &str) -> Option<Screen> {
         "select" => Screen::SongSelect,
         "options" => Screen::Options,
         "calibrate" => Screen::Calibrate,
+        "results" => Screen::Results,
         _ => return None,
     })
 }

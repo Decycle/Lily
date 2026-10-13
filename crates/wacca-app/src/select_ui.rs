@@ -277,7 +277,7 @@ fn info_plate(p: &mut Painter, list: &SongList, save: &SaveData) {
 }
 
 /// The song select screen. `shift` is the wheel's visual offset in songs (eases to 0).
-pub fn view(c: Canvas, list: &SongList, shift: f32, save: &SaveData) -> View {
+pub fn view(c: Canvas, list: &SongList, shift: f32, save: &SaveData, who: &chrome::Player) -> View {
     let mut p = Painter::new(c);
     chrome::background(&mut p);
     // `plate01` (dark) then `plate00` (grey zigzag behind the jacket strip).
@@ -353,7 +353,7 @@ pub fn view(c: Canvas, list: &SongList, shift: f32, save: &SaveData) -> View {
     p.button([-476.0, -117.0], [60.0, 60.0], Action::Genre(-1));
     chrome::icon(&mut p, Icon::Right, [474.0, -118.0], 30.0, 0.0);
     p.button([474.0, -118.0], [60.0, 60.0], Action::Genre(1));
-    chrome::user_plate(&mut p, "GUEST");
+    chrome::user_plate(&mut p, who);
     chrome::rim(
         &mut p,
         RimButtons {
@@ -393,7 +393,7 @@ mod tests {
         l.set_genre(Some(0));
         l.set_difficulty(wacca_chart::Difficulty::Expert);
         let c = Canvas::fit(1080.0, 1080.0);
-        let v = view(c, &l, 0.0, &SaveData::default());
+        let v = view(c, &l, 0.0, &SaveData::default(), &chrome::Player::default());
         let texts = v.texts();
         assert!(texts.contains(&"A") && texts.contains(&"13+") && texts.contains(&"EXPERT"));
         assert!(texts.contains(&"C") && texts.contains(&"ANIME / POP"));

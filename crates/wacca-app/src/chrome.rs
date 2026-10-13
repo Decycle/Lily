@@ -85,8 +85,39 @@ pub fn background(p: &mut Painter) {
     );
 }
 
-/// `BP_Circle_user`: plate `uT_US_1` hanging from the top, user icon and name.
-pub fn user_plate(p: &mut Painter, name: &str) {
+/// What the user plate shows (from the save: settings, play count, RP and rating).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Player {
+    pub name: String,
+    /// Title line; empty shows the bare "Title" label.
+    pub title: String,
+    /// [`wacca_game::points::player_level`].
+    pub level: u32,
+    /// Reverse Points earned so far.
+    pub rp: u64,
+    /// Player rating as shown (whole points).
+    pub rate: u32,
+}
+
+impl Default for Player {
+    fn default() -> Self {
+        Self {
+            name: "GUEST".into(),
+            title: String::new(),
+            level: 1,
+            rp: 0,
+            rate: 0,
+        }
+    }
+}
+
+/// Plate label grey (`Title`, `Lv.`, `RP`).
+const PLATE_LABEL: Rgba = hex(0x8a8a90, 1.0);
+const PLATE_INK: Rgba = hex(0x13142d, 1.0);
+
+/// `BP_Circle_user`: plate `uT_US_1` hanging from the top, title line, level and RP, user icon,
+/// name and rating. Text positions measured on `runs/e3/*/nav-08-mode-select.png`.
+pub fn user_plate(p: &mut Painter, who: &Player) {
     let full = crate::canvas::FULL;
     let plate = "UI/Textures/USERPLATE/uT_US_1";
     p.image(
@@ -111,13 +142,46 @@ pub fn user_plate(p: &mut Painter, name: &str) {
         hex(0x111111, 1.0),
         Align::Center,
     );
-    p.text(
-        name,
-        [-161.0, -350.0],
-        22.0,
-        hex(0x13142d, 1.0),
+    p.text(&who.name, [-161.0, -350.0], 22.0, PLATE_INK, Align::Left);
+    let title = hex(0xc4c4cc, 1.0);
+    p.text("Title", [-232.0, -459.0], 7.0, title, Align::Left);
+    p.text_fit(
+        who.title.clone(),
+        [-193.0, -459.0],
+        8.0,
+        title,
         Align::Left,
+        Some(330.0),
     );
+    p.text("Lv.", [-188.0, -413.0], 6.0, PLATE_LABEL, Align::Left);
+    let ink = PLATE_INK;
+    p.text(
+        who.level.to_string(),
+        [-104.0, -412.0],
+        15.0,
+        ink,
+        Align::Right,
+    );
+    p.text("RP", [-80.0, -413.0], 6.0, PLATE_LABEL, Align::Left);
+    p.text(who.rp.to_string(), [5.0, -412.0], 15.0, ink, Align::Right);
+    p.text("Rate:", [308.0, -342.0], 7.0, WHITE, Align::Center);
+    p.numerals(
+        who.rate.to_string(),
+        [340.0, -317.0],
+        22.0,
+        ink,
+        Align::Right,
+    );
+}
+
+/// The arcade's menu countdown: two pink digits above GO (`LimitationTimeTable`; E3 frames,
+/// centre (0, 450)). Only drawn with the `menu_timers` setting.
+pub fn countdown(p: &mut Painter, secs: u32) {
+    let text = format!("{:02}", secs.min(99));
+    let (at, px) = ([0.0, 449.0], 34.0);
+    let rim = hex(0xffffff, 0.8);
+    p.numerals(text.clone(), [at[0], at[1] + 1.5], px, rim, Align::Center);
+    p.numerals(text, at, px, hex(0xff14b4, 1.0), Align::Center);
 }
 
 /// Which rim buttons a screen shows.
@@ -143,9 +207,28 @@ fn wedge(p: &mut Painter, degrees: f32, radius: f32, size: [f32; 2], tint: Rgba)
     );
 }
 
+/// The pink GO wedge at the bottom of the rim (timer icon, "GO").
+pub fn go(p: &mut Painter) {
+    wedge(p, 0.0, 480.0, [230.0, 110.0], DECIDE_BTN);
+    icon(p, Icon::Go, [-20.0, 487.0], 40.0, 0.0);
+    p.text("GO", [22.0, 487.0], 22.0, WHITE, Align::Center);
+    p.button([0.0, 480.0], [200.0, 90.0], Action::Confirm);
+}
+
+/// The results screen's RETRY tab, styled and placed like the game's FAVORITE tab (a pale-blue
+/// rim wedge right of GO, a disc icon and a small turned label; E3 result frames).
+/// The original toggles a favourite there; this build keeps RETRY in its place.
+pub fn retry_tab(p: &mut Painter) {
+    let deg = -21.0;
+    wedge(p, deg, 478.0, [150.0, 122.0], hex(0x3d9be6, 0.8));
+    icon(p, Icon::Back, [172.0, 459.0], 40.0, 0.0);
+    p.text_turned("RETRY", [222.0, 434.0], 10.0, hex(0xe8f0ff, 1.0), deg);
+    p.button([190.0, 452.0], [130.0, 90.0], Action::Retry);
+}
+
 /// The buttons around the rim: DIFFICULTY (left), BACK, SORT, the two arrows and GO.
 pub fn rim(p: &mut Painter, b: RimButtons) {
-    wedge(p, 0.0, 480.0, [230.0, 110.0], DECIDE_BTN);
+    go(p);
     for d in [27.0, -27.0] {
         wedge(p, d, 470.0, [190.0, 120.0], hex(0x1a4fb8, 0.9));
     }
@@ -164,10 +247,6 @@ pub fn rim(p: &mut Painter, b: RimButtons) {
     p.button([-223.0, 438.0], [110.0, 90.0], Action::Left);
     icon(p, Icon::Right, [222.0, 437.0], 36.0, -45.0);
     p.button([222.0, 437.0], [110.0, 90.0], Action::Right);
-
-    icon(p, Icon::Go, [-20.0, 487.0], 40.0, 0.0);
-    p.text("GO", [22.0, 487.0], 22.0, WHITE, Align::Center);
-    p.button([0.0, 480.0], [200.0, 90.0], Action::Confirm);
 
     if b.back {
         icon(p, Icon::Back, [-380.0, 310.0], 34.0, 0.0);

@@ -1,8 +1,9 @@
 //! Notes as the game's real 3D meshes (pure, no GPU). Spec: `docs/research/11-shaders-and-meshes.md`
 //! §1.3–1.4 (meshes, materials), §2.3–2.4 (camera, note transforms from RenderDoc captures).
 //!
-//! Placement: [`crate::camera`]. Only the note bodies are drawn here; the slide chevron and snap
-//! arrow sections (mesh sections at or above the note width) are left out (ported separately).
+//! Placement: [`crate::camera`]. Only the note bodies (and bar lines) are drawn here; the slide
+//! chevron and snap arrow sections (mesh sections at or above the note width) are left out
+//! (ported separately).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -11,7 +12,7 @@ use wacca_chart::{Bonus, Chart, LANES, NoteBody, SlideDir, SnapDir};
 
 use crate::camera::{note_scale, note_to_world, world_to_view};
 use crate::layout::{last_drawable_time, raw_depth};
-use crate::scene::{LiveState, SceneOptions};
+use crate::scene::{LiveState, SceneOptions, bar_line_times};
 
 /// The note meshes used for each note kind (`vMsh_<stem>_<width>_s`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -23,10 +24,12 @@ pub enum MeshKind {
     Slide,
     /// Body (plus arrow section, not drawn here).
     Snap,
+    /// Measure line (`vMsh_BarLine00_60_s`, one full circle; width ignored).
+    BarLine,
 }
 
 impl MeshKind {
-    pub const ALL: [Self; 4] = [Self::Default, Self::HoldStart, Self::Slide, Self::Snap];
+    pub const NOTES: [Self; 4] = [Self::Default, Self::HoldStart, Self::Slide, Self::Snap];
 
     fn stem(self) -> &'static str {
         match self {
@@ -34,11 +37,13 @@ impl MeshKind {
             Self::HoldStart => "vMsh_HoldStartNote00",
             Self::Slide => "vMsh_SlideNote00",
             Self::Snap => "vMsh_SnapNote00",
+            Self::BarLine => "vMsh_BarLine00",
         }
     }
 
     /// File name of the mesh for a note `width` lanes wide.
     pub fn file_name(self, width: u8) -> String {
+        let width = if self == Self::BarLine { LANES } else { width };
         format!("{}_{width:02}_s.obj", self.stem())
     }
 }
@@ -57,6 +62,8 @@ pub enum MaterialId {
     BonusN,
     BonusL,
     BonusR,
+    /// `vMX_2_BarLine_000`.
+    BarLine,
 }
 
 /// Material constants (linear RGB colour and the NTap scalars) from the cooked material
@@ -71,6 +78,8 @@ pub struct Material {
     pub chain: f32,
     pub bonus: f32,
     pub bonus_flip: f32,
+    /// `vMX_2_BarLine_000` instead of NTap (`color` = `B_Color_2`).
+    pub bar_line: bool,
 }
 
 const fn tap(color: [f32; 3], line: f32, chain: f32, bonus: f32, bonus_flip: f32) -> Material {
@@ -82,12 +91,13 @@ const fn tap(color: [f32; 3], line: f32, chain: f32, bonus: f32, bonus_flip: f32
         chain,
         bonus,
         bonus_flip,
+        bar_line: false,
     }
 }
 
 /// Indexed by [`MaterialId`]. MI values override the master's defaults (`Line` 0.08,
 /// `BornusNoteFlip` 1, `ChainNote`/`BornusNote` 0).
-pub const MATERIALS: [Material; 10] = [
+pub const MATERIALS: [Material; 11] = [
     // vMX_2_Note_MUS_m_000_Normal00
     tap([1.0, 0.035601, 0.863157], 0.08, 0.0, 0.0, 1.0),
     // Chain00
@@ -104,6 +114,11 @@ pub const MATERIALS: [Material; 10] = [
     tap([1.0, 0.035601, 0.863157], 0.01, 0.0, 1.0, 0.0),
     tap([1.0, 0.323143, 0.0], 0.08, 0.0, 1.0, 0.0),
     tap([0.013702, 0.651406, 0.008568], 0.01, 0.0, 1.0, 0.0),
+    // vMX_2_BarLine_000: B_Color_2 (Line_Width 1 is in the shader).
+    Material {
+        bar_line: true,
+        ..tap([0.466146, 0.468174, 0.5], 0.0, 0.0, 0.0, 0.0)
+    },
 ];
 
 /// Mesh and body material of a note.
@@ -199,8 +214,13 @@ impl NoteMeshes {
     /// the plain note mesh are there. Unreadable files are logged and skipped.
     pub fn load(dir: &Path) -> Option<Self> {
         let mut meshes = HashMap::new();
-        for kind in MeshKind::ALL {
-            for width in 1..=LANES {
+        for kind in MeshKind::NOTES.into_iter().chain([MeshKind::BarLine]) {
+            let widths = if kind == MeshKind::BarLine {
+                LANES..=LANES
+            } else {
+                1..=LANES
+            };
+            for width in widths {
                 let path = dir.join(kind.file_name(width));
                 let Ok(text) = std::fs::read_to_string(&path) else {
                     continue;
@@ -225,15 +245,18 @@ impl NoteMeshes {
         self.meshes.insert((kind, width), mesh);
     }
 
-    /// Mesh for `kind`, falling back to the plain note mesh of that width.
+    /// Mesh for `kind`, note kinds falling back to the plain note mesh of that width.
     pub fn get(&self, kind: MeshKind, width: u8) -> Option<&NoteMesh> {
+        if kind == MeshKind::BarLine {
+            return self.meshes.get(&(kind, LANES));
+        }
         self.meshes
             .get(&(kind, width))
             .or_else(|| self.meshes.get(&(MeshKind::Default, width)))
     }
 }
 
-/// One corner of a placed note triangle (see [`place`]).
+/// One corner of a placed note triangle.
 #[derive(Clone, Copy, Debug, PartialEq, Default, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct MeshVertex {
@@ -266,8 +289,8 @@ pub fn push_mesh(
     );
 }
 
-/// Note triangles (far notes first) of the chart at `now`, like the notes of
-/// [`build_scene`](crate::build_scene). Hold ends stay 2D (their material is not ported yet).
+/// Note (and, with [`SceneOptions::bar_lines`], bar line) triangles of the chart at `now`, far
+/// ones first, like the notes of [`build_scene`](crate::build_scene). Hold ends stay 2D.
 pub fn build_mesh_notes(
     out: &mut Vec<MeshVertex>,
     meshes: &NoteMeshes,
@@ -279,21 +302,36 @@ pub fn build_mesh_notes(
     out.clear();
     let last_time = last_drawable_time(chart, now);
     let now_dist = chart.dist_at(chart.view_time(now));
+    let depth = |t: f64| Some(raw_depth(chart, t, now_dist, opts.note_speed) as f32);
+    let visible = |d: &f32| (0.0..=1.0).contains(d);
     let judged = |i: usize| live.judged.get(i).copied().unwrap_or(false);
-    for (i, note) in chart.notes.iter().enumerate().rev() {
+    // (depth, mesh, first lane, width, material); no depth buffer: drawn far to near.
+    let mut items: Vec<(f32, &NoteMesh, f32, u8, MaterialId)> = Vec::new();
+    for (i, note) in chart.notes.iter().enumerate() {
         if judged(i) || last_time.is_some_and(|last| note.time > last) {
             continue;
         }
-        let d = raw_depth(chart, note.time, now_dist, opts.note_speed);
-        if !(0.0..=1.0).contains(&d) {
+        let Some(d) = depth(note.time).filter(visible) else {
             continue;
-        }
+        };
         let (kind, material) = note_style(&note.body, note.bonus);
         let width = note.arc.width.clamp(1, LANES);
         if let Some(mesh) = meshes.get(kind, width) {
-            let lane = f32::from(note.arc.lane);
-            push_mesh(out, mesh, d as f32, lane, width, material);
+            items.push((d, mesh, f32::from(note.arc.lane), width, material));
         }
+    }
+    if opts.bar_lines
+        && let Some(mesh) = meshes.get(MeshKind::BarLine, LANES)
+    {
+        for d in bar_line_times(chart, now).filter_map(depth).filter(visible) {
+            items.push((d, mesh, 0.0, LANES, MaterialId::BarLine));
+        }
+    }
+    // Far first; at equal depth the bar line under the note (its outer edge is nearer).
+    let is_note = |m: MaterialId| m != MaterialId::BarLine;
+    items.sort_by(|a, b| b.0.total_cmp(&a.0).then(is_note(a.4).cmp(&is_note(b.4))));
+    for (d, mesh, lane, width, material) in items {
+        push_mesh(out, mesh, d, lane, width, material);
     }
 }
 
@@ -356,5 +394,58 @@ mod tests {
         m.insert(MeshKind::Default, 4, NoteMesh::default());
         assert!(m.get(MeshKind::Slide, 4).is_some());
         assert!(m.get(MeshKind::Slide, 5).is_none());
+    }
+
+    #[test]
+    fn notes_and_bar_lines_are_drawn_far_to_near() {
+        use wacca_chart::{Arc, BeatPos, ChartHeader, Note, TempoSegment};
+        let note = |time: f64| Note {
+            pos: BeatPos::default(),
+            time,
+            arc: Arc { lane: 10, width: 4 },
+            bonus: Bonus::None,
+            body: NoteBody::Touch,
+            file_index: 0,
+        };
+        let chart = Chart {
+            header: ChartHeader::default(),
+            notes: vec![note(1.0), note(2.5), note(30.0)],
+            masks: vec![],
+            // 120 BPM 4/4: a measure every 2 s.
+            tempo: vec![TempoSegment {
+                start_tick: 0,
+                start_sec: 0.0,
+                bpm: 120.0,
+                num: 4,
+                den: 4,
+            }],
+            scroll: vec![],
+            reverses: vec![],
+            tutorial_tags: vec![],
+            end: BeatPos::default(),
+            end_time: 60.0,
+        };
+        let one = NoteMesh {
+            corners: vec![([170.0, 0.0, 10.0], [0.5, 0.5], 0)],
+        };
+        let mut meshes = NoteMeshes::default();
+        meshes.insert(MeshKind::Default, 4, one.clone());
+        meshes.insert(MeshKind::BarLine, LANES, one);
+        let opts = SceneOptions {
+            bar_lines: true,
+            ..SceneOptions::default()
+        };
+        let mut out = Vec::new();
+        let judged = [true];
+        let live = LiveState {
+            judged: &judged,
+            ..LiveState::default()
+        };
+        build_mesh_notes(&mut out, &meshes, &chart, 0.5, &opts, &live);
+        let kinds: Vec<u32> = out.iter().map(|v| v.material).collect();
+        // Visible window 0.5..3.83 s: bar line at 2 s, note at 2.5 s (the 1 s note is judged).
+        let (bar, normal) = (MaterialId::BarLine as u32, MaterialId::Normal as u32);
+        assert_eq!(kinds, [normal, bar]);
+        assert!(out[0].pos[2] > out[1].pos[2], "the far one first");
     }
 }

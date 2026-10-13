@@ -9,8 +9,8 @@ use std::time::Instant;
 
 use wacca_audio::{BgmBank, DEFAULT_SE_SET, HitSounds, Player, SeBank};
 use wacca_game::grade::PlayResult;
-use wacca_game::rating;
 use wacca_game::save::{self, SaveData};
+use wacca_game::{points, rating};
 use wacca_render::layout::{Rect, playfield_viewport};
 use wacca_render::text::{Fonts, TextRenderer};
 use wacca_render::{JudgeSprite, MeshVertex, Renderer, Sprite, SpriteSheet, Stage, Vertex};
@@ -24,6 +24,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Fullscreen, Window, WindowId};
 
 use crate::canvas::{Canvas, ease};
+use crate::chrome::{self, Player as Plate};
 use crate::gesture::{Gesture, Pointer, Scroller};
 use crate::menu::Menu;
 use crate::pacer::Pacer;
@@ -94,6 +95,7 @@ pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
         play: None,
         summary: None,
         results_at: Instant::now(),
+        timer_at: Instant::now(),
         last_spec: None,
         hits: None,
         preview: PreviewPlayer::default(),
@@ -489,6 +491,8 @@ struct App {
     summary: Option<Summary>,
     /// When the results screen appeared (its entry animation).
     results_at: Instant,
+    /// When the running menu countdown started ([`screen::time_limit`]).
+    timer_at: Instant,
     last_spec: Option<PlaySpec>,
     /// Decoded once, at the first play.
     hits: Option<HitSounds>,
@@ -530,7 +534,13 @@ impl App {
     fn view(&self) -> View {
         let [w, h] = self.size();
         let Some((from, at)) = self.wipe else {
-            return self.screen_view(self.screen);
+            let mut v = self.screen_view(self.screen);
+            if let Some(secs) = self.countdown() {
+                let mut p = crate::canvas::Painter::new(Canvas::fit(w, h));
+                chrome::countdown(&mut p, secs);
+                v.items.extend(p.finish().items);
+            }
+            return v;
         };
         let t = at.elapsed().as_secs_f32();
         let shown = if wipe::covering(t) { from } else { self.screen };
@@ -541,6 +551,28 @@ impl App {
         v
     }
 
+    /// The user plate from the save.
+    fn plate(&self) -> Plate {
+        let save = &self.s.save;
+        let rate = rating::save_rating(save, self.s.menu.list.songs());
+        Plate {
+            name: save.settings.player_name.clone(),
+            title: save.settings.player_title.clone(),
+            level: points::player_level(save.total_plays()),
+            rp: save.reverse_points,
+            rate: results::Rating::shown(rate),
+        }
+    }
+
+    /// Seconds left on the current screen's countdown, if the `menu_timers` setting shows one.
+    fn countdown(&self) -> Option<u32> {
+        let limit = screen::time_limit(self.screen).filter(|_| self.s.menu.settings.menu_timers)?;
+        Some(screen::countdown(
+            limit,
+            self.timer_at.elapsed().as_secs_f32(),
+        ))
+    }
+
     fn screen_view(&self, screen: Screen) -> View {
         let m = &self.s.menu;
         let [w, h] = self.size();
@@ -548,11 +580,18 @@ impl App {
         let since = self.entered.elapsed().as_secs_f32();
         match screen {
             Screen::Title => title::view(canvas, since),
-            Screen::ModeSelect => mode::view(canvas, since),
-            Screen::Category => {
-                category::view(canvas, &m.list, m.category, self.wheel, &self.s.save)
+            Screen::ModeSelect => mode::view(canvas, since, &self.plate()),
+            Screen::Category => category::view(
+                canvas,
+                &m.list,
+                m.category,
+                self.wheel,
+                &self.s.save,
+                &self.plate(),
+            ),
+            Screen::SongSelect => {
+                select_ui::view(canvas, &m.list, self.wheel, &self.s.save, &self.plate())
             }
-            Screen::SongSelect => select_ui::view(canvas, &m.list, self.wheel, &self.s.save),
             Screen::Options => {
                 let title = m.list.current().map_or("", |s| s.title.as_str());
                 options::view(&m.options, &m.settings, m.autoplay, title, canvas)
@@ -615,6 +654,9 @@ impl App {
                 }
                 if wipe::applies(self.screen, s) {
                     self.wipe = Some((self.screen, Instant::now()));
+                }
+                if !screen::keeps_timer(self.screen, s) {
+                    self.timer_at = Instant::now();
                 }
                 self.screen = s;
                 self.entered = Instant::now();
@@ -690,12 +732,14 @@ impl App {
         let key = spec.song_id.zip(spec.difficulty);
         let songs = self.s.menu.list.songs();
         let before = rating::save_rating(&self.s.save, songs);
+        let rp = points::reverse_points(result.grade, spec.level.unwrap_or(1.0));
         let (mut new_best, mut not_saved) = (false, None);
         match (key, &self.s.save_path) {
             _ if play.opts.autoplay => not_saved = Some("AUTOPLAY: NOT SAVED".to_string()),
             (None, _) => not_saved = Some("UNKNOWN SONG: NOT SAVED".into()),
             (_, None) => not_saved = Some("NO SAVE LOCATION: NOT SAVED".into()),
             (Some((id, d)), Some(path)) => {
+                self.s.save.reverse_points += u64::from(rp);
                 match record::save_result(path, &mut self.s.save, id, d, &result) {
                     Ok(best) => {
                         new_best = best;
@@ -728,11 +772,12 @@ impl App {
             completed,
             new_best,
             not_saved,
-            player: self.s.save.settings.player_name.clone(),
+            player: self.plate(),
             rating: results::Rating {
                 before,
                 after: rating::save_rating(&self.s.save, songs),
             },
+            rp,
         });
         self.results_at = Instant::now();
         self.event(event_loop, Event::PlayOver);
@@ -975,6 +1020,11 @@ impl App {
             self.perf.frame(f64::from(dt));
         }
         self.wheel = ease(self.wheel, dt, WHEEL_TAU);
+        // A menu countdown that ran out moves on as if GO was pressed (arcade behaviour).
+        if self.wipe.is_none() && self.countdown() == Some(0) {
+            self.timer_at = Instant::now();
+            self.action(event_loop, Action::Confirm);
+        }
         if self
             .wipe
             .is_some_and(|(_, at)| wipe::done(at.elapsed().as_secs_f32()))
@@ -1059,6 +1109,19 @@ impl App {
         if let Some(s) = self.s.screen.take() {
             if s == Screen::Calibrate {
                 self.start_calibration();
+            }
+            if s == Screen::Results {
+                let song = self.s.menu.list.current();
+                let field = |f: fn(&wacca_game::catalog::Song) -> &String| {
+                    song.map_or(String::new(), |s| f(s).clone())
+                };
+                let (title, artist, jacket) = (
+                    field(|s| &s.title),
+                    field(|s| &s.artist),
+                    field(|s| &s.jacket),
+                );
+                self.summary = Some(results::demo(&title, &artist, &jacket, self.plate()));
+                self.results_at = Instant::now();
             }
             self.screen = s;
         }

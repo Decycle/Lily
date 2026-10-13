@@ -2,17 +2,18 @@
 // TBasePassPSFNoLightMapPolicy<FLocalVertexFactory> pixel shader (doc 11 §1.2–1.3, §3.1); the
 // material instance values (NoteColor, Line, ChainNote, Bornus*) come per vertex from a table.
 // BLEND_Masked + MSM_Unlit: emissive colour, discard below OpacityMaskClipValue 0.3333.
+// Bar lines (vMX_2_BarLine_000, doc 11 §3.1, captured PS d12365/2493) share the pipeline.
 // Constant names in comments are the material parameters (cb4 / cb3 slots in the disassembly).
 
 struct Material {
     color: vec4<f32>,
     // Dark, HighLight, Line, ChainNote
     p0: vec4<f32>,
-    // BornusNote, BornusNoteFlip, -, -
+    // BornusNote, BornusNoteFlip, bar line (1), -
     p1: vec4<f32>,
 };
 
-@group(0) @binding(0) var<uniform> materials: array<Material, 10>;
+@group(0) @binding(0) var<uniform> materials: array<Material, 11>;
 @group(0) @binding(1) var note_base: texture_2d<f32>;   // vT_NoteBase00_00_m (sRGB)
 @group(0) @binding(2) var note_mask: texture_2d<f32>;   // vT_NoteBase01_00_m (linear)
 @group(0) @binding(3) var clamp_samp: sampler;          // SSM_Clamp_WorldGroupSettings
@@ -107,10 +108,20 @@ fn note_tap(uv: vec2<f32>, w: f32, m: Material) -> vec4<f32> {
     return vec4<f32>(max(rgb, vec3<f32>(0.0)), opacity);
 }
 
+// vMX_2_BarLine_000: a thin line across the band (u = 0.5) that widens to the full band with
+// view depth: mask = floor(a + L·(3 − a)), a = 0.2 − cos(2πu), L = min((w/500)^6, 1)·Line_Width.
+fn bar_line(uv: vec2<f32>, w: f32, m: Material) -> vec4<f32> {
+    let a = 0.2 - cos(6.283185 * uv.x);
+    let x = max(w * 0.002, 0.0);
+    let l = 1.0 + 1.0 * (min(x * x * x * x * x * x, 1.0) - 1.0);
+    return vec4<f32>(max(m.color.rgb, vec3<f32>(0.0)), floor(l * (3.0 - a) + a));
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let m = materials[in.material];
-    let c = note_tap(in.uv, in.w, m);
+    let tap = note_tap(in.uv, in.w, m);
+    let c = select(tap, bar_line(in.uv, in.w, m), m.p1.z > 0.5);
     if c.a < CLIP {
         discard;
     }

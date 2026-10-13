@@ -302,6 +302,20 @@ impl Painter {
             .text_in(s, [x, y], px * k, color, align, max_w.map(|w| w * k));
     }
 
+    /// One line in the game's numeral face, vertically centred on `at[1]`, `px` design units.
+    pub fn numerals(
+        &mut self,
+        s: impl Into<String>,
+        at: [f32; 2],
+        px: f32,
+        color: Rgba,
+        align: Align,
+    ) {
+        let m = self.c.place(at);
+        let p = m.pt([at[0], at[1] - px * 0.58]);
+        self.layer(at).numerals(s, p, px * m.scale, color, align);
+    }
+
     /// One line centred on `at`, turned by `degrees` (clockwise).
     pub fn text_turned(&mut self, s: &str, at: [f32; 2], size: f32, color: Rgba, degrees: f32) {
         let px = font_px(size);
@@ -515,6 +529,7 @@ mod tests {
         use wacca_game::save::{SaveData, Settings};
         let l = list();
         let save = SaveData::default();
+        let who = crate::chrome::Player::default();
         for size @ [w, h] in [
             [1920.0, 1200.0],
             [1920.0, 1080.0],
@@ -525,9 +540,9 @@ mod tests {
             let menus = crate::options::OptionsMenu::default();
             let views = [
                 crate::title::view(c, 1.0),
-                crate::mode::view(c, 1.0),
-                crate::category::view(c, &l, 0, 0.0, &save),
-                crate::select_ui::view(c, &l, 0.0, &save),
+                crate::mode::view(c, 1.0, &who),
+                crate::category::view(c, &l, 0, 0.0, &save, &who),
+                crate::select_ui::view(c, &l, 0.0, &save, &who),
                 crate::options::view(&menus, &Settings::default(), false, "Song", c),
             ];
             // The circle is on screen and every tap area is centred on screen, except the

@@ -40,6 +40,8 @@ pub struct SaveData {
     pub settings: Settings,
     /// Keyed by [`chart_key`].
     pub records: BTreeMap<String, ChartRecord>,
+    /// Reverse Points earned so far (sum of every saved play's RP, [`crate::points`]).
+    pub reverse_points: u64,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -50,6 +52,7 @@ impl Default for SaveData {
             version: SAVE_VERSION,
             settings: Settings::default(),
             records: BTreeMap::new(),
+            reverse_points: 0,
             extra: Map::new(),
         }
     }
@@ -73,6 +76,10 @@ pub struct Settings {
     pub touch_guide: bool,
     /// Name on the results screen's player plate (the game shows the card's user name).
     pub player_name: String,
+    /// Title line above the plate (the game's earned titles; empty = none).
+    pub player_title: String,
+    /// Show the arcade's menu countdowns and advance when they run out (off in this home build).
+    pub menu_timers: bool,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -88,6 +95,8 @@ impl Default for Settings {
             bar_lines: true,
             touch_guide: false,
             player_name: "PLAYER".to_string(),
+            player_title: String::new(),
+            menu_timers: false,
             extra: Map::new(),
         }
     }
@@ -160,6 +169,11 @@ pub fn chart_key(song_id: u32, d: Difficulty) -> String {
 impl SaveData {
     pub fn record(&self, song_id: u32, d: Difficulty) -> Option<&ChartRecord> {
         self.records.get(&chart_key(song_id, d))
+    }
+
+    /// Plays over all charts (incl. give-ups).
+    pub fn total_plays(&self) -> u32 {
+        self.records.values().map(|r| r.play_count).sum()
     }
 
     /// Merge a play into its chart's record. Returns `true` on a new best score.
@@ -396,6 +410,21 @@ mod tests {
         let json = serde_json::to_string(&on).unwrap();
         assert!(json.contains(r#""barLines":false"#) && json.contains(r#""touchGuide":true"#));
         assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), on);
+    }
+
+    #[test]
+    fn plate_fields_default_and_count_plays() {
+        let old: SaveData = serde_json::from_str(r#"{"settings": {"noteSpeed": 3.0}}"#).unwrap();
+        assert_eq!(old.reverse_points, 0);
+        assert!(old.settings.player_title.is_empty() && !old.settings.menu_timers);
+        let mut s = SaveData::default();
+        s.merge(1, Difficulty::Hard, &result(900_000, Lamp::Clear, 0, 10));
+        s.merge(1, Difficulty::Hard, &result(910_000, Lamp::Clear, 0, 10));
+        s.merge(2, Difficulty::Expert, &result(0, Lamp::Failed, 50, 0));
+        assert_eq!(s.total_plays(), 3);
+        s.reverse_points = 870;
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains(r#""reversePoints":870"#) && json.contains("menuTimers"));
     }
 
     #[test]
