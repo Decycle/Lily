@@ -10,7 +10,10 @@
 //! game's 3D meshes when `data/meshes` exists (`wacca-convert --meshes`); `WACCA_SHOT_2D=1` forces
 //! the 2D notes. `WACCA_SHOT_SIZE` sets the side (px), `WACCA_SHOT_MOVIE=<dir>` shows a movie
 //! frame from `<dir>/{y,u,v}.png` (8-bit grey planes), `WACCA_SHOT_3D=1` leaves out the 2D layer
-//! (compare with the game's main view before its HUD).
+//! (compare with the game's main view before its HUD). Without a movie the background scene
+//! shows: `WACCA_SHOT_BG=normal` (default), `good` or `off`;
+//! `WACCA_SHOT_BG_CLOCK=<time>,<bar>,<beat>` sets its material clocks, `WACCA_SHOT_BG_CAPTURE=<png>`
+//! also saves its capture target.
 
 use std::error::Error;
 use std::sync::Arc as Shared;
@@ -21,8 +24,8 @@ use wacca_chart::{
     ScrollSegment, SlideDir, SnapDir,
 };
 use wacca_render::{
-    Effects, JudgeSprite, LiveState, Renderer, RimState, SceneOptions, Stage, build_mesh_notes,
-    build_scene_into, build_stage_into,
+    Background, BgState, Effects, JudgeSprite, LiveState, Renderer, RimState, SceneOptions, Stage,
+    build_mesh_notes, build_scene_into, build_stage_into,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -282,8 +285,6 @@ fn snapshot(
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(1024);
-    // Readback rows are 256-byte aligned.
-    let row = (side * 4).next_multiple_of(256);
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
     let adapter = pollster::block_on(instance.request_adapter(&Default::default()))?;
     let (device, queue) =
@@ -329,6 +330,21 @@ fn snapshot(
     };
     let mut fx = Effects::default();
     fx.set_library(renderer.effect_library());
+    // Without a movie: the background scene, Normal or Good (WACCA_SHOT_BG=good), warmed up as
+    // the game starts it; WACCA_SHOT_BG=off leaves it out.
+    let mut background = match std::env::var("WACCA_SHOT_BG").as_deref() {
+        _ if movie.is_some() => None,
+        Ok("off") => None,
+        state => renderer.background_library().map(|lib| {
+            let mut bg = Background::new(lib);
+            bg.set_state(if state == Ok("good") {
+                BgState::Good
+            } else {
+                BgState::Normal
+            });
+            bg
+        }),
+    };
     let dt = 1.0 / 120.0;
     let mut t = at - 0.5;
     while t < at {
@@ -356,6 +372,9 @@ fn snapshot(
             });
         fx.set_holds(holds.collect());
         fx.update(dt as f32);
+        if let Some(bg) = &mut background {
+            bg.update(dt as f32);
+        }
         t += dt;
     }
     let shown = replay.shown(at);
@@ -385,6 +404,7 @@ fn snapshot(
         judged: &judged,
         holding: &holding,
         effects: Some(&fx),
+        background: background.as_ref(),
         judgement: last,
         combo: (combo.0, (at - combo.1).min(1e3) as f32),
         rim: Some(RimState {
@@ -417,26 +437,63 @@ fn snapshot(
     let mut stage = Stage::default();
     let meshes = renderer.note_meshes().filter(|_| opts.mesh_notes);
     build_stage_into(&mut stage, chart, at, &opts, &live, meshes);
+    // WACCA_SHOT_BG_CLOCK=<GameTime>,<Bar>,<Beat> sets the background material clocks (e.g. to a
+    // RenderDoc frame's values).
+    if let Ok(clock) = std::env::var("WACCA_SHOT_BG_CLOCK") {
+        let v: Vec<f32> = clock.split(',').filter_map(|x| x.parse().ok()).collect();
+        if let [time, bar, beat] = v[..] {
+            (
+                stage.background.time,
+                stage.background.bar,
+                stage.background.beat,
+            ) = (time, bar, beat);
+        }
+    }
     let mut encoder = device.create_command_encoder(&Default::default());
     let view = target.create_view(&Default::default());
     renderer.render_with_notes(&mut encoder, &view, [side, side], &scene, &notes, &stage);
+    queue.submit([encoder.finish()]);
+    save_texture(&device, &queue, &target, out)?;
+    // WACCA_SHOT_BG_CAPTURE=<png>: the background capture too (linear colour as stored).
+    if let Some(path) = std::env::var_os("WACCA_SHOT_BG_CAPTURE") {
+        save_texture(
+            &device,
+            &queue,
+            renderer.background_capture(),
+            std::path::Path::new(&path),
+        )?;
+    }
+    Ok(())
+}
+
+/// Copies an RGBA8 `texture` to the PNG `out`.
+fn save_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    out: &std::path::Path,
+) -> Result<(), Box<dyn Error>> {
+    let [w, h] = [texture.width(), texture.height()];
+    // Readback rows are 256-byte aligned.
+    let row = (w * 4).next_multiple_of(256);
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("snapshot readback"),
-        size: u64::from(row * side),
+        size: u64::from(row * h),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
+    let mut encoder = device.create_command_encoder(&Default::default());
     encoder.copy_texture_to_buffer(
-        target.as_image_copy(),
+        texture.as_image_copy(),
         wgpu::TexelCopyBufferInfo {
             buffer: &buffer,
             layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(row),
-                rows_per_image: Some(side),
+                rows_per_image: Some(h),
             },
         },
-        target.size(),
+        texture.size(),
     );
     queue.submit([encoder.finish()]);
     buffer.slice(..).map_async(wgpu::MapMode::Read, |_| {});
@@ -444,10 +501,10 @@ fn snapshot(
     let padded = buffer.slice(..).get_mapped_range().to_vec();
     let pixels: Vec<u8> = padded
         .chunks(row as usize)
-        .flat_map(|r| &r[..side as usize * 4])
+        .flat_map(|r| &r[..w as usize * 4])
         .copied()
         .collect();
-    image::save_buffer(out, &pixels, side, side, image::ExtendedColorType::Rgba8)?;
+    image::save_buffer(out, &pixels, w, h, image::ExtendedColorType::Rgba8)?;
     log::info!("wrote {}", out.display());
     Ok(())
 }

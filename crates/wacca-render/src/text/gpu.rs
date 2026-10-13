@@ -487,6 +487,17 @@ impl TextRenderer {
             .retain(|keys, _| !keys.iter().any(|k| k == key));
     }
 
+    /// Register an existing GPU texture (RGBA8 display values, `TEXTURE_BINDING`) under `key`:
+    /// drawn like any image, showing whatever was last rendered into it.
+    pub fn set_image_texture(&mut self, key: &str, tex: &wgpu::Texture) {
+        let group = bind_group(&self.device, &self.bind_layout, &self.sampler, tex);
+        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        self.images.insert(key.to_string(), Image { group, view });
+        self.materials
+            .textures
+            .retain(|keys, _| !keys.iter().any(|k| k == key));
+    }
+
     pub fn has_image(&self, key: &str) -> bool {
         self.images.contains_key(key)
     }

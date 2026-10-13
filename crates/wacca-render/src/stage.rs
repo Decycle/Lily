@@ -5,8 +5,9 @@
 //!
 //! Every vertex is a [`MeshVertex`] in view space (`[X, Z, w]`, see [`crate::camera`]).
 
-use wacca_chart::{Chart, HoldNode, LANES, NoteBody, SlideDir, SnapDir};
+use wacca_chart::{Chart, HoldNode, LANES, NoteBody, SlideDir, SnapDir, TICKS_PER_MEASURE};
 
+use crate::bg::BgFrame;
 use crate::camera::{APPEAR_DISTANCE, HOLD_RADIUS_CM, note_scale, note_to_world, world_to_view};
 use crate::layout::{last_drawable_time, mask_state, raw_depth};
 use crate::notes3d::{MeshKind, MeshVertex, NoteMesh, NoteMeshes};
@@ -89,6 +90,9 @@ pub struct Stage {
     /// Played fraction of the song for the HUD rim's time gauge (`None`: no HUD rim), drawn by
     /// the composition (`style::GAUGE_RADIUS_PX`).
     pub progress: Option<f32>,
+    /// The no-movie background scene is drawn behind the play view ([`crate::bg`]).
+    pub show_background: bool,
+    pub background: BgFrame,
 }
 
 impl Stage {
@@ -98,6 +102,7 @@ impl Stage {
             && self.chevrons.is_empty()
             && self.effects.is_empty()
             && self.progress.is_none()
+            && !self.show_background
     }
 
     /// Empties the stage, keeping the buffers.
@@ -112,6 +117,8 @@ impl Stage {
         self.time = 0.0;
         self.pulse = 0.0;
         self.progress = None;
+        self.show_background = false;
+        self.background.clear();
     }
 }
 
@@ -287,6 +294,15 @@ pub fn build_stage_into(
     stage.progress = live.rim.map(|r| r.progress.clamp(0.0, 1.0));
     // UNVERIFIED: the MPC_BpmSignal pulse taken as the beat phase.
     stage.pulse = (chart.sec_to_tick(now) / BEAT_TICKS).rem_euclid(1.0) as f32;
+    if let Some(bg) = live.background.filter(|_| !opts.movie) {
+        stage.show_background = true;
+        bg.build(&mut stage.background);
+        stage.background.time = now as f32;
+        // UNVERIFIED: MPC_BpmSignal Bar / Beat taken as the measure / beat phase.
+        stage.background.beat = stage.pulse;
+        stage.background.bar =
+            (chart.sec_to_tick(now) / f64::from(TICKS_PER_MEASURE)).rem_euclid(1.0) as f32;
+    }
 
     if let Some(fx) = live.effects {
         fx.build(
@@ -540,6 +556,7 @@ mod tests {
     #[test]
     fn chevrons_are_the_sections_above_the_width() {
         let mesh = NoteMesh {
+            colors: Vec::new(),
             corners: vec![
                 ([170.0, 0.0, 0.0], [0.0, 0.0], 0),
                 ([150.0, 1.0, 0.0], [0.5, 0.2], 3),

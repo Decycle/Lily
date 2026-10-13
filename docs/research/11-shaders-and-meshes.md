@@ -401,7 +401,7 @@ Corrections (CONFIRMED unless marked):
   `out = 2(col + 0.2)·screen(col, NC)`, mask `T.b ≥ 0.3333`.
 * Guide lane: the second MPC (`cb4`) is `MPC_BpmSignal`; its `.y` drives the inner glow pulse (taken as the beat
   phase, UNVERIFIED). `OutsideGlowStrength` is 0.12 in the capture (master default 0.27). Without a movie the fade
-  uses the table's 600 / 3 (UNVERIFIED, no capture).
+  uses the table's 600 / 3 (CONFIRMED, KING frame 11389; doc 13 §5).
 * Output: linear scene colour in Rgba16F composed with `pow(x, 1/2.2)` (re-linearised with the sRGB curve on sRGB
   targets so the stored value equals the game's UNORM output); the 2D HUD is drawn on top.
 * Stage order: movie, note bodies / hold ends / bar lines (opaque, depth written), chevrons, guide lanes, hold

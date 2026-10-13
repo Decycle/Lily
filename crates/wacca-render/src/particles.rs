@@ -54,6 +54,8 @@ pub enum FxShader {
     RankUp,
     /// Not ported: drawn as texture × particle colour.
     Other,
+    /// A material of the no-movie background scene, drawn by its own layer ([`crate::bg`]).
+    Background,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -311,6 +313,7 @@ fn pack(master: &str, m: &MaterialParams) -> (FxShader, [[f32; 4]; 6], [Option<&
                 [Some("Color_texture"), Some("TextureObject")],
             );
         }
+        m if crate::bg::MASTERS.contains(&m) => return (FxShader::Background, p, [None, None]),
         other => {
             log::warn!("effect material {} ({other}): shader not ported", m.name);
             let tex = m.textures.keys().next().map(|_| "");
@@ -398,13 +401,24 @@ impl EffectLibrary {
             .get(DEFAULT_TOUCH_EFFECT)
             .map(TouchEffect::from_row)
             .ok_or_else(|| FxError::NoTouchRow(DEFAULT_TOUCH_EFFECT.into()))?;
-        let mut systems = Vec::new();
         let names: Vec<String> = touch
             .all()
             .chain([KEY_BEAM, R_NOTE_EFFECT])
             .map(str::to_owned)
             .collect();
-        for name in names {
+        Self::load_systems(data_dir, touch, &names)
+    }
+
+    /// Loads the systems `names` (paths below `Vfx/Particle`) from `data_dir/effects` with
+    /// their materials and meshes (missing ones are logged and skipped).
+    pub fn load_systems(
+        data_dir: &Path,
+        touch: TouchEffect,
+        names: &[String],
+    ) -> Result<Self, FxError> {
+        let dir = data_dir.join("effects");
+        let mut systems = Vec::new();
+        for name in names.iter().cloned() {
             if systems.iter().any(|(n, _)| *n == name) {
                 continue;
             }
@@ -473,6 +487,9 @@ pub struct Placement {
     /// At the screen centre, [`BEHIND_Y`] deep, unrotated and drawn before the guide lanes (the
     /// R-note hit) instead of on the ring.
     pub behind: bool,
+    /// A fixed world transform instead of a lane: origin (cm) and yaw (degrees about +Z, UE
+    /// `RelativeRotation`) — the level's background actors ([`crate::bg`]).
+    pub fixed: Option<([f32; 3], f32)>,
 }
 
 impl Placement {
@@ -483,6 +500,7 @@ impl Placement {
             radius: EFFECT_RADIUS,
             scale: HIT_SCALE,
             behind: false,
+            fixed: None,
         }
     }
 
@@ -493,11 +511,31 @@ impl Placement {
             radius: 0.0,
             scale: 1.0,
             behind: true,
+            fixed: None,
+        }
+    }
+
+    /// A component at world `origin` turned by `yaw` degrees about +Z, scale 1.
+    pub fn fixed(origin: [f32; 3], yaw: f32) -> Self {
+        Self {
+            lane: 0.0,
+            radius: 0.0,
+            scale: 1.0,
+            behind: false,
+            fixed: Some((origin, yaw)),
         }
     }
 
     /// Component-local → world (cm, UE axes) and the rotated axes.
     fn frame(&self) -> Frame {
+        if let Some((origin, yaw)) = self.fixed {
+            let (s, c) = yaw.to_radians().sin_cos();
+            return Frame {
+                origin,
+                axes: [[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]],
+                scale: self.scale,
+            };
+        }
         if self.behind {
             return Frame {
                 origin: [0.0, BEHIND_Y, 0.0],
@@ -550,6 +588,8 @@ struct Particle {
     pos: [f32; 3],
     base_vel: [f32; 3],
     vel: [f32; 3],
+    /// `ParticleModuleAcceleration` (cm/s², added to the base velocity every update).
+    accel: [f32; 3],
     base_size: [f32; 3],
     size: [f32; 3],
     base_color: [f32; 4],
@@ -616,6 +656,9 @@ impl Default for ParticleWorld {
     }
 }
 
+/// Time step of a system's warm-up (UE 4.19 `UParticleSystemComponent` default).
+const WARMUP_STEP: f32 = 0.032;
+
 /// Uniform random numbers (xorshift32).
 fn next_rand(seed: &mut u32) -> f32 {
     let mut x = *seed;
@@ -659,13 +702,22 @@ impl ParticleWorld {
                 particles: Vec::new(),
             })
             .collect();
-        self.instances.push(Instance {
+        let mut inst = Instance {
             system: Arc::clone(system),
             place,
             emitters,
             active: true,
             key,
-        });
+        };
+        // `WarmupTime`: UE ticks the new system in 0.032 s steps (no `WarmupTickRate` set).
+        let mut warm = 0.0;
+        while warm < system.warmup {
+            for (def, st) in system.emitters.iter().zip(&mut inst.emitters) {
+                update_emitter(def, st, WARMUP_STEP, true, &mut self.seed);
+            }
+            warm += WARMUP_STEP;
+        }
+        self.instances.push(inst);
         // Bursts at time 0 fire on the next update.
     }
 
@@ -734,12 +786,36 @@ impl ParticleWorld {
         runs: &mut Vec<(FxBlend, u32, u32)>,
         behind: bool,
     ) {
-        for inst in self.instances.iter().filter(|i| i.place.behind == behind) {
+        self.build_runs(lib, out, runs, |i| i.place.behind == behind, |_, m| m.blend);
+    }
+
+    /// [`ParticleWorld::build`] with runs of equal material (`(material index, first vertex,
+    /// end)`) instead of equal blend: the background scene ([`crate::bg`]) draws each of its
+    /// materials with its own pipeline.
+    pub fn build_by_material(
+        &self,
+        lib: &EffectLibrary,
+        out: &mut Vec<FxVertex>,
+        runs: &mut Vec<(u32, u32, u32)>,
+    ) {
+        self.build_runs(lib, out, runs, |_| true, |id, _| id);
+    }
+
+    fn build_runs<K: PartialEq>(
+        &self,
+        lib: &EffectLibrary,
+        out: &mut Vec<FxVertex>,
+        runs: &mut Vec<(K, u32, u32)>,
+        filter: impl Fn(&Instance) -> bool,
+        key: impl Fn(u32, &FxMaterial) -> K,
+    ) {
+        for inst in self.instances.iter().filter(|i| filter(i)) {
             let frame = inst.place.frame();
             for (def, st) in inst.system.emitters.iter().zip(&inst.emitters) {
                 let Some((material, m)) = lib.material(&def.material) else {
                     continue;
                 };
+                let k = key(material, m);
                 let start = out.len() as u32;
                 let pivot = pivot(def);
                 for p in &st.particles {
@@ -756,8 +832,8 @@ impl ParticleWorld {
                     continue;
                 }
                 match runs.last_mut() {
-                    Some((b, _, e)) if *b == m.blend && *e == start => *e = end,
-                    _ => runs.push((m.blend, start, end)),
+                    Some((b, _, e)) if *b == k && *e == start => *e = end,
+                    _ => runs.push((k, start, end)),
                 }
             }
         }
@@ -785,6 +861,7 @@ fn update_emitter(def: &Emitter, st: &mut EmitterState, dt: f32, active: bool, s
     }
     st.particles.retain(|p| p.life <= 0.0 || p.age < p.life);
     for p in &mut st.particles {
+        (0..3).for_each(|k| p.base_vel[k] += p.accel[k] * dt);
         apply_life_modules(def, p);
         for k in 0..3 {
             p.pos[k] += p.vel[k] * dt;
@@ -843,9 +920,10 @@ fn update_emitter(def: &Emitter, st: &mut EmitterState, dt: f32, active: bool, s
 
 fn spawn_particle(def: &Emitter, emitter_time: f32, seed: &mut u32) -> Particle {
     let mut p = Particle {
-        pos: [0.0; 3],
+        pos: def.origin,
         base_vel: [0.0; 3],
         vel: [0.0; 3],
+        accel: [0.0; 3],
         base_size: [1.0; 3],
         size: [1.0; 3],
         base_color: [1.0; 4],
@@ -901,12 +979,14 @@ fn spawn_particle(def: &Emitter, emitter_time: f32, seed: &mut u32) -> Particle 
                 q[b2] = rr * a.sin();
                 q[ax] = along;
                 (0..3).for_each(|k| p.pos[k] += o[k] + q[k]);
+                // The outward offset itself, scaled (not its direction): MEASURED, the
+                // background triangles (KING frame 13214 eid 676) spread to r ≈ 3000 cm and the
+                // R-note hit's sparks (frame 9800 eid 2800) from r 200–300 to 400–570 cm.
                 if *velocity {
                     let s = velocity_scale.eval1(t, next_rand(seed));
                     let mut radial = q;
                     radial[ax] = 0.0;
-                    let n = norm(radial);
-                    (0..3).for_each(|k| p.base_vel[k] += n[k] * s);
+                    (0..3).for_each(|k| p.base_vel[k] += radial[k] * s);
                 }
             }
             Module::Velocity {
@@ -914,12 +994,20 @@ fn spawn_particle(def: &Emitter, emitter_time: f32, seed: &mut u32) -> Particle 
             } => {
                 let v = velocity.eval(t, rand3(seed));
                 let r = radial.eval1(t, next_rand(seed));
-                let n = norm(p.pos);
+                let n = norm([0, 1, 2].map(|k| p.pos[k] - def.origin[k]));
                 (0..3).for_each(|k| p.base_vel[k] += v[k] + n[k] * r);
             }
             Module::Rotation(d) => {
                 p.rotation += d.eval1(t, next_rand(seed)) * std::f32::consts::TAU;
             }
+            // CONFIRMED (KING frame 13214, eids 647/654 instance rows): the turns apply with
+            // the opposite sign to RollPitchYawRange's (roll −0.02 / pitch 0.15 turns show as
+            // +7.2° / −54° under the 180° component yaw).
+            Module::MeshRotation(d) => {
+                let r = d.eval(t, rand3(seed));
+                (0..3).for_each(|k| p.orientation[k] -= r[k] * 360.0);
+            }
+            Module::Acceleration(d) => p.accel = d.eval(t, rand3(seed)),
             Module::RotationRate(d) => {
                 p.rotation_rate += d.eval1(t, next_rand(seed)) * std::f32::consts::TAU;
             }
@@ -934,7 +1022,8 @@ fn spawn_particle(def: &Emitter, emitter_time: f32, seed: &mut u32) -> Particle 
         }
     }
     if let Some(o) = &def.mesh_orientation {
-        p.orientation = o.eval(t, rand3(seed));
+        let o = o.eval(t, rand3(seed));
+        (0..3).for_each(|k| p.orientation[k] += o[k]);
     }
     apply_life_modules(def, &mut p);
     p
@@ -1018,8 +1107,8 @@ fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 }
 
 /// One effect vertex: view-space position `[X, Z, w]` (see [`crate::camera`]), UV, particle
-/// colour (linear, may exceed 1), extra per-particle data (`ParticleRandom`, relative time) and
-/// the material index.
+/// colour (linear, may exceed 1), extra per-particle data (`ParticleRandom`, relative time, and
+/// for mesh particles the mesh's vertex colour green and blue) and the material index.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct FxVertex {
@@ -1030,6 +1119,9 @@ pub struct FxVertex {
     /// Material `DynamicParameter`.
     pub dynamic: [f32; 4],
     pub material: u32,
+    /// View-space `[X, Z, w]` of the particle (mesh particles: the instance origin that
+    /// `WorldPositionOffset` materials read).
+    pub origin: [f32; 3],
 }
 
 /// UE `FRotationMatrix(Pitch, Yaw, Roll)` from a roll/pitch/yaw vector (degrees): the images of
@@ -1053,6 +1145,7 @@ fn vertex(world: [f32; 3], uv: [f32; 2], p: &Particle, material: u32) -> FxVerte
         extra: [p.random, p.relative_time(), 0.0, 0.0],
         dynamic: p.dynamic,
         material,
+        origin: [0.0; 3],
     }
 }
 
@@ -1065,10 +1158,17 @@ fn push_mesh_particle(
     material: u32,
 ) {
     let r = rotation_matrix(p.orientation);
-    for &(v, uv, _) in &mesh.corners {
+    let origin = world_to_view(frame.point(p.pos));
+    for (i, &(v, uv, _)) in mesh.corners.iter().enumerate() {
         let s = [v[0] * p.size[0], v[1] * p.size[1], v[2] * p.size[2]];
         let local = [0, 1, 2].map(|k| p.pos[k] + r[0][k] * s[0] + r[1][k] * s[1] + r[2][k] * s[2]);
-        out.push(vertex(frame.point(local), uv, p, material));
+        let mut out_v = vertex(frame.point(local), uv, p, material);
+        out_v.origin = origin;
+        if let Some(c) = mesh.colors.get(i) {
+            out_v.extra[2] = c[1];
+            out_v.extra[3] = c[2];
+        }
+        out.push(out_v);
     }
 }
 
@@ -1141,6 +1241,7 @@ mod tests {
             gpu: None,
             alignment: "PSA_Square".into(),
             local_space: true,
+            origin: [0.0; 3],
             duration: 0.35,
             delay: 0.0,
             loops: 1,
@@ -1194,6 +1295,7 @@ mod tests {
         // vo_tap000_03's FlareTall: lifetime 0.35, location (0, 0, -5), colour 2 → 1.
         ParticleSystem {
             name: "flare".into(),
+            warmup: 0.0,
             emitters: vec![Emitter {
                 mesh: Some("quad".into()),
                 mesh_orientation: Some(Distribution::constant(&[-88.0, 3.0, 0.0])),
@@ -1218,6 +1320,7 @@ mod tests {
         // vMsh_tapMarvA01_00_m: a 10.7 x 41.5 quad in XZ, v = 0 at the far end.
         let c = |p: [f32; 3], uv: [f32; 2]| (p, uv, 0);
         NoteMesh {
+            colors: Vec::new(),
             corners: vec![
                 c([-5.34, 0.0, 41.03], [0.0, 0.0]),
                 c([-5.39, 0.0, -0.47], [0.0, 0.993]),
@@ -1292,6 +1395,7 @@ mod tests {
         e.rate = Distribution::constant(&[20.0]);
         let sys = Arc::new(ParticleSystem {
             name: "loop".into(),
+            warmup: 0.0,
             emitters: vec![e],
         });
         let mut w = ParticleWorld::default();
@@ -1314,6 +1418,7 @@ mod tests {
         e.delay = 0.05;
         let sys = Arc::new(ParticleSystem {
             name: "d".into(),
+            warmup: 0.0,
             emitters: vec![e],
         });
         let mut w = ParticleWorld::default();
@@ -1344,6 +1449,7 @@ mod tests {
         e.alignment = "PSA_Velocity".into();
         let sys = Arc::new(ParticleSystem {
             name: "s".into(),
+            warmup: 0.0,
             emitters: vec![e],
         });
         let lib = library(vec![], vec![]);
@@ -1354,6 +1460,7 @@ mod tests {
             radius: 170.0,
             scale: 1.0,
             behind: false,
+            fixed: None,
         };
         let zc = 170.0 * 273f32.to_radians().sin();
         w.spawn(&sys, place, None);
@@ -1392,6 +1499,7 @@ mod tests {
         e.bursts[0].count = 5;
         let sys = Arc::new(ParticleSystem {
             name: "r".into(),
+            warmup: 0.0,
             emitters: vec![e],
         });
         let run = || {
@@ -1403,6 +1511,78 @@ mod tests {
         };
         assert_eq!(run(), run());
         assert!(run() > 0 && run() < 5);
+    }
+
+    #[test]
+    fn origin_acceleration_cylinder_velocity_and_warmup() {
+        let cylinder = Module::Cylinder {
+            start_location: Distribution::constant(&[0.0; 3]),
+            radius: Distribution::constant(&[100.0]),
+            height: Distribution::constant(&[0.0]),
+            height_axis: 1,
+            surface_only: true,
+            velocity: true,
+            velocity_scale: Distribution::constant(&[2.0]),
+        };
+        let mut e = emitter(
+            "M",
+            vec![
+                Module::Lifetime(Distribution::constant(&[10.0])),
+                cylinder,
+                Module::Acceleration(Distribution::constant(&[0.0, -100.0, 0.0])),
+            ],
+        );
+        e.origin = [0.0, 1000.0, 0.0];
+        e.duration = 100.0;
+        let sys = Arc::new(ParticleSystem {
+            name: "bg".into(),
+            warmup: 1.0,
+            emitters: vec![e],
+        });
+        let mut w = ParticleWorld::default();
+        w.spawn(&sys, Placement::fixed([0.0, -10000.0, 0.0], 180.0), None);
+        // Warmed up: 32 steps of 0.032 s before the first update (the burst fires in the first).
+        let p = &w.instances[0].emitters[0].particles[0];
+        assert!((p.age - 0.992).abs() < 1e-3, "{}", p.age);
+        // Outward velocity = the 100 cm offset × 2; acceleration adds −100 cm/s² on local Y.
+        let radial = (p.base_vel[0].powi(2) + p.base_vel[2].powi(2)).sqrt();
+        assert!((radial - 200.0).abs() < 1e-2, "{radial}");
+        assert!(
+            (p.base_vel[1] + 100.0 * p.age).abs() < 0.5,
+            "{:?}",
+            p.base_vel
+        );
+        assert!((p.pos[1] - (1000.0 - 50.0 * p.age * p.age)).abs() < 5.0);
+        // The 180° yaw sends local +Y away from the camera (world −Y).
+        let frame = w.instances[0].place.frame();
+        assert!((frame.point(p.pos)[1] + 10000.0 + p.pos[1]).abs() < 1e-2);
+    }
+
+    #[test]
+    fn mesh_rotation_turns_apply_negated() {
+        let mut e = emitter(
+            "M",
+            vec![
+                Module::Lifetime(Distribution::constant(&[1.0])),
+                Module::MeshRotation(Distribution::constant(&[0.0, 0.15, 0.0])),
+            ],
+        );
+        e.mesh = Some("quad".into());
+        e.mesh_orientation = Some(Distribution::constant(&[0.0, 0.0, 10.0]));
+        let sys = Arc::new(ParticleSystem {
+            name: "m".into(),
+            warmup: 0.0,
+            emitters: vec![e],
+        });
+        let mut w = ParticleWorld::default();
+        w.spawn(&sys, Placement::fixed([0.0; 3], 0.0), None);
+        w.update(0.0);
+        // Pitch 0.15 turns shows as −54° (frame 13214), added to the type data's yaw.
+        let o = w.instances[0].emitters[0].particles[0].orientation;
+        assert!(
+            (o[1] + 54.0).abs() < 1e-3 && (o[2] - 10.0).abs() < 1e-6,
+            "{o:?}"
+        );
     }
 
     #[test]

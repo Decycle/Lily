@@ -244,28 +244,34 @@ pub enum MeshError {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct NoteMesh {
     pub corners: Vec<([f32; 3], [f32; 2], u32)>,
+    /// Vertex colour (RGB 0..1) per corner, when the mesh has colours (else empty).
+    pub colors: Vec<[f32; 3]>,
 }
 
 /// Parses the OBJ written by `wacca-convert --meshes` (`v`, `vt` as stored, `g section<N>`,
 /// triangular `f v/vt`).
 pub fn parse_obj(text: &str) -> Result<NoteMesh, MeshError> {
-    let (mut v, mut vt) = (Vec::new(), Vec::new());
+    let (mut v, mut vt, mut vc) = (Vec::new(), Vec::new(), Vec::new());
     let mut mesh = NoteMesh::default();
     let mut slot = 0;
     for (i, line) in text.lines().enumerate() {
         let n = i + 1;
         let mut it = line.split_whitespace();
-        let floats = |it: std::str::SplitWhitespace, k: usize| {
+        let floats = |it: std::str::SplitWhitespace, k: &[usize]| {
             let f: Vec<f32> = it.map(str::parse).collect::<Result<_, _>>().ok()?;
-            (f.len() == k).then_some(f)
+            k.contains(&f.len()).then_some(f)
         };
         match it.next() {
+            // `v x y z [r g b]`: position and optional vertex colour.
             Some("v") => {
-                let f = floats(it, 3).ok_or(MeshError::Malformed(n))?;
+                let f = floats(it, &[3, 6]).ok_or(MeshError::Malformed(n))?;
                 v.push([f[0], f[1], f[2]]);
+                if let [_, _, _, r, g, b] = f[..] {
+                    vc.push([r, g, b]);
+                }
             }
             Some("vt") => {
-                let f = floats(it, 2).ok_or(MeshError::Malformed(n))?;
+                let f = floats(it, &[2]).ok_or(MeshError::Malformed(n))?;
                 vt.push([f[0], f[1]]);
             }
             Some("g") => {
@@ -290,6 +296,9 @@ pub fn parse_obj(text: &str) -> Result<NoteMesh, MeshError> {
                     };
                     let (a, b) = (index(a, v.len())?, index(b, vt.len())?);
                     mesh.corners.push((v[a - 1], vt[b - 1], slot));
+                    if let Some(c) = vc.get(a - 1) {
+                        mesh.colors.push(*c);
+                    }
                 }
             }
             _ => {}
@@ -487,6 +496,9 @@ mod tests {
         assert_eq!(m.corners.len(), 6);
         assert_eq!(m.corners[0], ([1.0, 2.0, 3.0], [0.0, 0.5], 0));
         assert_eq!(m.corners[3], ([7.0, 8.0, 9.0], [0.0, 0.5], 2));
+        assert!(m.colors.is_empty());
+        let c = parse_obj("v 1 2 3 0.5 0 1\nvt 0 0\nf 1/1 1/1 1/1\n").unwrap();
+        assert_eq!(c.colors, [[0.5, 0.0, 1.0]; 3]);
         assert_eq!(parse_obj("v 1 2\n"), Err(MeshError::Malformed(1)));
         assert_eq!(
             parse_obj("v 1 2 3\nvt 0 0\nf 1/1 1/1 2/1\n"),
@@ -584,6 +596,7 @@ mod tests {
             end_time: 60.0,
         };
         let one = NoteMesh {
+            colors: Vec::new(),
             corners: vec![([170.0, 0.0, 10.0], [0.5, 0.5], 0); 3],
         };
         let mut meshes = NoteMeshes::default();

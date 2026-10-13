@@ -196,6 +196,7 @@ impl Effects {
                         radius: EFFECT_RADIUS,
                         scale: 1.0,
                         behind: false,
+                        fixed: None,
                     };
                     self.world.spawn(beam, place, Some(key));
                 }
@@ -612,6 +613,7 @@ mod tests {
     fn library() -> std::sync::Arc<EffectLibrary> {
         let system = |name: &str, life: f32| ParticleSystem {
             name: name.into(),
+            warmup: 0.0,
             emitters: vec![Emitter {
                 name: String::new(),
                 material: "M".into(),
@@ -620,6 +622,7 @@ mod tests {
                 gpu: None,
                 alignment: "PSA_Square".into(),
                 local_space: true,
+                origin: [0.0; 3],
                 duration: 1.0,
                 delay: 0.0,
                 loops: 1,

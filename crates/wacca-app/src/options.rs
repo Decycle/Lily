@@ -4,8 +4,11 @@
 //! This module is the one place that knows the judge-offset unit: everything else converts with
 //! [`offset_secs`] / [`offset_units`].
 
+use std::sync::Arc;
+
 use wacca_game::save::Settings;
 use wacca_render::text::Align;
+use wacca_render::{Background, BgFrame, BgLibrary, BgState};
 
 use wacca_game::save::SaveData;
 use wacca_render::style::Rgba;
@@ -173,6 +176,7 @@ pub fn view(
     list: &SongList,
     save: &SaveData,
     who: &chrome::Player,
+    live_monitor: bool,
 ) -> View {
     let mut p = Painter::new(c);
     chrome::background(&mut p, chrome::SELECT_BACKDROP);
@@ -205,7 +209,7 @@ pub fn view(
         0.0,
         WHITE,
     );
-    monitor(&mut p);
+    monitor(&mut p, live_monitor);
     let page = menu.row / PAGE;
     for k in 0..PAGE {
         let i = page * PAGE + k;
@@ -237,12 +241,63 @@ pub fn view(
     p.finish()
 }
 
+/// UI image key of the live monitor (the renderer's background display, registered by the shell).
+pub const MONITOR_KEY: &str = "live/background";
+
+/// The live picture behind the final check's monitor: the selected chart's no-movie background
+/// scene, in its Normal state as a play starts it.
+#[derive(Debug)]
+pub struct Monitor {
+    bg: Background,
+    pub frame: BgFrame,
+    time: f32,
+}
+
+impl Monitor {
+    pub fn new(lib: Arc<BgLibrary>) -> Self {
+        let mut bg = Background::new(lib);
+        bg.set_state(BgState::Normal);
+        Self {
+            bg,
+            frame: BgFrame::default(),
+            time: 0.0,
+        }
+    }
+
+    /// Advances the scene by `dt` seconds. The materials' beat and bar run at the song's `bpm`
+    /// from the monitor's start (UNVERIFIED in the menus).
+    pub fn update(&mut self, dt: f32, bpm: f32) {
+        self.bg.update(dt);
+        self.time += dt;
+        self.bg.build(&mut self.frame);
+        let beats = self.time * bpm / 60.0;
+        self.frame.time = self.time;
+        self.frame.beat = beats.fract();
+        self.frame.bar = (beats / 4.0).fract();
+    }
+}
+
+/// The first number of a catalog BPM text (`"150"`, `"120-180"`), else 120.
+pub fn bpm_of(text: &str) -> f32 {
+    let digits: String = text
+        .trim()
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    digits.parse().ok().filter(|b| *b > 0.0).unwrap_or(120.0)
+}
+
 /// `uM_STmoniter00`: the round preview, a disc (`uT_CMen512_00`) of the live play-background
-/// capture (`BgCaptureTextureRenderTarget2D`).
-// UNVERIFIED: the capture is not rendered in the menus; drawn as its look on the E3 frame, a
-// dark blue disc brightening to violet in the middle.
-fn monitor(p: &mut Painter) {
+/// capture (`BgCaptureTextureRenderTarget2D`). `live`: the shell renders the background scene
+/// into [`MONITOR_KEY`] (charts without a movie).
+// UNVERIFIED otherwise (movie charts): drawn as its look on the E3 frame, a dark blue disc
+// brightening to violet in the middle.
+fn monitor(p: &mut Painter, live: bool) {
     let at = [0.0, 3.0];
+    if live {
+        p.disc_image(MONITOR_KEY, at, 300.0, WHITE);
+        return;
+    }
     p.tex("uT_CMen512_00", at, [300.0, 300.0], hex(0x120d3c, 1.0));
     for k in 1..=6 {
         let d = 300.0 - 40.0 * k as f32;
@@ -349,6 +404,24 @@ mod tests {
     }
 
     #[test]
+    fn live_monitor_shows_the_background_disc() {
+        let (s, m) = (Settings::default(), OptionsMenu::default());
+        let list = crate::select::tests::list();
+        let (who, save) = (crate::chrome::Player::default(), SaveData::default());
+        let c = crate::canvas::Canvas::fit(900.0, 1600.0);
+        let has_live = |live| {
+            view(c, &m, (&s, false), &list, &save, &who, live)
+                .items
+                .iter()
+                .any(|i| matches!(i, crate::ui::Item::ImagePoly { key, .. } if key == MONITOR_KEY))
+        };
+        assert!(has_live(true) && !has_live(false));
+        assert_eq!(bpm_of("150"), 150.0);
+        assert_eq!(bpm_of(" 120-180"), 120.0);
+        assert_eq!(bpm_of("???"), 120.0);
+    }
+
+    #[test]
     fn taps_step_rows_down_and_up() {
         let mut s = Settings::default();
         let (mut auto, mut m) = (false, OptionsMenu::default());
@@ -362,13 +435,15 @@ mod tests {
         let who = crate::chrome::Player::default();
         let save = SaveData::default();
         let c = crate::canvas::Canvas::fit(900.0, 1600.0);
-        let v = view(c, &m, (&s, auto), &list, &save, &who);
+        let v = view(c, &m, (&s, auto), &list, &save, &who, false);
         let t = v.texts().concat();
         assert!(t.contains("TIMING+0.1") && !t.contains("BG MOVIE"), "{t}");
         // The OPTIONS tab turns to the second page of rows and back.
         pick(&mut m, NEXT_PAGE, &mut s, &mut auto);
         assert_eq!(m.row, PAGE);
-        let t = view(c, &m, (&s, auto), &list, &save, &who).texts().concat();
+        let t = view(c, &m, (&s, auto), &list, &save, &who, false)
+            .texts()
+            .concat();
         assert!(t.contains("BG MOVIE") && !t.contains("SPEED"), "{t}");
         pick(&mut m, NEXT_PAGE, &mut s, &mut auto);
         assert_eq!(m.row, 0);

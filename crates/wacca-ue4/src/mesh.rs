@@ -29,6 +29,8 @@ pub struct StaticMesh {
     pub uv0: Vec<[f32; 2]>,
     pub indices: Vec<u32>,
     pub sections: Vec<MeshSection>,
+    /// Vertex colours (RGBA8; empty when the mesh has none).
+    pub colors: Vec<[u8; 4]>,
 }
 
 /// Most sections a mesh may have (the note meshes have up to 2 × 60).
@@ -67,8 +69,18 @@ pub fn read_static_mesh(uexp: &[u8]) -> Result<StaticMesh, Ue4Error> {
         .collect();
     r.u16()?; // colour strip flags
     let (_stride, colours) = (r.u32()?, r.u32()?);
+    let mut colors = Vec::new();
     if colours != 0 {
-        skip_bulk(&mut r)?;
+        let (elem, n) = (r.u32()? as usize, r.u32()? as usize);
+        let data = r.bytes(elem.checked_mul(n).ok_or(Ue4Error::NotAStaticMesh)?)?;
+        if elem == 4 && n == count {
+            colors = data
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|&[b, g, r, a]| [r, g, b, a])
+                .collect();
+        }
     }
     let wide = r.u32()? != 0;
     let (_elem, bytes) = (r.u32()?, r.u32()? as usize);
@@ -94,6 +106,7 @@ pub fn read_static_mesh(uexp: &[u8]) -> Result<StaticMesh, Ue4Error> {
         uv0,
         indices,
         sections,
+        colors,
     })
 }
 
@@ -179,6 +192,10 @@ mod tests {
 
     /// A one-triangle mesh with two half-precision UV channels, laid out like a cooked .uexp.
     fn fixture(wide: bool) -> Vec<u8> {
+        fixture_with(wide, false)
+    }
+
+    fn fixture_with(wide: bool, colours: bool) -> Vec<u8> {
         let mut d = vec![0xaa; 7]; // unrelated leading bytes
         put(&mut d, &[1, 0, 0, 1, 0, 2, 1, 1, 0]); // 1 section: mat 0, first 0, 1 tri, ..., trailer
         put(&mut d, &[12, 3, 12, 3]);
@@ -199,7 +216,14 @@ mod tests {
             }
         }
         d.extend_from_slice(&[0, 0]);
-        put(&mut d, &[4, 0]); // no colours
+        if colours {
+            put(&mut d, &[4, 3, 4, 3]);
+            for i in 0..3u8 {
+                d.extend_from_slice(&[10 * i, 1, 2, 255]); // BGRA
+            }
+        } else {
+            put(&mut d, &[4, 0]); // no colours
+        }
         if wide {
             put(&mut d, &[1, 1, 12, 0, 2, 1]);
         } else {
@@ -209,6 +233,14 @@ mod tests {
             }
         }
         d
+    }
+
+    #[test]
+    fn reads_vertex_colours_as_rgba() {
+        let m = read_static_mesh(&fixture_with(false, true)).unwrap();
+        assert_eq!(m.colors, [[2, 1, 0, 255], [2, 1, 10, 255], [2, 1, 20, 255]]);
+        assert_eq!(m.indices, [0, 2, 1]);
+        assert!(read_static_mesh(&fixture(false)).unwrap().colors.is_empty());
     }
 
     #[test]

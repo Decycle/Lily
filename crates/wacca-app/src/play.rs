@@ -18,8 +18,9 @@ use wacca_render::effects::hold_arc_at;
 use wacca_render::layout::Rect;
 use wacca_render::particles::EffectLibrary;
 use wacca_render::{
-    Effects, JudgeSprite, LiveState, MeshVertex, NoteMeshes, RimState, SceneOptions, SpriteSheet,
-    Stage, Vertex, build_mesh_notes, build_scene_into, build_stage_into,
+    Background, BgLibrary, BgState, Effects, JudgeSprite, LiveState, MeshVertex, NoteMeshes,
+    RimState, SceneOptions, SpriteSheet, Stage, Vertex, build_mesh_notes, build_scene_into,
+    build_stage_into,
 };
 use wacca_video::{Frame, VideoPlayer};
 
@@ -120,6 +121,8 @@ pub struct PlayState {
     effects: Effects,
     /// Chart time the effects were last advanced to.
     effects_at: f64,
+    /// The background scene of songs without a movie (state from the clear gauge).
+    background: Option<Background>,
     /// Holds started and not yet judged (note indices): their sustain glow shows.
     holding: Vec<usize>,
     /// Chart time of the last combo change (count animation).
@@ -179,6 +182,7 @@ impl PlayState {
             contacts: Contacts::default(),
             effects: Effects::default(),
             effects_at: f64::NEG_INFINITY,
+            background: None,
             holding: Vec::new(),
             combo_at: f64::NEG_INFINITY,
             pressed: [0; DEPTHS],
@@ -305,6 +309,16 @@ impl PlayState {
             .collect();
         self.effects.set_holds(arcs);
         self.effects.update(dt as f32);
+        let state = BgState::of_gauge(self.session.gauge() as f32, self.spec.norma);
+        if let Some(bg) = &mut self.background {
+            bg.set_state(state);
+            bg.update(dt as f32);
+        }
+    }
+
+    /// Draw the no-movie background scene from `lib` (`None`: black behind the play view).
+    pub fn set_background_library(&mut self, lib: Option<Arc<BgLibrary>>) {
+        self.background = lib.map(Background::new);
     }
 
     fn sound(&mut self, events: &[JudgeEvent]) {
@@ -402,6 +416,7 @@ impl PlayState {
             judged: self.session.judged(),
             holding: &self.holding,
             effects: Some(&self.effects),
+            background: self.background.as_ref(),
             judgement,
             combo: (self.session.combo(), (now - self.combo_at) as f32),
             rim: Some(RimState {

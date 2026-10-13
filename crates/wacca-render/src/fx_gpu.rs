@@ -34,7 +34,7 @@ fn shader_index(s: FxShader) -> u32 {
         FxShader::Miss => 7,
         FxShader::Base003 => 9,
         FxShader::RankUp => 10,
-        FxShader::Other => 8,
+        FxShader::Other | FxShader::Background => 8,
     }
 }
 
