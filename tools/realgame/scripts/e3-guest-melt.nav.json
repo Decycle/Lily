@@ -1,0 +1,23 @@
+{"steps":[
+  {"do":"press","buttons":["coin"],"hold_ms":100,"wait_ms":500},
+  {"do":"touch","lane":44,"width":3,"hold_ms":150,"wait_ms":3000},
+  {"do":"expect","name":"guest-dialog","timeout_ms":8000,"all":[{"region":[0.4148,0.7083,0.1778,0.025],"color":[240,10,175],"tol":25,"min_frac":0.15}]},
+  {"do":"touch","lane":44,"width":3,"hold_ms":150,"wait_ms":5000},
+  {"do":"expect","name":"tutorial-dialog","timeout_ms":45000,"all":[{"region":[0.4148,0.7083,0.1778,0.025],"color":[240,10,175],"tol":25,"min_frac":0.15}]},
+  {"do":"touch","lane":40,"width":2,"hold_ms":150,"wait_ms":3000},
+  {"do":"expect","name":"slide-help","all":[]},
+  {"do":"touch","lane":44,"width":3,"hold_ms":150,"wait_ms":2500},
+  {"do":"expect","name":"mode-select","all":[]},
+  {"do":"touch","lane":44,"width":3,"hold_ms":150,"wait_ms":2500},
+  {"do":"expect","name":"category-select","timeout_ms":25000,"all":[{"region":[0.3511,0.5717,0.2963,0.0133],"color":[16,112,240],"tol":30,"min_frac":0.5}]},
+  {"do":"touch","lane":49,"width":2,"hold_ms":100,"wait_ms":700},
+  {"do":"touch","lane":49,"width":2,"hold_ms":100,"wait_ms":700},
+  {"do":"touch","lane":49,"width":2,"hold_ms":100,"wait_ms":700},
+  {"do":"touch","lane":49,"width":2,"hold_ms":100,"wait_ms":900},
+  {"do":"expect","name":"vocaloid","all":[]},
+  {"do":"touch","lane":44,"width":3,"hold_ms":120,"wait_ms":2500},
+  {"do":"seek","name":"melt","image":"data/jackets/S03/uT_J_S03_48.png","region":[0.38815,0.43833,0.22222,0.125],"max_steps":30,"then":{"do":"touch","lane":40,"width":2,"hold_ms":80,"wait_ms":900},"back":{"do":"touch","lane":49,"width":2,"hold_ms":80,"wait_ms":900}},
+  {"do":"seek","name":"melt-settled","image":"data/jackets/S03/uT_J_S03_48.png","region":[0.38815,0.43833,0.22222,0.125],"max_steps":0,"then":{"do":"press","buttons":[],"hold_ms":10,"wait_ms":0}},
+  {"do":"touch","lane":44,"width":3,"hold_ms":120,"wait_ms":1500},
+  {"do":"seek","name":"options","image":"data/jackets/S03/uT_J_S03_48.png","region":[0.6933,0.5383,0.0948,0.0533],"max_steps":10,"then":{"do":"press","buttons":[],"hold_ms":10,"wait_ms":500}}
+]}

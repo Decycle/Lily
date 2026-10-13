@@ -82,7 +82,8 @@ pub enum Step {
     },
     /// Until `region` of the frame looks like the PNG `image` ([`region_diff`] <= `max_diff`), run the press or
     /// touch step `then`; fails after `max_steps` of them. E.g. scroll the song list until a jacket is centred, or
-    /// wait for a screen (`then` = a press of no buttons with a wait).
+    /// wait for a screen (`then` = a press of no buttons with a wait). With `back`, a search that `then` did not
+    /// finish continues with up to `2 * max_steps` of `back` (the other scroll direction).
     Seek {
         name: String,
         image: String,
@@ -91,6 +92,8 @@ pub enum Step {
         max_diff: f64,
         then: Box<Step>,
         max_steps: usize,
+        #[serde(default)]
+        back: Option<Box<Step>>,
     },
 }
 
@@ -343,6 +346,7 @@ mod tests {
             max_diff,
             then,
             max_steps: 9,
+            back: None,
             ..
         } = &seek.steps[0]
         else {

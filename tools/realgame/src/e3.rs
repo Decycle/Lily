@@ -423,30 +423,34 @@ pub fn fit_interval(points: &[(f64, bool)]) -> Option<(f64, f64, usize)> {
     let mut cuts = vec![xs[0] - step / 2.0];
     cuts.extend(xs.windows(2).map(|w| (w[0] + w[1]) / 2.0));
     cuts.push(xs[xs.len() - 1] + step / 2.0);
-    // Errors = #bad + Σ_{x<lo}(ok - bad) + Σ_{x>hi}(ok - bad): the two edges separate.
-    let score = |side: &dyn Fn(f64) -> bool| -> i64 {
+    // Errors of [cuts[i], cuts[j]] = ok points outside + bad points inside.
+    let count = |lo: f64, hi: f64| -> usize {
         points
             .iter()
-            .filter(|p| side(p.0))
-            .map(|p| if p.1 { 1 } else { -1 })
-            .sum()
+            .filter(|p| p.1 != (p.0 > lo && p.0 < hi))
+            .count()
     };
-    let lo_scores: Vec<i64> = cuts.iter().map(|&c| score(&|x| x < c)).collect();
-    let hi_scores: Vec<i64> = cuts.iter().map(|&c| score(&|x| x > c)).collect();
-    let middle_of_best = |scores: &[i64]| -> (f64, i64) {
-        let best = scores.iter().copied().min().unwrap_or(0);
-        let at: Vec<f64> = cuts
+    let mut best = (usize::MAX, Vec::new());
+    for i in 0..cuts.len() {
+        for j in i..cuts.len() {
+            let e = count(cuts[i], cuts[j]);
+            if e < best.0 {
+                best = (e, Vec::new());
+            }
+            if e == best.0 {
+                best.1.push((cuts[i], cuts[j]));
+            }
+        }
+    }
+    let (err, pairs) = best;
+    let mid = |f: fn(&(f64, f64)) -> f64| {
+        let (min, max) = pairs
             .iter()
-            .zip(scores)
-            .filter(|(_, s)| **s == best)
-            .map(|(c, _)| *c)
-            .collect();
-        ((at[0] + at[at.len() - 1]) / 2.0, best)
+            .map(f)
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), x| (a.min(x), b.max(x)));
+        (min + max) / 2.0
     };
-    let (lo, lo_s) = middle_of_best(&lo_scores);
-    let (hi, hi_s) = middle_of_best(&hi_scores);
-    let bad = points.iter().filter(|p| !p.1).count() as i64;
-    Some((lo, hi, (bad + lo_s + hi_s).max(0) as usize))
+    Some((mid(|p| p.0), mid(|p| p.1), err))
 }
 
 #[cfg(test)]
@@ -614,7 +618,7 @@ mod tests {
             note(3.0, 10, 4, NoteBody::Touch),
             note(4.0, 20, 4, NoteBody::Touch),
         ]);
-        // Shifts of 0, +4 and -8 frames: Marvelous, Great, Miss (touch: 3/5/6 frames).
+        // Shifts of -8, -4, 0 or +4 frames: Miss, Great, Marvelous, Great (touch: 3/5/6 frames).
         let s = spec(vec![(
             Class::Touch,
             ProbeSpec::Sweep {
@@ -629,7 +633,7 @@ mod tests {
             let Probe::Shift { ms } = p else { panic!() };
             let want = match (ms / (FRAME_SECS * 1000.0)).round() as i64 {
                 0 => Judgement::Marvelous,
-                4 => Judgement::Great,
+                -4 | 4 => Judgement::Great,
                 _ => Judgement::Miss,
             };
             assert_eq!(t.ours, Some(want), "{p:?}");
@@ -665,7 +669,7 @@ mod tests {
         // Stray points are counted, not followed.
         let mut stray = pts.clone();
         stray.extend([(-4.0, true), (8.0, true)]);
-        assert_eq!(fit_interval(&stray), Some((-3.5, 4.5, 2)));
+        assert_eq!(fit_interval(&stray), Some((-4.0, 4.5, 2)));
         // A soft edge (alternating samples) lands in the middle of its equally good cuts.
         let soft = [(0.0, false), (1.0, true), (2.0, false), (3.0, true), (4.0, true), (5.0, false)];
         assert_eq!(fit_interval(&soft), Some((1.5, 4.5, 1)));
