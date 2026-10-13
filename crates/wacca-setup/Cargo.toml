@@ -1,0 +1,25 @@
+[package]
+name = "wacca-setup"
+description = "First-run import: game archives or an installed game -> portable assets/ + data/"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+wacca-audio.workspace = true
+wacca-chart.workspace = true
+wacca-convert = { path = "../wacca-convert" }
+wacca-game.workspace = true
+log.workspace = true
+thiserror.workspace = true
+serde_json.workspace = true
+md5 = "0.8"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+wacca-ue4.workspace = true
+
+[lints]
+workspace = true
