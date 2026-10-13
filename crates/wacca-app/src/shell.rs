@@ -14,7 +14,9 @@ use wacca_game::{points, rating};
 use wacca_render::layout::{Rect, playfield_viewport};
 use wacca_render::menu_bg::MenuBackdrop;
 use wacca_render::text::{Fonts, TextRenderer};
-use wacca_render::{JudgeSprite, MeshVertex, Renderer, Sprite, SpriteSheet, Stage, Vertex};
+use wacca_render::{
+    BgFrame, JudgeSprite, MeshVertex, Renderer, Sprite, SpriteSheet, Stage, Vertex,
+};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{
@@ -118,6 +120,7 @@ pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
         scene: Vec::new(),
         notes: Vec::new(),
         stage: Stage::default(),
+        monitor: None,
     };
     EventLoop::new()?.run_app(&mut app)?;
     app.error.map_or(Ok(()), Err)
@@ -196,7 +199,8 @@ impl Gfx {
             .map_or(0.0, |mhz| 1000.0 / f64::from(mhz));
         let mut renderer = Renderer::new(&device, &queue, config.format);
         renderer.load_sprites(ui_dir);
-        let text = TextRenderer::new(&device, &queue, config.format, fonts);
+        let mut text = TextRenderer::new(&device, &queue, config.format, fonts);
+        text.set_image_texture(options::MONITOR_KEY, renderer.background_display());
         let backdrop = MenuBackdrop::new(
             &device,
             &queue,
@@ -246,7 +250,7 @@ impl Gfx {
         &mut self,
         frame: wgpu::SurfaceTexture,
         (scene, notes, stage): (&[Vertex], &[MeshVertex], &Stage),
-        view: &View,
+        (view, monitor): (&View, Option<&BgFrame>),
         images: &mut Images,
     ) -> DrawTimes {
         let t1 = Instant::now();
@@ -260,6 +264,9 @@ impl Gfx {
         let size = [self.config.width, self.config.height];
         self.renderer
             .render_with_notes(&mut encoder, &target, size, scene, notes, stage);
+        if let Some(frame) = monitor {
+            self.renderer.render_background_display(&mut encoder, frame);
+        }
         if let (Some(rect), Some(b)) = (view.backdrop, &self.backdrop) {
             let t = self.started.elapsed().as_secs_f32();
             b.draw(&self.queue, &mut encoder, &target, size, rect, t);
@@ -557,9 +564,30 @@ struct App {
     notes: Vec<MeshVertex>,
     /// 3D stage (guide lanes, hold ribbons, chevrons), reused every frame.
     stage: Stage,
+    /// The final check's live monitor (charts without a movie).
+    monitor: Option<options::Monitor>,
 }
 
 impl App {
+    /// Runs the final check's live monitor while it shows a chart without a movie.
+    fn update_monitor(&mut self, dt: f32) {
+        let chart = self.s.menu.list.chart();
+        let song = chart
+            .filter(|(_, c)| self.screen == Screen::Options && c.movie.is_none())
+            .map(|(s, _)| options::bpm_of(&s.bpm));
+        let lib = self
+            .gfx
+            .as_ref()
+            .and_then(|g| g.renderer.background_library());
+        let (Some(bpm), Some(lib)) = (song, lib) else {
+            self.monitor = None;
+            return;
+        };
+        self.monitor
+            .get_or_insert_with(|| options::Monitor::new(lib))
+            .update(dt, bpm);
+    }
+
     fn size(&self) -> [f32; 2] {
         self.gfx.as_ref().map_or([1.0, 1.0], Gfx::size)
     }
@@ -637,6 +665,7 @@ impl App {
                 &m.list,
                 &self.s.save,
                 &self.plate(),
+                self.monitor.is_some(),
             ),
             Screen::Calibrate => {
                 let pos = self.s.player.position();
@@ -1065,6 +1094,7 @@ impl App {
             self.perf.frame(f64::from(dt));
         }
         self.wheel = ease(self.wheel, dt, WHEEL_TAU);
+        self.update_monitor(dt);
         // A menu countdown that ran out moves on as if GO was pressed (arcade behaviour).
         if self.wipe.is_none() && self.countdown() == Some(0) {
             self.timer_at = Instant::now();
@@ -1094,7 +1124,13 @@ impl App {
         }
         self.perf.build.push(ms(acquired.elapsed()));
         let Some(gfx) = &mut self.gfx else { return };
-        let t = gfx.draw(target, (&scene, &notes, &stage), &view, &mut self.images);
+        let monitor = self.monitor.as_ref().map(|m| &m.frame);
+        let t = gfx.draw(
+            target,
+            (&scene, &notes, &stage),
+            (&view, monitor),
+            &mut self.images,
+        );
         self.scene = scene;
         self.notes = notes;
         self.stage = stage;

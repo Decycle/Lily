@@ -15,6 +15,8 @@ use crate::stage_gpu::{HDR_FORMAT, depth_state, upload};
 const CAPTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const MIN_BUFFER_BYTES: u64 = 64 * 1024;
+/// Side of the display copy of the capture (UI previews).
+const DISPLAY_SIZE: u32 = CAPTURE_SIZE / 2;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -53,6 +55,8 @@ pub(crate) struct BgLayer {
     depth: wgpu::TextureView,
     quad: wgpu::RenderPipeline,
     quad_bind: wgpu::BindGroup,
+    display_pipeline: wgpu::RenderPipeline,
+    display: wgpu::Texture,
     loaded: Option<Loaded>,
     runs: Vec<(u32, u32, u32)>,
 }
@@ -243,6 +247,44 @@ impl BgLayer {
             multiview: None,
             cache: None,
         });
+        let display_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("bg display"),
+            layout: Some(&quad_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &quad_module,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &quad_module,
+                entry_point: Some("fs_display"),
+                compilation_options: Default::default(),
+                targets: &[Some(CAPTURE_FORMAT.into())],
+            }),
+            multiview: None,
+            cache: None,
+        });
+        let display = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("bg display"),
+            size: wgpu::Extent3d {
+                width: DISPLAY_SIZE,
+                height: DISPLAY_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: CAPTURE_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
         let linear = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("bg quad"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -279,9 +321,40 @@ impl BgLayer {
             depth,
             quad,
             quad_bind,
+            display_pipeline,
+            display,
             loaded: None,
             runs: Vec::new(),
         }
+    }
+
+    /// Writes the last capture as the empty play view shows it (under the guide lanes) into
+    /// [`BgLayer::display`].
+    pub(crate) fn render_display(&self, encoder: &mut wgpu::CommandEncoder) {
+        let view = self
+            .display
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("bg display"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..Default::default()
+        });
+        pass.set_pipeline(&self.display_pipeline);
+        pass.set_bind_group(0, &self.quad_bind, &[]);
+        pass.draw(0..4, 0..1);
+    }
+
+    /// The display copy of the capture (`DISPLAY_SIZE`², RGBA8 display values).
+    pub(crate) fn display(&self) -> &wgpu::Texture {
+        &self.display
     }
 
     /// Loads `data_dir`'s background library and its textures (`data_dir/ui/Vfx/Textures`);

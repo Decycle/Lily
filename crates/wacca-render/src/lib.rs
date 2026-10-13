@@ -23,7 +23,7 @@ pub mod sync;
 pub mod text;
 mod video;
 
-pub use bg::{Background, BgLibrary, BgState};
+pub use bg::{Background, BgFrame, BgLibrary, BgState};
 pub use effects::Effects;
 pub use layout::{Paint, Vertex};
 pub use notes3d::{MeshVertex, NoteMeshes, build_mesh_notes};

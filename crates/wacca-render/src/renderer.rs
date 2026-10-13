@@ -243,6 +243,23 @@ impl Renderer {
         self.bg.capture()
     }
 
+    /// Renders the background `frame` (see [`crate::Background::build`]) outside the play view,
+    /// into [`Renderer::background_display`]: the capture as the play view shows it, for UI
+    /// previews such as the options screen's monitor.
+    pub fn render_background_display(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        frame: &crate::bg::BgFrame,
+    ) {
+        self.bg.render(&self.device, &self.queue, encoder, frame);
+        self.bg.render_display(encoder);
+    }
+
+    /// The texture [`Renderer::render_background_display`] writes (RGBA8 display values, square).
+    pub fn background_display(&self) -> &wgpu::Texture {
+        self.bg.display()
+    }
+
     /// Note meshes for [`build_mesh_notes`](crate::build_mesh_notes), when loaded (then build the
     /// scene with [`SceneOptions::mesh_notes`](crate::SceneOptions) and draw with
     /// [`Renderer::render_with_notes`]).

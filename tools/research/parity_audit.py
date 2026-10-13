@@ -85,6 +85,8 @@ def replay(run, latency, hit_latency):
     path = os.path.join(run, "e3.json")
     if os.path.exists(path):
         for o in json.load(open(path))["outcomes"]:
+            if o.get("real") is None:
+                continue  # not seen in the reference (the replay's default applies)
             probe = o.get("probe") or {}
             shift = probe.get("ms", 0.0) / 1000.0 if probe.get("probe") == "shift" else 0.0
             shown = o["time"] + o["shown"] if o.get("shown") is not None else o["end"]

@@ -252,6 +252,24 @@ impl Painter {
         });
     }
 
+    /// Image `key` (full key, see [`Item::ImagePoly`]) on a disc of `diameter` centred at `at`.
+    pub fn disc_image(&mut self, key: &str, at: [f32; 2], diameter: f32, tint: Rgba) {
+        let rect = self.c.rect(at, [diameter, diameter], MID);
+        let (cx, cy, r) = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0, rect.w / 2.0);
+        let (points, uvs) = (0..64)
+            .map(|k| {
+                let (s, c) = (k as f32 * std::f32::consts::TAU / 64.0).sin_cos();
+                ([cx + r * c, cy + r * s], [0.5 + 0.5 * c, 0.5 + 0.5 * s])
+            })
+            .unzip();
+        self.layer(at).items.push(Item::ImagePoly {
+            key: key.to_string(),
+            points,
+            uvs,
+            tint,
+        });
+    }
+
     /// A ported UI material centred at `at` (see [`Item::Material`]); `textures` are names
     /// under [`TEX`], or `Vfx/Textures/...` keys.
     pub fn material(
@@ -620,7 +638,15 @@ mod tests {
                 crate::mode::view(c, 1.0, &who),
                 crate::category::view(c, &l, 0, 0.0, &save, &who),
                 crate::select_ui::view(c, &l, 0.0, &save, &who),
-                crate::options::view(c, &menus, (&Settings::default(), false), &l, &save, &who),
+                crate::options::view(
+                    c,
+                    &menus,
+                    (&Settings::default(), false),
+                    &l,
+                    &save,
+                    &who,
+                    false,
+                ),
             ];
             // The circle is on screen and every tap area is centred on screen, except the
             // wheel's outer slots, which sit past the circle under the mask as on the cabinet.
