@@ -37,8 +37,6 @@ pub enum Sprite {
     SnapArrow,
     /// Guide-lane gradient (alpha), bright at v = 0.
     GuideLane,
-    /// Hold body cross-section (alpha), symmetric along u.
-    HoldBody,
     /// Soft round glow (alpha).
     Glow,
     Judge(JudgeSprite),
@@ -64,14 +62,13 @@ pub enum TextSprite {
 
 impl Sprite {
     /// Sprites read from exported textures (digits come from a font).
-    pub const ALL: [Sprite; 14] = [
+    pub const ALL: [Sprite; 13] = [
         Sprite::NoteFace,
         Sprite::ChainStripes,
         Sprite::Sparkle,
         Sprite::SlideArrow,
         Sprite::SnapArrow,
         Sprite::GuideLane,
-        Sprite::HoldBody,
         Sprite::Glow,
         Sprite::Judge(JudgeSprite::Marvelous),
         Sprite::Judge(JudgeSprite::Great),
@@ -119,8 +116,6 @@ pub struct Source {
     pub bake: Bake,
     /// Halve the resolution this many times (big masks shown small; there are no mipmaps).
     pub shrink: u32,
-    /// Make the image symmetric along u (left half mirrored onto the right).
-    pub mirror_u: bool,
 }
 
 const ALL_ROWS: (f32, f32) = (0.0, 1.0);
@@ -132,7 +127,6 @@ pub fn source(s: Sprite) -> Option<Source> {
         rows: ALL_ROWS,
         bake,
         shrink: 0,
-        mirror_u: false,
     };
     Some(match s {
         // UNVERIFIED: which atlas rows the note meshes map is a guess from the channel layout
@@ -180,11 +174,6 @@ pub fn source(s: Sprite) -> Option<Source> {
             },
         ),
         Sprite::GuideLane => src("Vfx/Textures/vT_GuideLane01_00_m", Bake::Alpha(Ch::R)),
-        // UNVERIFIED: the R columns (bright → dark) read as edge → centre of the hold body.
-        Sprite::HoldBody => Source {
-            mirror_u: true,
-            ..src("Vfx/Textures/vT_HoldNote01_00_m", Bake::Alpha(Ch::R))
-        },
         Sprite::Glow => src("Vfx/Textures/vT_Glow00_00_m", Bake::Alpha(Ch::R)),
         Sprite::Judge(j) => src(
             match j {
@@ -251,14 +240,6 @@ impl Image {
             sum.map(|s| (s / 4) as u8)
         })
     }
-
-    fn mirror_u(&self) -> Self {
-        let w = self.size[0];
-        Self::from_fn(self.size, |x, y| {
-            let sx = if x < w / 2 { 2 * x } else { 2 * (w - 1 - x) };
-            self.px(sx.min(w - 1), y)
-        })
-    }
 }
 
 /// Bake `img` per `src` into a premultiplied atlas sprite.
@@ -266,9 +247,6 @@ pub fn bake(img: &Image, src: &Source) -> Image {
     let mut img = img.rows(src.rows);
     for _ in 0..src.shrink {
         img = img.half();
-    }
-    if src.mirror_u {
-        img = img.mirror_u();
     }
     let unit = |v: u8| f32::from(v) / 255.0;
     let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -573,7 +551,6 @@ mod tests {
             rows: (0.2, 0.6),
             bake: Bake::Image,
             shrink: 1,
-            mirror_u: false,
         };
         let b = bake(&i, &src);
         assert_eq!(b.size, [2, 2]);
@@ -590,7 +567,6 @@ mod tests {
             rows: ALL_ROWS,
             bake: Bake::Alpha(c),
             shrink: 0,
-            mirror_u: false,
         };
         assert_eq!(bake(&i, &alpha(Ch::B)).rgba, vec![128, 128, 128, 128]);
         let mask = Source {
@@ -605,14 +581,6 @@ mod tests {
         };
         // a = 128/255: hi 0.5·a, shade 0.6·a.
         assert_eq!(bake(&i, &mask).rgba, vec![64, 77, 0, 128]);
-    }
-
-    #[test]
-    fn mirror_makes_u_symmetric() {
-        let i = img([4, 1], |x, _| [x as u8 * 10, 0, 0, 255]);
-        let m = i.mirror_u();
-        let r: Vec<u8> = (0..4).map(|x| m.px(x, 0)[0]).collect();
-        assert_eq!(r, [0, 20, 20, 0]);
     }
 
     #[test]

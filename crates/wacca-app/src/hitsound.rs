@@ -178,6 +178,7 @@ mod tests {
             time: t,
             arc: Arc { lane, width: 4 },
             lane_unwrapped: f32::from(lane),
+            control: true,
         };
         note(
             time,

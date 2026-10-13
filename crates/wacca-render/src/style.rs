@@ -9,36 +9,9 @@ use wacca_chart::{Bonus, NoteBody, SlideDir, SnapDir};
 
 pub type Rgba = [f32; 4];
 
-pub const GUIDE_LANE: Rgba = [0.08, 0.08, 0.12, 1.0];
-/// Tint of the guide-lane gradient texture (bright at the rim, fading to the centre).
-// UNVERIFIED: brightness from `GuideLaneBrightnessParamAlphaNormal` 600; tint
-// matched by eye to the attract-demo capture (dark navy, brightest at the rim).
-pub const GUIDE_LANE_TINT: Rgba = [0.25, 0.27, 0.40, 0.7];
-pub const LANE_LINE: Rgba = [0.22, 0.22, 0.30, 1.0];
-/// Lane lines over a background movie (faint, E2 frames).
-pub const LANE_LINE_MOVIE: Rgba = [0.75, 0.80, 0.95, 0.06];
-/// Guide sectors over a movie: a dark translucent tunnel, darkest at the rim (tint of the
-/// guide-lane gradient). E2: masked lanes show the movie bright, lanes that are on dim it.
-// UNVERIFIED: tint and opacity eyeballed (`GuideLaneBrightnessParamAlphaMovie` 290 vs 600).
-pub const GUIDE_LANE_MOVIE: Rgba = [0.03, 0.04, 0.12, 0.8];
-/// Flat fallback of [`GUIDE_LANE_MOVIE`] (no gradient texture).
-pub const GUIDE_LANE_MOVIE_FLAT: Rgba = [0.03, 0.04, 0.12, 0.4];
-/// Judgement ring: a thick band from the line outwards, hot pink on the sides, purple at the
-/// bottom and partly at the top (see `scene::judge_ring_color`), drawn only on lanes that are
-/// on. E2 frames: band 292–315 px for a 291.8 px line, (255, 41, 150) on the right side; its
-/// two edges (294 and 310 px) are bright, the middle at ~2/3 brightness.
-pub const JUDGE_RING_SIDE: Rgba = [1.0, 0.16, 0.59, 1.0];
-pub const JUDGE_RING_PURPLE: Rgba = [0.78, 0.07, 1.0, 1.0];
-pub const JUDGE_RING_TOP_PURPLE: f32 = 0.7;
+/// Judgement band outside the line (E2: 292–315 px for a 291.8 px line); the dark rim starts
+/// at its outer edge. The band itself is drawn by the 3D guide lanes (`stage`).
 pub const JUDGE_BAND_WIDTH: f32 = 0.08;
-/// Brightness of the band between its two bright stripes.
-pub const JUDGE_BAND_MID: f32 = 0.8;
-/// Bright stripes: centre radii and half width.
-pub const JUDGE_STRIPES: [f32; 2] = [1.008, 1.062];
-pub const JUDGE_STRIPE_HALF_WIDTH: f32 = 0.007;
-/// Additive glow inside the line and outside the band (textured look only): opacity and width.
-pub const JUDGE_GLOW_ALPHA: f32 = 0.5;
-pub const JUDGE_GLOW_WIDTH: f32 = 0.03;
 /// Dark band outside the ring (E2: 315–331 px, (20, 18, 30)) and its thin outer edge. It goes
 /// all the way round, also over masked lanes.
 pub const RIM: Rgba = [0.08, 0.07, 0.12, 1.0];
@@ -97,8 +70,6 @@ pub const TOUCH: Rgba = [1.0, 0.220, 0.935, 1.0];
 pub const CHAIN: Rgba = [1.0, 0.891, 0.270, 1.0];
 // UNVERIFIED: `HoldNote_Color1` is a dark gold; it is brightened for the head so it reads on black.
 pub const HOLD: Rgba = [0.95, 0.80, 0.10, 1.0];
-/// Hold body: bright yellow, mostly opaque (E2 frames).
-pub const HOLD_BODY: Rgba = [1.0, 0.93, 0.45, 0.8];
 pub const SLIDE_CW: Rgba = [1.0, 0.598, 0.0, 1.0];
 pub const SLIDE_CCW: Rgba = [0.142, 0.823, 0.115, 1.0];
 pub const SNAP_IN: Rgba = [0.867, 0.092, 0.092, 1.0];
@@ -183,7 +154,6 @@ pub const SENSOR_INNER: f32 = 0.55;
 pub const SENSOR_OUTER: f32 = 1.15;
 /// Depth rings (= `wacca_game::input::DEPTHS`).
 pub const SENSOR_DEPTHS: usize = 4;
-pub const LANE_LINE_HALF_WIDTH: f32 = 0.002;
 /// Playfield-space radius mapped to the edge of the square viewport: the game's view is a
 /// 675 px square (NDC 1 = 337.5 px, doc 11 §2.2) whose rim inner edge (radius 1) is at 291.8 px (E2).
 pub const VIEW_EXTENT: f32 = 337.5 / 291.8;

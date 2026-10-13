@@ -8,7 +8,7 @@
 
 use std::f32::consts::TAU;
 
-use wacca_chart::{Chart, HoldNode, LANES, MaskDir, MaskEvent};
+use wacca_chart::{Chart, LANES, MaskDir, MaskEvent};
 
 use crate::camera;
 use crate::style::{SCREEN_EDGE, SENSOR_DEPTHS, SENSOR_INNER, SENSOR_OUTER, VIEW_EXTENT};
@@ -19,9 +19,6 @@ use crate::style::{SCREEN_EDGE, SENSOR_DEPTHS, SENSOR_INNER, SENSOR_OUTER, VIEW_
 pub const APPROACH_SECS: f64 = 10.0 / 3.0;
 /// Mask sweep: one lane per `1000/60/2` ms (01 §4).
 pub const MASK_SECS_PER_LANE: f64 = 1.0 / 120.0;
-/// Hold bodies are sampled at this time step between nodes (bounded by [`HOLD_MAX_SAMPLES`]).
-pub const HOLD_SAMPLE_SECS: f64 = 1.0 / 60.0;
-pub const HOLD_MAX_SAMPLES: usize = 64;
 /// Window shape (portrait 9:16).
 pub const ASPECT_W: f32 = 9.0;
 pub const ASPECT_H: f32 = 16.0;
@@ -273,29 +270,6 @@ pub fn push_oriented_rect(
     );
 }
 
-/// Thin radial line along a lane edge from `r0` to `r1`.
-pub fn push_radial_line(
-    out: &mut Vec<Vertex>,
-    lane: f32,
-    r0: f32,
-    r1: f32,
-    half_width: f32,
-    color: [f32; 4],
-) {
-    let a = lane_angle(lane);
-    let (dir, n) = (
-        [a.cos(), a.sin()],
-        [-a.sin() * half_width, a.cos() * half_width],
-    );
-    let p = |r: f32, s: f32| [dir[0] * r + n[0] * s, dir[1] * r + n[1] * s];
-    push_quad(
-        out,
-        [p(r0, -1.0), p(r1, -1.0), p(r1, 1.0), p(r0, 1.0)],
-        [[0.0; 2]; 4],
-        &Paint::flat(color),
-    );
-}
-
 /// Pieces of a span `0..span` cut into repeating tiles of length `len` shifted by `phase`
 /// (fraction of a tile): `(offset, length, s0, s1)` with `s0..s1` the covered part of the tile.
 pub fn tiles(span: f32, len: f32, phase: f32) -> Vec<(f32, f32, f32, f32)> {
@@ -325,60 +299,6 @@ pub fn three_slice(span: f32, cap: f32, cap_s: f32) -> [(f32, f32, f32, f32); 3]
         (c, span - 2.0 * c, cap_s, 1.0 - cap_s),
         (span - c, c, 1.0 - cap_s, 1.0),
     ]
-}
-
-/// Sub-interval `[u0, u1]` of `0..=1` where the linear depth from `d0` to `d1` lies in `0..=1`.
-fn clip_visible(d0: f64, d1: f64) -> Option<(f64, f64)> {
-    if d0 == d1 {
-        return (0.0..=1.0).contains(&d0).then_some((0.0, 1.0));
-    }
-    let (ua, ub) = ((0.0 - d0) / (d1 - d0), (1.0 - d0) / (d1 - d0));
-    let (lo, hi) = (ua.min(ub).max(0.0), ua.max(ub).min(1.0));
-    (lo < hi).then_some((lo, hi))
-}
-
-/// Hold body between consecutive nodes, interpolating unwrapped lane and width linearly in time
-/// (01 §3, UNVERIFIED: the game may interpolate differently). `depth_of(t)` is the unclamped depth.
-/// Node pairs entirely on one side of the visible window are culled.
-pub fn push_hold_body(
-    out: &mut Vec<Vertex>,
-    nodes: &[HoldNode],
-    depth_of: impl Fn(f64) -> f64,
-    paint: &Paint,
-) {
-    for pair in nodes.windows(2) {
-        let (a, b) = (&pair[0], &pair[1]);
-        let (da, db) = (depth_of(a.time), depth_of(b.time));
-        if (da < 0.0 && db < 0.0) || (da > 1.0 && db > 1.0) || a.time >= b.time {
-            continue;
-        }
-        let n = (((b.time - a.time) / HOLD_SAMPLE_SECS).ceil() as usize).clamp(1, HOLD_MAX_SAMPLES);
-        // Sample `s` in 0..=1 along the node pair -> (time, lane, width).
-        let at = |s: f64| {
-            let lerp = |x: f32, y: f32| x + (y - x) * s as f32;
-            let w = lerp(a.arc.width as f32, b.arc.width as f32);
-            (
-                a.time + (b.time - a.time) * s,
-                lerp(a.lane_unwrapped, b.lane_unwrapped),
-                w,
-            )
-        };
-        let mut prev = (0.0, da);
-        for k in 1..=n {
-            let s1 = k as f64 / n as f64;
-            let d1 = if k == n { db } else { depth_of(at(s1).0) };
-            let (s0, d0) = prev;
-            prev = (s1, d1);
-            let Some((u0, u1)) = clip_visible(d0, d1) else {
-                continue;
-            };
-            let row = |u: f64| {
-                let (_, lane, w) = at(s0 + (s1 - s0) * u);
-                (depth_to_radius((d0 + (d1 - d0) * u) as f32), lane, w)
-            };
-            push_strip(out, row(u0), row(u1), paint);
-        }
-    }
 }
 
 /// Lane on/off state at time `t` (01 §4). Lanes start off, or all on if the chart has no
@@ -606,48 +526,6 @@ mod tests {
             assert!(angles.contains(&a), "missing edge at {a} deg");
         }
         assert!(angles.iter().all(|a| *a >= 348 || *a <= 12));
-    }
-
-    fn node(time: f64, lane: u8, width: u8, lane_unwrapped: f32) -> HoldNode {
-        HoldNode {
-            pos: BeatPos::default(),
-            time,
-            arc: Arc { lane, width },
-            lane_unwrapped,
-        }
-    }
-
-    #[test]
-    fn hold_strip_continuous_across_wrap() {
-        // 58 -> 61 (= lane 1), width 2: every quad edge stays near lanes 58..63, never jumps around.
-        let nodes = [node(0.0, 58, 2, 58.0), node(1.0, 1, 2, 61.0)];
-        let mut v = Vec::new();
-        push_hold_body(&mut v, &nodes, |t| t / 2.0, &Paint::flat([1.0; 4]));
-        assert!(!v.is_empty());
-        for tri in v.chunks(3) {
-            let a: Vec<f32> = tri.iter().map(|p| p.pos[1].atan2(p.pos[0])).collect();
-            for i in 0..3 {
-                let mut d = (a[i] - a[(i + 1) % 3]).abs();
-                d = d.min(TAU - d);
-                assert!(d < lane_angle(2.5), "triangle spans {d} rad");
-            }
-        }
-    }
-
-    #[test]
-    fn hold_strip_clipped_to_window() {
-        let nodes = [node(0.0, 0, 4, 0.0), node(4.0, 0, 4, 0.0)];
-        let mut v = Vec::new();
-        // depth = t - 1: visible part is t in 1..2.
-        push_hold_body(&mut v, &nodes, |t| t - 1.0, &Paint::flat([1.0; 4]));
-        let r: Vec<f32> = v.iter().map(|p| p.pos[0].hypot(p.pos[1])).collect();
-        let line = depth_to_radius(0.0);
-        assert!(r.iter().all(|r| (-1e-4..=line + 1e-4).contains(r)));
-        assert!(r.iter().any(|r| close(*r, line)) && r.iter().any(|r| close(*r, 0.0)));
-        // Entirely past the line: nothing.
-        let mut v = Vec::new();
-        push_hold_body(&mut v, &nodes, |t| t - 10.0, &Paint::flat([1.0; 4]));
-        assert!(v.is_empty());
     }
 
     fn mask(time: f64, lane: u8, width: u8, add: bool, dir: MaskDir) -> MaskEvent {

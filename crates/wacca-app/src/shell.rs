@@ -13,7 +13,7 @@ use wacca_game::save::{self, SaveData};
 use wacca_game::{points, rating};
 use wacca_render::layout::{Rect, playfield_viewport};
 use wacca_render::text::{Fonts, TextRenderer};
-use wacca_render::{JudgeSprite, MeshVertex, Renderer, Sprite, SpriteSheet, Vertex};
+use wacca_render::{JudgeSprite, MeshVertex, Renderer, Sprite, SpriteSheet, Stage, Vertex};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{
@@ -116,6 +116,7 @@ pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
         pacer: Pacer::new(std::time::Duration::ZERO),
         scene: Vec::new(),
         notes: Vec::new(),
+        stage: Stage::default(),
     };
     EventLoop::new()?.run_app(&mut app)?;
     app.error.map_or(Ok(()), Err)
@@ -231,7 +232,7 @@ impl Gfx {
     fn draw(
         &mut self,
         frame: wgpu::SurfaceTexture,
-        (scene, split, notes): (&[Vertex], usize, &[MeshVertex]),
+        (scene, notes, stage): (&[Vertex], &[MeshVertex], &Stage),
         view: &View,
         images: &mut Images,
     ) -> DrawTimes {
@@ -245,7 +246,7 @@ impl Gfx {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         let size = [self.config.width, self.config.height];
         self.renderer
-            .render_with_notes(&mut encoder, &target, size, scene, split, notes);
+            .render_with_notes(&mut encoder, &target, size, scene, notes, stage);
         self.text.begin(size);
         for item in &view.items {
             match item {
@@ -521,6 +522,8 @@ struct App {
     scene: Vec<Vertex>,
     /// 3D note triangles, reused every frame.
     notes: Vec<MeshVertex>,
+    /// 3D stage (guide lanes, hold ribbons, chevrons), reused every frame.
+    stage: Stage,
 }
 
 impl App {
@@ -972,7 +975,8 @@ impl App {
         let mut notes = std::mem::take(&mut self.notes);
         scene.clear();
         notes.clear();
-        let mut split = 0;
+        let mut stage = std::mem::take(&mut self.stage);
+        stage.clear();
         match self.screen {
             Screen::Play => {
                 let over = self.play.as_mut().and_then(PlayState::frame);
@@ -991,7 +995,7 @@ impl App {
                     let empty = SpriteSheet::default();
                     let sprites = self.gfx.as_ref().map_or(&empty, |g| g.renderer.sprites());
                     let meshes = self.gfx.as_ref().and_then(|g| g.renderer.note_meshes());
-                    split = p.scene(sprites, meshes, &mut scene, &mut notes);
+                    p.scene(sprites, meshes, &mut scene, &mut notes, &mut stage);
                     if p.paused {
                         self.drift.reset();
                     } else {
@@ -1045,9 +1049,10 @@ impl App {
         }
         self.perf.build.push(ms(acquired.elapsed()));
         let Some(gfx) = &mut self.gfx else { return };
-        let t = gfx.draw(target, (&scene, split, &notes), &view, &mut self.images);
+        let t = gfx.draw(target, (&scene, &notes, &stage), &view, &mut self.images);
         self.scene = scene;
         self.notes = notes;
+        self.stage = stage;
         let p = &mut self.perf;
         (p.image_loads, p.image_ms) = (self.images.loads, ms(self.images.spent));
         p.submit.push(ms(t.submit));

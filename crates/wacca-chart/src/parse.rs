@@ -46,6 +46,8 @@ struct NoteRow {
     kind: i64,
     index: u32,
     arc: Arc,
+    /// Column 8: 1 = shown in the official editor (hold joints: authored control point).
+    visible: bool,
     /// Column 9: `ChainRearNoteIndex` (holds) or `GuideLaneDirection` (masks); ignored elsewhere.
     extra: Option<i64>,
 }
@@ -172,7 +174,7 @@ fn parse_row(line: usize, text: &str) -> Option<Row> {
         return None;
     }
     let kind = match (lead_int(kind), rest) {
-        (1, [kind, index, lane, width, _visible, extra @ ..]) => {
+        (1, [kind, index, lane, width, visible, extra @ ..]) => {
             let Ok(index) = u32::try_from(lead_int(index)) else {
                 log::warn!("line {line}: ignoring note with invalid index {index:?}");
                 return None;
@@ -181,6 +183,7 @@ fn parse_row(line: usize, text: &str) -> Option<Row> {
                 kind: lead_int(kind),
                 index,
                 arc: arc(line, lead_int(lane), lead_int(width)),
+                visible: lead_int(visible) != 0,
                 extra: extra.first().map(|s| lead_int(s)),
             })
         }
@@ -429,6 +432,7 @@ fn walk_hold(
             time: time(row.pos),
             arc: n.arc,
             lane_unwrapped,
+            control: n.kind != HOLD_JOINT || n.visible,
         });
         if n.kind == HOLD_END {
             break;
@@ -665,6 +669,9 @@ mod tests {
             .map(|n| n.lane_unwrapped)
             .collect();
         assert_eq!(lanes, [58.0, 61.0, 59.0, 57.0]);
+        // Joints with column 8 = 0 are not control points; the start and end always are.
+        let control: Vec<bool> = hold_nodes(&c.notes[0]).iter().map(|n| n.control).collect();
+        assert_eq!(control, [true, false, false, true]);
         assert_eq!(lane_delta(0, 59), -1);
         assert_eq!(lane_delta(59, 0), 1);
     }

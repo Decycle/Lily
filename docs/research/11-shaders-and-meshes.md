@@ -244,7 +244,7 @@ Then separate translucency is composited (`FPostProcessBokehDOFRecombinePS`: sce
   `L_line_pos` 0, `R_line_pos` 0.51, `Line_LorR` 0.5, `LineONOFF` 1, `Combo_ONOFF` 0, insideglow 0.25..0.3,
   SmoothStep 0.6..1. Second MPC scalar (`cb4[0].y`) = 0.6249 in that frame (animated pulse; UNVERIFIED source).
   `View.GameTime` (`cb1[132].z`) drives the scrolls.
-* Hold body: `HoldColorNumber` 2 (picks tile 2 of the 13-tile `vT_HoldNote01_00_m` strip), `U_Tiling` 13.
+* Hold body: `HoldColorNumber` 2 (picks tile 2 of the 13-tile `vT_HoldGrd00_00_m` strip, the material's `TilingTexture`; `vT_HoldNote01` is unused), `U_Tiling` 13.
 
 Annotated disassembly (every constant operand followed by its captured value, plus SRV/sampler list) for each of
 these draws: `runs/renderdoc/cap3/d12365/annot/<eid>_{vs,ps}.asm` — 2493 bar line, 2635 hold-start note, 2680 hold
@@ -335,7 +335,7 @@ of 337.5; E2 measured the band at 292–315 px).
 
 ### 3.4 Holds
 Body: one dynamic triangle mesh per frame in world space (identity transform), material `vMX_2_Hold_001`: colour =
-tile `floor(HoldColorNumber)` (lerp to the next tile by `frac`) of the 13-tile strip `vT_HoldNote01_00_m` (512²)
+tile `floor(HoldColorNumber)` (lerp to the next tile by `frac`) of the 13-tile strip `vT_HoldGrd00_00_m` (512²; also the hold end cap `vMX_2_Hold_003` colour)
 sampled at `((rot180(uv − (0.45, 0.5)) + 0.5 + (tileX, tileY))·(1/13, 1))`, constant opacity, alpha blend.
 Strip geometry (CONFIRMED, frame 12365, `cap3/d12365b`, hold at lanes 40–49): rows of **16 vertices** at fixed world
 Y, rows every **ΔY = 4.5 cm (Δs = 0.0075)** from the hold head (here s = 0.6737, Y = −195.77) back to the tail (or to
@@ -374,3 +374,36 @@ translucency; final `^(1/2.2)`.
   `pow(1/2.2)`; no tonemap, no bloom in the main view.
 * Hit effects (`effects.rs` pop/shoot/sparks constants) are hand-tuned → real are Cascade systems with the
   materials above at r 170, scale 1.7.
+
+### 3.8 Implemented (wacca-render `stage.rs` / `stage.wgsl` / `stage_gpu.rs`) and corrections to §3.2–3.4
+Guide lanes + ring, hold ribbons, chevrons/arrows, movie and the output power are ported (the 2D guide sectors,
+lane lines, ring bands and hold strips are gone). Checked against the captures (`examples/stagecmp.rs`; back
+buffer after the tonemap saved with `tools/research/rdc_rt_at.py`; frames 9153, 10699, 11184, 12365 rendered with
+their own movie planes): mean |diff| 1–3 / 255 per 25-px radius band, ring radial profile within ±4 levels, hold
+ribbon within ±1 level. Remaining differences: hit effects (§3.5), a 1-px ring edge (TAA), the mask sweep state at
+the capture times. Snap arrows match the KING reference (`runs/e2/20261013-043842`; no RenderDoc frame has snaps).
+Corrections (CONFIRMED unless marked):
+* Texture sRGB: every stage texture is cooked with `SRGB` on (sampled with sRGB decode) except
+  `vT_SnapNote00_00_m` (and `vT_NoteBase01_00_m`). The captured stage textures have no mips.
+* Hold body colour texture = the material's `TilingTexture` **`vT_HoldGrd00_00_m`** (512², 13 tiles; sampler clamp
+  u, mirror v), not `vT_HoldNote01`. The ribbon follows the hold's **control points only** (start, end, column-8 = 1
+  joints): rows step by a constant angle from (40, w10) to (60, w15) across 34 generated joints (`HoldNode.control`).
+  Rows every 1/60 s of chart time (UNVERIFIED vs every 4.5 cm: equal at speed 1.5); UV0.v = fraction of the hold's
+  duration (UNVERIFIED: equals row/170 on the captured 170-frame hold); the first row beyond the spawn point is
+  clamped to Y = −600 and ends the ribbon.
+* Slide chevrons: the sections ≥ the note width of `vMsh_SlideNote00_NN_s` (one flat band per lane, r 129–162.6,
+  y 0.963, UV0.v = lane / width). Mask = `t0.b · t1.b` (not g), colour factor `t0.r · t1.r`. SlideL mirrors v in the
+  gradient ((1−v)²), the pattern scroll (−1.7) and the mask (u, v). `UV_Scale.y + 0.55` = 3.395 on a 12-lane slide
+  while the default is 0.45, so the game sets it at run time; taken as proportional to the width (UNVERIFIED).
+* Snap arrows (`vMX_2_SnapIn/Out_001`): ⌊width/3⌋ arrow sections (one per centred 3-lane slot), **static** (no time
+  or depth term): `t = (1−u)²` (In) / `u²` (Out, texture at (−u, v)), `c1 = lerp((NC/2)², NC/2, t)·T.g`,
+  `c2 = 1 − (1−t)(1 − 1.5·NC)`, colour `lerp(c1², c2, T.r)` (In) / `lerp(c1², c2², T.r)` (Out),
+  `out = 2(col + 0.2)·screen(col, NC)`, mask `T.b ≥ 0.3333`.
+* Guide lane: the second MPC (`cb4`) is `MPC_BpmSignal`; its `.y` drives the inner glow pulse (taken as the beat
+  phase, UNVERIFIED). `OutsideGlowStrength` is 0.12 in the capture (master default 0.27). Without a movie the fade
+  uses the table's 600 / 3 (UNVERIFIED, no capture).
+* Output: linear scene colour in Rgba16F composed with `pow(x, 1/2.2)` (re-linearised with the sRGB curve on sRGB
+  targets so the stored value equals the game's UNORM output); the 2D HUD is drawn on top.
+* Stage order: movie, note bodies / hold ends / bar lines (opaque, depth written), chevrons, guide lanes, hold
+  ribbons, R-note aura (additive, depth-tested). Back faces culled (front CCW) as captured; the captured frames
+  render pixel-identical with and without culling (every drawn triangle faces the camera).
