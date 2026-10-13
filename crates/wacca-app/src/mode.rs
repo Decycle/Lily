@@ -30,7 +30,7 @@ const DECIDE_BTN: u32 = 0xe50485;
 /// The mode select screen `t` seconds after it appeared.
 pub fn view(c: Canvas, t: f32, who: &chrome::Player) -> View {
     let mut p = Painter::new(c);
-    chrome::background(&mut p);
+    chrome::background(&mut p, chrome::MODE_BACKDROP);
     // The mode art in a ring around the dial.
     art_ring(&mut p, t);
     discs(&mut p);

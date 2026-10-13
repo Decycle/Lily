@@ -205,9 +205,9 @@ impl Painter {
         }
     }
 
-    /// The select menus' animated backdrop (`uM_WCbg000`) on the 1080 square around the circle.
-    pub fn backdrop(&mut self) {
-        self.v.backdrop = Some(self.c.rect([0.0, 0.0], [DESIGN, DESIGN], MID));
+    /// The select menus' animated backdrop (`uM_WCbg000`) on a `side` square around the circle.
+    pub fn backdrop(&mut self, side: f32) {
+        self.v.backdrop = Some(self.c.rect([0.0, 0.0], [side, side], MID));
     }
 
     /// Texture `name` (under [`TEX`]) centred at `at`.

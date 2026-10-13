@@ -192,7 +192,7 @@ pub fn view(
     who: &chrome::Player,
 ) -> View {
     let mut p = Painter::new(c);
-    chrome::background(&mut p);
+    chrome::background(&mut p, chrome::SELECT_BACKDROP);
     let genres = list.genres();
     let n = genres.len() as i64;
     if n > 0 {
