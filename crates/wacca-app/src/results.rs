@@ -288,12 +288,14 @@ const RING: [(f32, f32, Rgba); 3] = [
 
 /// The play's end stamp stays behind the results (BP_RhythmGame `BP_Result_clear02`,
 /// `Clear02/ROT00`): the gradient rim `uT_FTclear_906` (-475..505 x -245..245 design units)
-/// under the white letters `uT_FTclear_900..904` (280 units each, -130..150), the whole turned
-/// -13° about the centre (the R seen right of the R-Notes column on the E3 frames lands at
-/// (364, -73)). Only between the pink stripes, like the ring.
-// UNVERIFIED: the rim's strength in the settled frame (~0.6 measured on the R's outline);
-// only the CLEAR stamp is drawn (Missless / Full Combo / All Marvelous / Failed have their own).
-const STAMP_TURN: f32 = -13.0;
+/// under the white letters `uT_FTclear_900..904` (280 units each, -130..150). The settled
+/// results keep it scaled and turned about the centre: the R's glyph (at 0.7 of its texture)
+/// lands at (370, -65) on the E3 result frames (overlay with our capture), i.e. x0.88, -11.3°.
+// UNVERIFIED: scale / turn from that one letter; the rim's and the letters' strength (rim ~0.6
+// on the R's outline, letters light grey); only the CLEAR stamp is drawn (Missless / Full
+// Combo / All Marvelous / Failed have their own).
+const STAMP_TURN: f32 = -11.3;
+const STAMP_SCALE: f32 = 0.88;
 const STAMP_LETTERS: [(&str, f32); 5] = [
     ("uT_FTclear_900", -510.0),
     ("uT_FTclear_901", -330.0),
@@ -305,16 +307,24 @@ const STAMP_LETTERS: [(&str, f32); 5] = [
 fn clear_stamp(v: &mut View, c: &Canvas) {
     let between = slab(607.0, 380.0, 738.0, 1100.0);
     let (s, k) = STAMP_TURN.to_radians().sin_cos();
+    let (s, k) = (s * STAMP_SCALE, k * STAMP_SCALE);
     let [cx, cy] = circle::CENTER;
     let quad = |x0: f32, y0: f32, x1: f32, y1: f32| {
-        [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(|[x, y]| [cx + k * x - s * y, cy + s * x + k * y])
+        [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+            .map(|[x, y]| [cx + k * x - s * y, cy + s * x + k * y])
     };
     let font = |name: &str| format!("UI/Textures/FONT/{name}");
     let rim = quad(-475.0, -245.0, 505.0, 245.0);
-    c.image_quad(v, font("uT_FTclear_906"), rim, &between, [1.0, 1.0, 1.0, 0.6]);
+    c.image_quad(
+        v,
+        font("uT_FTclear_906"),
+        rim,
+        &between,
+        [1.0, 1.0, 1.0, 0.6],
+    );
     for (name, x) in STAMP_LETTERS {
         let q = quad(x, -130.0, x + 280.0, 150.0);
-        c.image_quad(v, font(name), q, &between, WHITE);
+        c.image_quad(v, font(name), q, &between, [0.8, 0.8, 0.84, 1.0]);
     }
 }
 
@@ -804,6 +814,19 @@ mod tests {
         };
         assert_eq!(face("9"), Some(Face::Numerals));
         assert_eq!(face("Song"), Some(Face::Ui));
+    }
+
+    #[test]
+    fn clear_stamp_stays_behind_a_cleared_result_only() {
+        let stamp = |lamp: Lamp| {
+            let mut s = summary(false);
+            s.result.lamp = lamp;
+            images(&view(&s, area(), 10.0))
+                .iter()
+                .any(|k| k.ends_with("uT_FTclear_904"))
+        };
+        assert!(stamp(Lamp::Clear));
+        assert!(!stamp(Lamp::Failed));
     }
 
     #[test]

@@ -18,8 +18,22 @@ public class MenuCap {
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint f);
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
-  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string c, string t);
   public struct RECT { public int L, T, R, B; }
+  delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr l);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr h, System.Text.StringBuilder s, int n);
+  // The top-level window titled `title` that belongs to process `pid` (zero if none yet).
+  public static IntPtr Find(uint pid, string title) {
+    IntPtr found = IntPtr.Zero;
+    EnumWindows((h, l) => {
+      uint p; GetWindowThreadProcessId(h, out p);
+      var s = new System.Text.StringBuilder(256); GetWindowText(h, s, 256);
+      if (p == pid && s.ToString() == title) { found = h; return false; }
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
 }
 "@
 [MenuCap]::SetProcessDPIAware() | Out-Null
@@ -27,12 +41,18 @@ $root = (Resolve-Path "$PSScriptRoot\..\..").Path
 $exe = "$root\target\release\wacca-app.exe"
 $a = "--assets `"$Assets`" --data `"$root\$Data`" --save `"$root\$Save`" --screen $Screen"
 $p = Start-Process -FilePath $exe -ArgumentList $a -WorkingDirectory $root -PassThru
+# The window of the process started here (never another running instance, e.g. the user's).
 $h = [IntPtr]::Zero
-for ($i = 0; $i -lt 100 -and $h -eq [IntPtr]::Zero; $i++) {
+for ($i = 0; $i -lt 100 -and $h -eq [IntPtr]::Zero -and -not $p.HasExited; $i++) {
   Start-Sleep -Milliseconds 200
-  $h = [MenuCap]::FindWindow([NullString]::Value, "WACCA_slim")
+  $h = [MenuCap]::Find([uint32]$p.Id, "WACCA_slim")
+}
+if ($h -eq [IntPtr]::Zero) {
+  if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+  throw "no window from wacca-app (pid $($p.Id))"
 }
 Start-Sleep -Milliseconds ([int]($Wait * 1000))
+if ($p.HasExited) { throw "wacca-app (pid $($p.Id)) exited before the capture" }
 $r = New-Object MenuCap+RECT
 [MenuCap]::GetClientRect($h, [ref]$r) | Out-Null
 $bmp = New-Object System.Drawing.Bitmap ($r.R - $r.L), ($r.B - $r.T)
