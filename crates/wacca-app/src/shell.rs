@@ -19,13 +19,15 @@ use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{
     ElementState, KeyEvent, MouseButton, MouseScrollDelta, Touch, TouchPhase, WindowEvent,
 };
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Fullscreen, Window, WindowId};
 
 use crate::canvas::{Canvas, ease};
 use crate::gesture::{Gesture, Pointer, Scroller};
 use crate::menu::Menu;
+use crate::pacer::Pacer;
+use crate::perf::{Drift, Perf};
 use crate::play::{PlayOptions, PlaySpec, PlayState, VideoSetup, load_chart, movie_path};
 use crate::results::Summary;
 use crate::screen::{self, Event, Next, Screen};
@@ -46,6 +48,10 @@ pub enum ShellError {
     EventLoop(#[from] winit::error::EventLoopError),
     #[error("graphics: {0}")]
     Graphics(String),
+}
+
+fn ms(d: std::time::Duration) -> f32 {
+    d.as_secs_f32() * 1000.0
 }
 
 fn gfx_err(e: impl std::fmt::Display) -> ShellError {
@@ -69,6 +75,8 @@ pub struct Setup {
     pub windowed: bool,
     /// External decoder for background movies (`None` = no movies).
     pub ffmpeg: Option<PathBuf>,
+    /// Process start (startup time).
+    pub started: Instant,
 }
 
 pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
@@ -95,6 +103,12 @@ pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
         wheel: 0.0,
         last_frame: None,
         error: None,
+        perf: Perf::default(),
+        show_perf: false,
+        drift: Drift::default(),
+        input_at: None,
+        first_frame: false,
+        pacer: Pacer::new(std::time::Duration::ZERO),
     };
     EventLoop::new()?.run_app(&mut app)?;
     app.error.map_or(Ok(()), Err)
@@ -108,14 +122,27 @@ struct Gfx {
     config: wgpu::SurfaceConfiguration,
     renderer: Renderer,
     text: TextRenderer,
+    /// Present mode and frame latency (for the perf overlay).
+    mode: String,
+    /// Seconds per refresh of the window's monitor (0 = unknown).
+    period: f64,
+}
+
+/// Where one [`Gfx::draw`] spent its time.
+#[derive(Clone, Copy, Debug)]
+struct DrawTimes {
+    submit: std::time::Duration,
+    present: std::time::Duration,
 }
 
 impl Gfx {
     /// `ui_dir`: exported UI/Vfx textures (`data/ui`) for the playfield sprites.
     fn new(window: Arc<Window>, fonts: Fonts, ui_dir: &Path) -> Result<Self, ShellError> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::from_env_or_default());
         let surface = instance.create_surface(window.clone()).map_err(gfx_err)?;
+        let power_preference = wgpu::PowerPreference::from_env().unwrap_or_default();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference,
             compatible_surface: Some(&surface),
             ..Default::default()
         }))
@@ -128,8 +155,34 @@ impl Gfx {
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .ok_or_else(|| gfx_err("surface not supported by adapter"))?;
-        config.present_mode = wgpu::PresentMode::AutoVsync;
+        let caps = surface.get_capabilities(&adapter);
+        log::info!("present modes: {:?}", caps.present_modes);
+        config.present_mode = match std::env::var("WACCA_PRESENT").as_deref() {
+            Ok("mailbox") => wgpu::PresentMode::Mailbox,
+            Ok("immediate") => wgpu::PresentMode::Immediate,
+            _ => wgpu::PresentMode::AutoVsync,
+        };
+        if let Some(n) = std::env::var("WACCA_FRAME_LATENCY")
+            .ok()
+            .and_then(|v| v.parse().ok())
+        {
+            config.desired_maximum_frame_latency = n;
+        }
         surface.configure(&device, &config);
+        let mode = format!(
+            "{:?}, latency {}",
+            config.present_mode, config.desired_maximum_frame_latency
+        );
+        log::info!(
+            "surface: {:?} {}x{}, {mode}",
+            config.format,
+            config.width,
+            config.height
+        );
+        let period = window
+            .current_monitor()
+            .and_then(|m| m.refresh_rate_millihertz())
+            .map_or(0.0, |mhz| 1000.0 / f64::from(mhz));
         let mut renderer = Renderer::new(&device, &queue, config.format);
         renderer.load_sprites(ui_dir);
         let text = TextRenderer::new(&device, &queue, config.format, fonts);
@@ -141,6 +194,8 @@ impl Gfx {
             config,
             renderer,
             text,
+            mode,
+            period,
         })
     }
 
@@ -156,16 +211,27 @@ impl Gfx {
         }
     }
 
-    /// Playfield `scene` (may be empty), then the `view` overlay.
-    fn draw(&mut self, scene: &[Vertex], view: &View, jackets: &mut Images, ui: &mut Images) {
-        let frame = match self.surface.get_current_texture() {
-            Ok(frame) => frame,
-            Err(e) => {
+    /// The next swap-chain image; with vsync this waits for the display.
+    fn acquire(&mut self) -> Option<wgpu::SurfaceTexture> {
+        self.surface
+            .get_current_texture()
+            .map_err(|e| {
                 log::warn!("surface: {e}; reconfiguring");
                 self.surface.configure(&self.device, &self.config);
-                return;
-            }
-        };
+            })
+            .ok()
+    }
+
+    /// Playfield `scene` (may be empty), then the `view` overlay, onto `frame`.
+    fn draw(
+        &mut self,
+        frame: wgpu::SurfaceTexture,
+        scene: &[Vertex],
+        view: &View,
+        jackets: &mut Images,
+        ui: &mut Images,
+    ) -> DrawTimes {
+        let t1 = Instant::now();
         let target = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -232,7 +298,12 @@ impl Gfx {
         self.text.render(&mut encoder, &target);
         self.queue.submit([encoder.finish()]);
         self.window.pre_present_notify();
+        let t2 = Instant::now();
         frame.present();
+        DrawTimes {
+            submit: t2 - t1,
+            present: t2.elapsed(),
+        }
     }
 }
 
@@ -241,18 +312,33 @@ impl Gfx {
 struct Images<'a> {
     dir: PathBuf,
     tried: &'a mut HashSet<String>,
+    /// Files loaded this frame and the time spent.
+    loads: u64,
+    spent: std::time::Duration,
 }
 
-impl Images<'_> {
+impl<'a> Images<'a> {
+    fn new(dir: PathBuf, tried: &'a mut HashSet<String>) -> Self {
+        Self {
+            dir,
+            tried,
+            loads: 0,
+            spent: std::time::Duration::ZERO,
+        }
+    }
+
     fn ensure(&mut self, text: &mut TextRenderer, key: &str) {
         if key.is_empty() || !self.tried.insert(key.to_string()) {
             return;
         }
+        let t = Instant::now();
         let path = self.dir.join(format!("{key}.png"));
         match jacket::load(&path) {
             Some((size, rgba)) => text.set_image(key, size, &rgba),
             None => log::debug!("no image {}", path.display()),
         }
+        self.loads += 1;
+        self.spent += t.elapsed();
     }
 }
 
@@ -393,6 +479,15 @@ struct App {
     wheel: f32,
     last_frame: Option<Instant>,
     error: Option<ShellError>,
+    perf: Perf,
+    /// F3: the perf overlay.
+    show_perf: bool,
+    drift: Drift,
+    /// First play input not yet on screen.
+    input_at: Option<Instant>,
+    /// The first frame was presented (startup time logged).
+    first_frame: bool,
+    pacer: Pacer,
 }
 
 impl App {
@@ -536,11 +631,14 @@ impl App {
                 size: w.min(h).round() as u32,
             });
         let player = Arc::clone(&self.s.player);
+        let t = Instant::now();
+        self.drift.reset();
         match PlayState::new(spec, opts, player, &self.s.bgm, hits, video).and_then(|mut p| {
             p.start()?;
             Ok(p)
         }) {
             Ok(p) => {
+                log::info!("song loaded in {:.0} ms", ms(t.elapsed()));
                 self.play = Some(p);
                 self.screen = Screen::Play;
             }
@@ -652,6 +750,10 @@ impl App {
             self.toggle_fullscreen();
             return;
         }
+        if code == KeyCode::F3 {
+            self.show_perf = !self.show_perf;
+            return;
+        }
         if self.screen == Screen::Play {
             match code {
                 KeyCode::Escape => {
@@ -696,6 +798,7 @@ impl App {
         if self.screen == Screen::Play {
             let [w, h] = self.size();
             let at = (down != Some(false)).then_some(p);
+            self.input_at.get_or_insert_with(Instant::now);
             if let Some(play) = &mut self.play {
                 play.pointer(id, at, playfield_viewport(w, h));
             }
@@ -738,6 +841,15 @@ impl App {
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
+        let start = Instant::now();
+        // Acquire first: with vsync it waits for the display, and the frame should show the
+        // song time after that wait, not before it.
+        let Some(target) = self.gfx.as_mut().and_then(Gfx::acquire) else {
+            return;
+        };
+        let acquired = Instant::now();
+        self.pacer.acquired(start, acquired);
+        self.perf.acquire.push(ms(acquired - start));
         let mut scene = Vec::new();
         match self.screen {
             Screen::Play => {
@@ -757,6 +869,14 @@ impl App {
                     let empty = SpriteSheet::default();
                     let sprites = self.gfx.as_ref().map_or(&empty, |g| g.renderer.sprites());
                     scene = p.scene(sprites);
+                    if p.paused {
+                        self.drift.reset();
+                    } else {
+                        let wall = (start - self.s.started).as_secs_f64();
+                        let (drift, step) = self.drift.sample(wall, p.now());
+                        self.perf.drift = drift;
+                        self.perf.jitter.push(step.abs());
+                    }
                 }
             }
             Screen::SongSelect | Screen::Options => self.preview.update(&self.s),
@@ -765,11 +885,13 @@ impl App {
             }
             Screen::Results => {}
         }
-        let now = Instant::now();
         let dt = self
             .last_frame
-            .replace(now)
-            .map_or(0.0, |t| (now - t).as_secs_f32());
+            .replace(start)
+            .map_or(0.0, |t| (start - t).as_secs_f32());
+        if dt > 0.0 {
+            self.perf.frame(f64::from(dt));
+        }
         self.wheel = ease(self.wheel, dt, WHEEL_TAU);
         if self
             .wipe
@@ -782,17 +904,45 @@ impl App {
         {
             gfx.renderer.show_video(false);
         }
-        let view = self.view();
-        let mut jackets = Images {
-            dir: self.s.data.join("jackets"),
-            tried: &mut self.jackets_tried,
-        };
-        let mut ui = Images {
-            dir: self.s.data.join("ui"),
-            tried: &mut self.ui_tried,
-        };
-        if let Some(gfx) = &mut self.gfx {
-            gfx.draw(&scene, &view, &mut jackets, &mut ui);
+        let mut view = self.view();
+        if self.show_perf {
+            let [w, h] = self.size();
+            let window = Rect {
+                x: 0.0,
+                y: 0.0,
+                w,
+                h,
+            };
+            view.items.extend(self.perf.view(window).items);
+        }
+        self.perf.build.push(ms(acquired.elapsed()));
+        let mut jackets = Images::new(self.s.data.join("jackets"), &mut self.jackets_tried);
+        let mut ui = Images::new(self.s.data.join("ui"), &mut self.ui_tried);
+        let Some(gfx) = &mut self.gfx else { return };
+        let t = gfx.draw(target, &scene, &view, &mut jackets, &mut ui);
+        let p = &mut self.perf;
+        p.image_loads += jackets.loads + ui.loads;
+        p.image_ms += ms(jackets.spent + ui.spent);
+        p.submit.push(ms(t.submit));
+        p.present.push(ms(t.present));
+        if let Some(at) = self.input_at.take() {
+            p.input.push(ms(at.elapsed()));
+        }
+        (p.period, p.mode) = (gfx.period, gfx.mode.clone());
+        p.audio = self
+            .s
+            .player
+            .output_stats()
+            .map(|(frames, latency)| (frames, ms(latency)));
+        if p.frames % 240 == 0 {
+            p.log();
+        }
+        if !self.first_frame {
+            self.first_frame = true;
+            log::info!(
+                "first frame {:.0} ms after start",
+                ms(self.s.started.elapsed())
+            );
         }
     }
 
@@ -809,7 +959,21 @@ impl App {
             .take()
             .ok_or_else(|| gfx_err("window created twice"))?;
         let ui_dir = self.s.data.join("ui");
-        self.gfx = Some(Gfx::new(Arc::new(window), fonts, &ui_dir)?);
+        let t = Instant::now();
+        let gfx = Gfx::new(Arc::new(window), fonts, &ui_dir)?;
+        let vsync = matches!(
+            gfx.config.present_mode,
+            wgpu::PresentMode::Fifo | wgpu::PresentMode::AutoVsync
+        );
+        if vsync && std::env::var("WACCA_PACE").as_deref() != Ok("0") {
+            self.pacer = Pacer::new(std::time::Duration::from_secs_f64(gfx.period));
+        }
+        self.gfx = Some(gfx);
+        log::info!(
+            "graphics ready in {:.0} ms ({:.0} ms after start)",
+            ms(t.elapsed()),
+            ms(self.s.started.elapsed())
+        );
         if let Some(spec) = self.s.start.take() {
             self.start_play(spec);
         }
@@ -899,9 +1063,14 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, _: &ActiveEventLoop) {
-        if let Some(gfx) = &self.gfx {
-            gfx.window.request_redraw();
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(gfx) = &self.gfx else { return };
+        match self.pacer.next_start().filter(|&t| t > Instant::now()) {
+            Some(t) => event_loop.set_control_flow(ControlFlow::WaitUntil(t)),
+            None => {
+                event_loop.set_control_flow(ControlFlow::Wait);
+                gfx.window.request_redraw();
+            }
         }
     }
 }

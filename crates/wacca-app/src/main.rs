@@ -20,6 +20,8 @@ mod labels;
 mod menu;
 mod mode;
 mod options;
+mod pacer;
+mod perf;
 mod play;
 mod preview;
 mod record;
@@ -65,10 +67,11 @@ enum Error {
 }
 
 fn main() -> ExitCode {
+    let started = std::time::Instant::now();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     match args::parse(std::env::args().skip(1))
         .map_err(Error::from)
-        .and_then(|a| run(&a))
+        .and_then(|a| run(&a, started))
     {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -160,7 +163,7 @@ fn start_spec(args: &Args, chart: &Path, songs: &[Song]) -> Result<PlaySpec, Arg
     })
 }
 
-fn run(args: &Args) -> Result<(), Error> {
+fn run(args: &Args, started: std::time::Instant) -> Result<(), Error> {
     let songs = record::load_songs(&args.data.join("songs.json"))?.unwrap_or_else(|| {
         log::warn!(
             "{} missing; run wacca-convert (song select will be empty)",
@@ -230,6 +233,7 @@ fn run(args: &Args) -> Result<(), Error> {
             start,
             windowed: args.windowed,
             ffmpeg,
+            started,
         },
         fonts,
     )?;
