@@ -34,6 +34,11 @@ pub struct SyncMeta {
     pub detected_ms: f64,
     /// Every input edge is written this long before its chart time.
     pub input_lead_ms: f64,
+    /// Epoch ms of the start-nav's first input (the GO touch that starts the song).
+    pub start_press_ms: Option<f64>,
+    /// With `--predict-start-ms`: the assumed GO → BGM sample 0 delay; `bgm0_ms` is then predicted, not detected
+    /// (`coarse`/`fine` 0).
+    pub predicted_start_ms: Option<f64>,
 }
 
 #[derive(Debug, PartialEq, Serialize)]

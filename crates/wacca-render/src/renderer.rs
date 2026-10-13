@@ -304,9 +304,10 @@ impl Renderer {
             self.stage.prepare(&self.device, &self.queue, stage, vp);
             let mut pass = self.stage.begin(&self.device, encoder, target_size, vp);
             self.video.draw(&mut pass);
-            self.notes.draw(&mut pass, notes.len());
+            self.notes.draw_opaque(&mut pass, notes);
             self.stage.draw_opaque(&mut pass);
             self.stage.draw_translucent(&mut pass);
+            self.notes.draw_aura(&mut pass, notes);
         }
         let bytes: &[u8] = bytemuck::cast_slice(scene);
         if bytes.len() as u64 > self.vertices.size() {

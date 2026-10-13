@@ -1,14 +1,23 @@
-//! wgpu side of [`crate::notes3d`]: the note material pipeline (`notes.wgsl`), its textures and
-//! the per-frame vertex buffer. Without meshes or textures nothing is drawn (2D notes instead).
+//! wgpu side of [`crate::notes3d`]: the note material pipelines (`notes.wgsl`; opaque/masked and
+//! the additive aura), their textures and the per-frame vertex buffer. Without meshes or textures
+//! nothing is drawn (2D notes instead).
 
 use std::path::Path;
 
-use crate::notes3d::{MATERIALS, MeshVertex, NoteMeshes};
+use crate::notes3d::{MATERIALS, MeshVertex, NoteMeshes, Shader, aura_count};
 use crate::sprites::{self, Image};
 
-/// The note material textures: file stem under `data/ui/Vfx/Textures` and whether the material
-/// samples it as sRGB colour (`SAMPLERTYPE_Color`) or linear (`LinearColor`).
-const TEXTURES: [(&str, bool); 2] = [("vT_NoteBase00_00_m", true), ("vT_NoteBase01_00_m", false)];
+/// The note material textures (bindings 1..): file stem under `data/ui/Vfx/Textures` and whether
+/// the material samples it as sRGB colour (`SAMPLERTYPE_Color`) or linear (`LinearColor`,
+/// `LinearGrayscale`).
+const TEXTURES: [(&str, bool); 5] = [
+    ("vT_NoteBase00_00_m", true),
+    ("vT_NoteBase01_00_m", false),
+    // vMX_2_Hold_003: TilingTexture (captured: the 512² 13-colour strip) and its mask.
+    ("vT_HoldGrd00_00_m", true),
+    ("vT_HoldENote00_00_m", true),
+    ("vT_SNote00_00_m", false),
+];
 
 const MIN_BUFFER_BYTES: u64 = 256 * 1024;
 
@@ -21,16 +30,27 @@ struct GpuMaterial {
 }
 
 fn gpu_materials() -> [GpuMaterial; MATERIALS.len()] {
-    MATERIALS.map(|m| GpuMaterial {
-        color: [m.color[0], m.color[1], m.color[2], 1.0],
-        p0: [m.dark, m.highlight, m.line, m.chain],
-        p1: [m.bonus, m.bonus_flip, f32::from(u8::from(m.bar_line)), 0.0],
+    MATERIALS.map(|m| {
+        let kind = match m.shader {
+            Shader::Tap => 0.0,
+            Shader::BarLine => 1.0,
+            Shader::HoldEnd => 2.0,
+            Shader::Aura => 3.0,
+        };
+        GpuMaterial {
+            color: [m.color[0], m.color[1], m.color[2], 1.0],
+            p0: [m.dark, m.highlight, m.line, m.chain],
+            p1: [m.bonus, m.bonus_flip, kind, 0.0],
+        }
     })
 }
 
 #[derive(Debug)]
 pub(crate) struct NoteLayer {
+    /// Opaque/masked note bodies, hold ends and bar lines.
     pipeline: wgpu::RenderPipeline,
+    /// Additive aura (`BLEND_Additive`).
+    aura: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     materials: wgpu::Buffer,
     bind: Option<wgpu::BindGroup>,
@@ -41,9 +61,10 @@ pub(crate) struct NoteLayer {
 impl NoteLayer {
     pub(crate) fn new(device: &wgpu::Device, samples: u32) -> Self {
         let module = device.create_shader_module(wgpu::include_wgsl!("notes.wgsl"));
+        let fragment = wgpu::ShaderStages::FRAGMENT;
         let tex = |binding| wgpu::BindGroupLayoutEntry {
             binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
+            visibility: fragment,
             ty: wgpu::BindingType::Texture {
                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
                 view_dimension: wgpu::TextureViewDimension::D2,
@@ -53,27 +74,26 @@ impl NoteLayer {
         };
         let sampler = |binding| wgpu::BindGroupLayoutEntry {
             binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
+            visibility: fragment,
             ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
             count: None,
         };
+        let mut entries = vec![wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: fragment,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }];
+        let n = TEXTURES.len() as u32;
+        entries.extend((1..=n).map(tex));
+        entries.extend((n + 1..=n + 3).map(sampler));
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("notes"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                tex(1),
-                tex(2),
-                sampler(3),
-            ],
+            entries: &entries,
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("notes"),
@@ -82,39 +102,61 @@ impl NoteLayer {
         });
         let options = wgpu::PipelineCompilationOptions::default();
         let attributes = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Uint32];
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("notes"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: Some("vs_main"),
-                compilation_options: options.clone(),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: size_of::<MeshVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &attributes,
-                }],
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: Some(crate::stage_gpu::depth_state(true)),
-            multisample: wgpu::MultisampleState {
-                count: samples,
-                ..Default::default()
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fs_main"),
-                compilation_options: options,
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: crate::stage_gpu::HDR_FORMAT,
-                    // Masked material: opaque where not discarded.
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
+        // Into the stage pass: linear HDR target, reversed-Z depth (opaque bodies write it).
+        let make = |entry: &str, blend: Option<wgpu::BlendState>, depth_write: bool| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs_main"),
+                    compilation_options: options.clone(),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: size_of::<MeshVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &attributes,
+                    }],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: Some(crate::stage_gpu::depth_state(depth_write)),
+                multisample: wgpu::MultisampleState {
+                    count: samples,
+                    ..Default::default()
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some(entry),
+                    compilation_options: options.clone(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: crate::stage_gpu::HDR_FORMAT,
+                        blend,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview: None,
+                cache: None,
+            })
+        };
+        let add = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        };
+        let keep = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Zero,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        };
+        // Masked materials: opaque where not discarded.
+        let pipeline = make("fs_main", None, true);
+        let aura = make(
+            "fs_aura",
+            Some(wgpu::BlendState {
+                color: add,
+                alpha: keep,
             }),
-            multiview: None,
-            cache: None,
-        });
+            false,
+        );
         let materials = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("note materials"),
             size: size_of::<[GpuMaterial; MATERIALS.len()]>() as u64,
@@ -123,6 +165,7 @@ impl NoteLayer {
         });
         Self {
             pipeline,
+            aura,
             layout,
             materials,
             bind: None,
@@ -157,28 +200,43 @@ impl NoteLayer {
             }
         }
         queue.write_buffer(&self.materials, 0, bytemuck::bytes_of(&gpu_materials()));
-        let clamp = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("notes"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
-            anisotropy_clamp: 8,
-            ..Default::default()
-        });
+        let sampler = |u, v| {
+            device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("notes"),
+                address_mode_u: u,
+                address_mode_v: v,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                // Required with anisotropy (the textures have a single mip).
+                mipmap_filter: wgpu::FilterMode::Linear,
+                anisotropy_clamp: 8,
+                ..Default::default()
+            })
+        };
+        use wgpu::AddressMode::{ClampToEdge, MirrorRepeat, Repeat};
+        // Captured: NTap anisotropic clamp; Hold_003 strip clamp/mirror, mask wrap; aura wrap.
+        let samplers = [
+            sampler(ClampToEdge, ClampToEdge),
+            sampler(Repeat, Repeat),
+            sampler(ClampToEdge, MirrorRepeat),
+        ];
         let mut entries = vec![wgpu::BindGroupEntry {
             binding: 0,
             resource: self.materials.as_entire_binding(),
         }];
-        for (i, view) in views.iter().enumerate() {
+        let n = views.len() as u32;
+        for (i, view) in (1..).zip(&views) {
             entries.push(wgpu::BindGroupEntry {
-                binding: 1 + i as u32,
+                binding: i,
                 resource: wgpu::BindingResource::TextureView(view),
             });
         }
-        entries.push(wgpu::BindGroupEntry {
-            binding: 3,
-            resource: wgpu::BindingResource::Sampler(&clamp),
-        });
+        for (i, s) in (n + 1..).zip(&samplers) {
+            entries.push(wgpu::BindGroupEntry {
+                binding: i,
+                resource: wgpu::BindingResource::Sampler(s),
+            });
+        }
         self.bind = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("notes"),
             layout: &self.layout,
@@ -207,16 +265,37 @@ impl NoteLayer {
         queue.write_buffer(&self.vertices, 0, bytes);
     }
 
-    pub(crate) fn draw(&self, pass: &mut wgpu::RenderPass, count: usize) {
+    /// Draws the prepared `notes`' opaque triangles (bodies, hold ends, bar lines; depth written).
+    pub(crate) fn draw_opaque(&self, pass: &mut wgpu::RenderPass, notes: &[MeshVertex]) {
         let Some(bind) = &self.bind else { return };
-        if count == 0 {
+        let aura = aura_count(notes) as u32;
+        if aura as usize == notes.len() {
             return;
         }
-        pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, bind, &[]);
-        let bytes = (count * size_of::<MeshVertex>()) as u64;
-        pass.set_vertex_buffer(0, self.vertices.slice(..bytes));
-        pass.draw(0..count as u32, 0..1);
+        pass.set_vertex_buffer(
+            0,
+            self.vertices.slice(..std::mem::size_of_val(notes) as u64),
+        );
+        pass.set_pipeline(&self.pipeline);
+        pass.draw(aura..notes.len() as u32, 0..1);
+    }
+
+    /// Draws the prepared `notes`' additive aura (separate translucency: depth-tested against the
+    /// opaque scene, not written).
+    pub(crate) fn draw_aura(&self, pass: &mut wgpu::RenderPass, notes: &[MeshVertex]) {
+        let Some(bind) = &self.bind else { return };
+        let aura = aura_count(notes) as u32;
+        if aura == 0 {
+            return;
+        }
+        pass.set_bind_group(0, bind, &[]);
+        pass.set_vertex_buffer(
+            0,
+            self.vertices.slice(..std::mem::size_of_val(notes) as u64),
+        );
+        pass.set_pipeline(&self.aura);
+        pass.draw(0..aura, 0..1);
     }
 }
 
@@ -273,6 +352,7 @@ fn upload(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::notes3d::MaterialId;
 
     #[test]
     fn note_shader_validates() {
@@ -289,7 +369,9 @@ mod tests {
     fn material_table_layout() {
         let m = gpu_materials();
         assert_eq!(size_of_val(&m), MATERIALS.len() * 48);
-        assert_eq!(m[MATERIALS.len() - 1].p1[2], 1.0, "bar line flag");
+        assert_eq!(m[MaterialId::BarLine as usize].p1[2], 1.0);
+        assert_eq!(m[MaterialId::HoldEnd as usize].p1[2], 2.0);
+        assert_eq!(m[MaterialId::Aura as usize].p1[2], 3.0);
         assert_eq!(m[0].p0, [0.8, 0.35, 0.08, 0.0]);
     }
 }

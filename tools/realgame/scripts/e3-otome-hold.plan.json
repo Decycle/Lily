@@ -1,0 +1,1451 @@
+{
+  "chart": "C:/Users/<user>/OneDrive/Documents/WACCA/WACCA_slim/assets/MusicData/S01-099/S01-099_00.mer",
+  "spec": {
+    "seed": 21,
+    "min_time": 5.0,
+    "isolation": 0.35,
+    "min_on": 0.025,
+    "probes": {
+      "touch": [
+        {
+          "kind": "sweep",
+          "from": -8.0,
+          "to": 8.0,
+          "step": 0.5
+        }
+      ],
+      "hold": [
+        {
+          "kind": "hold_gap",
+          "at_ms": 150.0,
+          "ms": [
+            133.0,
+            150.0,
+            167.0,
+            183.0,
+            200.0,
+            217.0,
+            233.0,
+            267.0
+          ]
+        },
+        {
+          "kind": "hold_release",
+          "ms": [
+            167.0,
+            200.0,
+            233.0,
+            267.0,
+            300.0
+          ]
+        }
+      ],
+      "slide": [
+        {
+          "kind": "slide_jump",
+          "lanes": [
+            1.5,
+            2.0
+          ]
+        }
+      ],
+      "snap": [
+        {
+          "kind": "snap_move",
+          "moves": [
+            [
+              3,
+              2
+            ],
+            [
+              2,
+              1
+            ],
+            [
+              1,
+              0
+            ],
+            [
+              3,
+              1
+            ],
+            [
+              2,
+              0
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  "tests": [
+    {
+      "note": 1,
+      "time": 5.373134328358209,
+      "end": 5.373134328358209,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 41.666666666666664
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 2,
+      "time": 7.164179104477612,
+      "end": 7.164179104477612,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 125.0
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 3,
+      "time": 8.955223880597016,
+      "end": 8.955223880597016,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 83.33333333333333
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 4,
+      "time": 10.746268656716419,
+      "end": 10.746268656716419,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 100.0
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 5,
+      "time": 11.64179104477612,
+      "end": 11.64179104477612,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -66.66666666666667
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 6,
+      "time": 12.537313432835822,
+      "end": 12.537313432835822,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -91.66666666666666
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 7,
+      "time": 13.432835820895523,
+      "end": 13.432835820895523,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -125.0
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 8,
+      "time": 14.328358208955224,
+      "end": 14.328358208955224,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 33.333333333333336
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 9,
+      "time": 14.776119402985076,
+      "end": 14.776119402985076,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 8.333333333333334
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 10,
+      "time": 15.223880597014926,
+      "end": 15.223880597014926,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -16.666666666666668
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 11,
+      "time": 16.11940298507463,
+      "end": 16.11940298507463,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -116.66666666666667
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 12,
+      "time": 17.910447761194032,
+      "end": 17.910447761194032,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 66.66666666666667
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 13,
+      "time": 18.80597014925373,
+      "end": 18.80597014925373,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 0.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 14,
+      "time": 19.701492537313435,
+      "end": 19.701492537313435,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 108.33333333333334
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 15,
+      "time": 20.597014925373134,
+      "end": 20.597014925373134,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 16.666666666666668
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 16,
+      "time": 21.492537313432837,
+      "end": 22.276119402985074,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_gap",
+        "at_ms": 150.0,
+        "ms": 133.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 17,
+      "time": 23.28358208955224,
+      "end": 23.28358208955224,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -50.0
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 18,
+      "time": 24.17910447761194,
+      "end": 24.17910447761194,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 116.66666666666667
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 19,
+      "time": 25.074626865671643,
+      "end": 25.074626865671643,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -100.0
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 20,
+      "time": 25.522388059701495,
+      "end": 25.522388059701495,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -108.33333333333334
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 21,
+      "time": 25.970149253731343,
+      "end": 25.970149253731343,
+      "class": "slide",
+      "probe": {
+        "probe": "slide_jump",
+        "lanes": 1.5
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 22,
+      "time": 26.865671641791046,
+      "end": 26.865671641791046,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -41.666666666666664
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 23,
+      "time": 27.761194029850746,
+      "end": 27.761194029850746,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 75.0
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 24,
+      "time": 28.65671641791045,
+      "end": 28.65671641791045,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -8.333333333333334
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 25,
+      "time": 29.1044776119403,
+      "end": 29.1044776119403,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 58.333333333333336
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 26,
+      "time": 29.552238805970152,
+      "end": 29.552238805970152,
+      "class": "slide",
+      "probe": {
+        "probe": "slide_jump",
+        "lanes": 2.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 27,
+      "time": 30.44776119402985,
+      "end": 31.343283582089555,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_gap",
+        "at_ms": 150.0,
+        "ms": 233.0
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 28,
+      "time": 32.23880597014926,
+      "end": 33.134328358208954,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_gap",
+        "at_ms": 150.0,
+        "ms": 267.0
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 29,
+      "time": 34.02985074626866,
+      "end": 34.02985074626866,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -83.33333333333333
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 30,
+      "time": 34.47761194029851,
+      "end": 34.47761194029851,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -33.333333333333336
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 31,
+      "time": 34.92537313432836,
+      "end": 34.92537313432836,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -58.333333333333336
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 32,
+      "time": 35.37313432835821,
+      "end": 35.37313432835821,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 133.33333333333334
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 35,
+      "time": 37.61194029850746,
+      "end": 37.61194029850746,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 50.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 36,
+      "time": 38.059701492537314,
+      "end": 38.059701492537314,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 25.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 37,
+      "time": 38.507462686567166,
+      "end": 38.507462686567166,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -75.0
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 38,
+      "time": 39.40298507462687,
+      "end": 39.40298507462687,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 91.66666666666666
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 39,
+      "time": 39.85074626865672,
+      "end": 39.85074626865672,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -25.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 40,
+      "time": 40.298507462686565,
+      "end": 40.298507462686565,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -133.33333333333334
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 41,
+      "time": 41.19402985074627,
+      "end": 41.19402985074627,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -33.333333333333336
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 42,
+      "time": 41.64179104477612,
+      "end": 41.64179104477612,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -41.666666666666664
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 43,
+      "time": 42.08955223880597,
+      "end": 42.08955223880597,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -58.333333333333336
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 44,
+      "time": 42.985074626865675,
+      "end": 42.985074626865675,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -50.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 45,
+      "time": 43.43283582089553,
+      "end": 43.43283582089553,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 116.66666666666667
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 46,
+      "time": 43.88059701492538,
+      "end": 43.88059701492538,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -125.0
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 47,
+      "time": 44.776119402985074,
+      "end": 45.67164179104478,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_release",
+        "ms": 267.0
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 48,
+      "time": 46.56716417910448,
+      "end": 47.462686567164184,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_release",
+        "ms": 233.0
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 49,
+      "time": 48.35820895522388,
+      "end": 48.35820895522388,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -83.33333333333333
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 50,
+      "time": 48.80597014925373,
+      "end": 48.80597014925373,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -16.666666666666668
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 51,
+      "time": 49.25373134328358,
+      "end": 49.25373134328358,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -108.33333333333334
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 52,
+      "time": 49.701492537313435,
+      "end": 49.701492537313435,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -100.0
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 53,
+      "time": 50.149253731343286,
+      "end": 51.04477611940299,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_release",
+        "ms": 200.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 54,
+      "time": 51.940298507462686,
+      "end": 51.940298507462686,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 16.666666666666668
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 55,
+      "time": 52.83582089552239,
+      "end": 52.83582089552239,
+      "class": "snap",
+      "probe": {
+        "probe": "snap_move",
+        "from": 2,
+        "to": 0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 56,
+      "time": 53.73134328358209,
+      "end": 53.73134328358209,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -66.66666666666667
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 57,
+      "time": 54.626865671641795,
+      "end": 54.626865671641795,
+      "class": "snap",
+      "probe": {
+        "probe": "snap_move",
+        "from": 3,
+        "to": 1
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 58,
+      "time": 55.52238805970149,
+      "end": 55.52238805970149,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 50.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 59,
+      "time": 56.417910447761194,
+      "end": 56.417910447761194,
+      "class": "snap",
+      "probe": {
+        "probe": "snap_move",
+        "from": 3,
+        "to": 2
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 62,
+      "time": 59.104477611940304,
+      "end": 59.104477611940304,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -133.33333333333334
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 63,
+      "time": 59.55223880597015,
+      "end": 59.55223880597015,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 8.333333333333334
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 64,
+      "time": 60.0,
+      "end": 60.0,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 33.333333333333336
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 65,
+      "time": 60.44776119402985,
+      "end": 60.44776119402985,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 100.0
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 66,
+      "time": 60.8955223880597,
+      "end": 63.582089552238806,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_gap",
+        "at_ms": 150.0,
+        "ms": 200.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 67,
+      "time": 64.47761194029852,
+      "end": 64.47761194029852,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 125.0
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 68,
+      "time": 65.3731343283582,
+      "end": 65.3731343283582,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 66.66666666666667
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 69,
+      "time": 66.26865671641791,
+      "end": 66.26865671641791,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 91.66666666666666
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 70,
+      "time": 66.71641791044776,
+      "end": 66.71641791044776,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 41.666666666666664
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 71,
+      "time": 67.16417910447761,
+      "end": 67.16417910447761,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -116.66666666666667
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 72,
+      "time": 67.61194029850746,
+      "end": 67.61194029850746,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 25.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 73,
+      "time": 68.05970149253731,
+      "end": 68.05970149253731,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 58.333333333333336
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 74,
+      "time": 68.95522388059702,
+      "end": 68.95522388059702,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 83.33333333333333
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 75,
+      "time": 69.85074626865672,
+      "end": 69.85074626865672,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 133.33333333333334
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 76,
+      "time": 70.29850746268657,
+      "end": 70.29850746268657,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 75.0
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 77,
+      "time": 70.74626865671642,
+      "end": 70.74626865671642,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -8.333333333333334
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 78,
+      "time": 71.19402985074628,
+      "end": 71.19402985074628,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -91.66666666666666
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 79,
+      "time": 71.64179104477613,
+      "end": 72.08955223880598,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_release",
+        "ms": 300.0
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 80,
+      "time": 72.53731343283583,
+      "end": 72.53731343283583,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 0.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 81,
+      "time": 73.43283582089552,
+      "end": 73.88059701492537,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_gap",
+        "at_ms": 150.0,
+        "ms": 167.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 82,
+      "time": 74.32835820895522,
+      "end": 74.32835820895522,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -25.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 83,
+      "time": 75.22388059701493,
+      "end": 75.22388059701493,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -75.0
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 84,
+      "time": 76.11940298507463,
+      "end": 76.11940298507463,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 108.33333333333334
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 85,
+      "time": 77.01492537313433,
+      "end": 77.91044776119404,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_release",
+        "ms": 167.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 86,
+      "time": 78.80597014925374,
+      "end": 78.80597014925374,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 8.333333333333334
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 87,
+      "time": 79.70149253731344,
+      "end": 79.70149253731344,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 116.66666666666667
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 88,
+      "time": 80.59701492537313,
+      "end": 80.59701492537313,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -41.666666666666664
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 89,
+      "time": 81.04477611940298,
+      "end": 81.04477611940298,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -8.333333333333334
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 90,
+      "time": 81.49253731343283,
+      "end": 81.94029850746269,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_gap",
+        "at_ms": 150.0,
+        "ms": 150.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 91,
+      "time": 82.38805970149254,
+      "end": 82.38805970149254,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -91.66666666666666
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 92,
+      "time": 83.28358208955224,
+      "end": 83.28358208955224,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 125.0
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 93,
+      "time": 84.17910447761194,
+      "end": 84.17910447761194,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -108.33333333333334
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 94,
+      "time": 84.6268656716418,
+      "end": 84.6268656716418,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -66.66666666666667
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 95,
+      "time": 85.07462686567165,
+      "end": 85.5223880597015,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_gap",
+        "at_ms": 150.0,
+        "ms": 183.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 96,
+      "time": 85.97014925373135,
+      "end": 85.97014925373135,
+      "class": "slide",
+      "probe": {
+        "probe": "slide_jump",
+        "lanes": 1.5
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 97,
+      "time": 86.86567164179105,
+      "end": 86.86567164179105,
+      "class": "slide",
+      "probe": {
+        "probe": "slide_jump",
+        "lanes": 2.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 98,
+      "time": 87.76119402985076,
+      "end": 89.55223880597015,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_gap",
+        "at_ms": 150.0,
+        "ms": 217.0
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 101,
+      "time": 91.34328358208955,
+      "end": 91.34328358208955,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -133.33333333333334
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 102,
+      "time": 91.7910447761194,
+      "end": 91.7910447761194,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 50.0
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 103,
+      "time": 92.23880597014926,
+      "end": 92.23880597014926,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -116.66666666666667
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 104,
+      "time": 92.68656716417911,
+      "end": 92.68656716417911,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 66.66666666666667
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 111,
+      "time": 94.92537313432837,
+      "end": 95.37313432835822,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_gap",
+        "at_ms": 150.0,
+        "ms": 183.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 112,
+      "time": 95.82089552238806,
+      "end": 96.26865671641791,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_release",
+        "ms": 300.0
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 113,
+      "time": 96.71641791044776,
+      "end": 97.16417910447761,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_release",
+        "ms": 167.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 114,
+      "time": 97.61194029850746,
+      "end": 98.05970149253731,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_gap",
+        "at_ms": 150.0,
+        "ms": 150.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 115,
+      "time": 98.50746268656717,
+      "end": 98.50746268656717,
+      "class": "slide",
+      "probe": {
+        "probe": "slide_jump",
+        "lanes": 2.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 116,
+      "time": 99.40298507462687,
+      "end": 99.40298507462687,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -58.333333333333336
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 117,
+      "time": 99.85074626865672,
+      "end": 99.85074626865672,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 25.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 118,
+      "time": 100.29850746268657,
+      "end": 100.29850746268657,
+      "class": "slide",
+      "probe": {
+        "probe": "slide_jump",
+        "lanes": 1.5
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 119,
+      "time": 101.19402985074628,
+      "end": 101.19402985074628,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 58.333333333333336
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 120,
+      "time": 101.64179104477613,
+      "end": 101.64179104477613,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 91.66666666666666
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 123,
+      "time": 107.46268656716418,
+      "end": 107.91044776119404,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_release",
+        "ms": 233.0
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 127,
+      "time": 109.25373134328359,
+      "end": 109.70149253731344,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_release",
+        "ms": 200.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 128,
+      "time": 110.1492537313433,
+      "end": 110.1492537313433,
+      "class": "slide",
+      "probe": {
+        "probe": "slide_jump",
+        "lanes": 1.5
+      },
+      "ours": "Miss"
+    },
+    {
+      "note": 129,
+      "time": 111.04477611940298,
+      "end": 111.49253731343283,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_gap",
+        "at_ms": 150.0,
+        "ms": 133.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 133,
+      "time": 112.83582089552239,
+      "end": 113.28358208955224,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_release",
+        "ms": 267.0
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 134,
+      "time": 113.73134328358209,
+      "end": 113.73134328358209,
+      "class": "slide",
+      "probe": {
+        "probe": "slide_jump",
+        "lanes": 2.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 137,
+      "time": 115.5223880597015,
+      "end": 115.5223880597015,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -75.0
+      },
+      "ours": "Great"
+    },
+    {
+      "note": 138,
+      "time": 115.97014925373135,
+      "end": 115.97014925373135,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -25.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 139,
+      "time": 116.4179104477612,
+      "end": 117.98507462686568,
+      "class": "hold",
+      "probe": {
+        "probe": "hold_gap",
+        "at_ms": 150.0,
+        "ms": 167.0
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 144,
+      "time": 120.0,
+      "end": 120.0,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 100.0
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 145,
+      "time": 120.44776119402985,
+      "end": 120.44776119402985,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -33.333333333333336
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 146,
+      "time": 120.8955223880597,
+      "end": 120.8955223880597,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 41.666666666666664
+      },
+      "ours": "Marvelous"
+    },
+    {
+      "note": 149,
+      "time": 123.58208955223881,
+      "end": 123.58208955223881,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 83.33333333333333
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 150,
+      "time": 124.02985074626866,
+      "end": 124.02985074626866,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": -100.0
+      },
+      "ours": "Good"
+    },
+    {
+      "note": 151,
+      "time": 124.47761194029852,
+      "end": 124.47761194029852,
+      "class": "touch",
+      "probe": {
+        "probe": "shift",
+        "ms": 0.0
+      },
+      "ours": "Marvelous"
+    }
+  ]
+}

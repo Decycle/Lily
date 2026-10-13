@@ -168,7 +168,7 @@ pub fn build_scene_into(
     // Far notes first so nearer ones are drawn on top.
     for (_, note) in chart.notes.iter().enumerate().rev().filter(drawable) {
         if let NoteBody::Hold { nodes } = &note.body
-            && let Some(end) = nodes.last().filter(|_| nodes.len() > 1)
+            && let Some(end) = nodes.last().filter(|_| nodes.len() > 1 && !opts.mesh_notes)
             && let Some(d) = visible(end.time)
         {
             let look = NoteLook {

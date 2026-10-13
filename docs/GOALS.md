@@ -19,9 +19,9 @@ Priority: **1) play area — fully faithful visual + control port**, 2) menus, 3
 - [ ] Side-by-side audit vs real frames: every difference fixed or listed
 
 ## 1. Play area: controls
-- [ ] E3: real judgement windows per class, hold drop, slide/snap thresholds, chord rule
-- [ ] Apply E3 to the judge engine (autoplay stays perfect on all charts, mirrored too)
-- [ ] KING capture: Miss / snap / R / bonus effect references, then match them
+- [x] E3: real judgement windows per class, hold drop, slide/snap thresholds (doc 10; chord rule + snap-out + Hard not measured)
+- [x] Apply E3 to the judge engine (175 ms drop, HoldEnd free window, missed+dropped = Miss; autoplay perfect on all 1,247 charts, mirrored too)
+- [~] KING capture: Miss / snap / R / bonus references captured (runs/e2/20261013-043842); matching in progress
 - [x] Performance + latency (dGPU, 120 Hz, low-latency audio, input timestamps) — frame pacing: display wait 7.0→1.5 ms/frame; async image decode; F3 overlay
 - [x] Timing calibration screen (unit-tested; live tap check blocked by permission system → user to try by hand)
 

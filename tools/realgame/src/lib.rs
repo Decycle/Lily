@@ -6,6 +6,8 @@
 
 pub mod cells;
 pub mod e1;
+pub mod e3;
+pub mod e3_analysis;
 pub mod experiment;
 pub mod frame;
 pub mod game;
@@ -13,6 +15,7 @@ pub mod gpu;
 pub mod inject;
 pub mod nav;
 pub mod ours;
+pub mod panel;
 pub mod perfect;
 pub mod playfield;
 pub mod raster;
