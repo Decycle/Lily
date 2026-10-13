@@ -12,6 +12,7 @@ use wacca_game::grade::PlayResult;
 use wacca_game::save::{self, SaveData};
 use wacca_game::{points, rating};
 use wacca_render::layout::{Rect, playfield_viewport};
+use wacca_render::menu_bg::MenuBackdrop;
 use wacca_render::text::{Fonts, TextRenderer};
 use wacca_render::{JudgeSprite, MeshVertex, Renderer, Sprite, SpriteSheet, Stage, Vertex};
 use winit::application::ApplicationHandler;
@@ -130,6 +131,10 @@ struct Gfx {
     config: wgpu::SurfaceConfiguration,
     renderer: Renderer,
     text: TextRenderer,
+    /// `uM_WCbg000` behind the select menus (`None` without the exported textures).
+    backdrop: Option<MenuBackdrop>,
+    /// Clock of the backdrop material (`View.GameTime`).
+    started: Instant,
     /// Present mode and frame latency (for the perf overlay).
     mode: String,
     /// Seconds per refresh of the window's monitor (0 = unknown).
@@ -192,6 +197,12 @@ impl Gfx {
         let mut renderer = Renderer::new(&device, &queue, config.format);
         renderer.load_sprites(ui_dir);
         let text = TextRenderer::new(&device, &queue, config.format, fonts);
+        let backdrop = MenuBackdrop::new(
+            &device,
+            &queue,
+            config.format,
+            &ui_dir.join("UI").join("Textures"),
+        );
         Ok(Self {
             window,
             surface,
@@ -200,6 +211,8 @@ impl Gfx {
             config,
             renderer,
             text,
+            backdrop,
+            started: Instant::now(),
             mode,
             period,
         })
@@ -247,6 +260,10 @@ impl Gfx {
         let size = [self.config.width, self.config.height];
         self.renderer
             .render_with_notes(&mut encoder, &target, size, scene, notes, stage);
+        if let (Some(rect), Some(b)) = (view.backdrop, &self.backdrop) {
+            let t = self.started.elapsed().as_secs_f32();
+            b.draw(&self.queue, &mut encoder, &target, size, rect, t);
+        }
         self.text.begin(size);
         for item in &view.items {
             match item {

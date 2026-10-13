@@ -59,30 +59,9 @@ pub fn icon(p: &mut Painter, icon: Icon, at: [f32; 2], side: f32, degrees: f32) 
     );
 }
 
-/// Grid background behind the menus (the blue tile pattern of the select screens).
-// UNVERIFIED: approximates the `uM_WCbg000`-style material backdrop with flat tiles.
+/// Backdrop of the select menus: the animated `uM_WCbg000` material (BP_Select01).
 pub fn background(p: &mut Painter) {
-    p.fill([0.0, 0.0], [1080.0, 1080.0], MID, hex(0x2f5bcf, 1.0));
-    let line = hex(0x1f0a5c, 0.85);
-    let cell = 22.0;
-    for i in -25..=25 {
-        let x = i as f32 * cell;
-        p.fill([x, 0.0], [3.0, 1080.0], MID, line);
-        p.fill([0.0, x], [1080.0, 3.0], MID, line);
-    }
-    // Darker purple towards the rim, as on the frames.
-    p.fill(
-        [0.0, -540.0],
-        [1080.0, 250.0],
-        [0.5, 0.0],
-        hex(0x2a0a6a, 0.55),
-    );
-    p.fill(
-        [0.0, 540.0],
-        [1080.0, 120.0],
-        [0.5, 1.0],
-        hex(0x3a0a70, 0.6),
-    );
+    p.backdrop();
 }
 
 /// What the user plate shows (from the save: settings, play count, RP and rating).

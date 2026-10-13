@@ -88,6 +88,8 @@ pub enum Item {
 /// Draw list (back to front) plus tappable areas.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct View {
+    /// Window rectangle of the animated `uM_WCbg000` backdrop, drawn under `items`.
+    pub backdrop: Option<Rect>,
     pub items: Vec<Item>,
     pub buttons: Vec<(Rect, Action)>,
 }
