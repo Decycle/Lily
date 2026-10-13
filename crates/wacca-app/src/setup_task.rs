@@ -33,7 +33,7 @@ pub struct SetupRun {
     rx: Receiver<Input>,
     cancel: Arc<AtomicBool>,
     clock: Instant,
-    /// Start right after detection (`--setup-start`).
+    /// Start right after detection and continue after the run (`--setup-start`).
     auto_start: bool,
 }
 
@@ -53,7 +53,8 @@ impl SetupRun {
         }
     }
 
-    /// Inspect `dir` right away (skipping the dialog); `start`: then run without videos.
+    /// Inspect `dir` right away (skipping the dialog); `start`: then run without videos and
+    /// continue to the title.
     pub fn preselect(&mut self, dir: PathBuf, start: bool) -> Option<Exit> {
         self.auto_start = start;
         self.flow.step = Step::Picking;
@@ -74,12 +75,21 @@ impl SetupRun {
     /// Results that arrived from the workers since the last frame.
     pub fn poll(&mut self) -> Option<Exit> {
         while let Ok(input) = self.rx.try_recv() {
-            let detected = matches!(input, Input::Detected(Ok(_)));
+            // `--setup-start` presses START after detection and PLAY after a successful run.
+            let ok = matches!(input, Input::Detected(Ok(_)) | Input::Finished(Ok(_)));
+            let finished = matches!(input, Input::Finished(_));
             if let Some(exit) = self.input(input) {
                 return Some(exit);
             }
-            if detected && std::mem::take(&mut self.auto_start) {
-                self.input(Input::Confirm);
+            let auto = self.auto_start;
+            if finished {
+                self.auto_start = false;
+            }
+            if ok
+                && auto
+                && let Some(exit) = self.input(Input::Confirm)
+            {
+                return Some(exit);
             }
         }
         None

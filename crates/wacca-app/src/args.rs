@@ -50,7 +50,7 @@ pub struct Args {
     pub portable: bool,
     /// Setup: inspect this folder right away instead of asking for one (debugging).
     pub setup_source: Option<PathBuf>,
-    /// With `setup_source`: also start the setup (without videos) right away.
+    /// With `setup_source`: also start the setup (without videos) and continue to the title.
     pub setup_start: bool,
     pub windowed: bool,
     /// Open this menu screen instead of the title (debugging, screenshots).

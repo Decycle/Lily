@@ -283,6 +283,11 @@ pub fn clock(secs: f64) -> String {
     }
 }
 
+/// A path for the screen, with `/` separators: the fallback UI font (Meiryo) draws `\` as `¥`.
+pub fn shown(p: &std::path::Path) -> String {
+    p.display().to_string().replace('\\', "/")
+}
+
 /// What a phase is doing, for people; `true` when its counts are bytes.
 pub fn phase_name(phase: Phase) -> (&'static str, bool) {
     match phase {
@@ -427,7 +432,7 @@ pub fn failure(e: &SetupError) -> Failure {
         SetupError::NothingFound(dir) => (
             "NO WACCA FILES FOUND",
             vec![
-                format!("Nothing usable in {}.", dir.display()),
+                format!("Nothing usable in {}.", shown(dir)),
                 "Choose the folder with the update archives (.7z)".into(),
                 "or the game folder (the one containing WindowsNoEditor).".into(),
             ],
@@ -677,6 +682,7 @@ mod tests {
         assert!(f.lines[0].contains("no song table"));
         let f = failure(&SetupError::NothingFound("D:/x".into()));
         assert_eq!(f.title, "NO WACCA FILES FOUND");
+        assert_eq!(shown(std::path::Path::new(r"C:\G\x")), "C:/G/x");
         assert_eq!(
             failure(&SetupError::BaseArchiveMissing).title,
             "BASE ARCHIVE MISSING"

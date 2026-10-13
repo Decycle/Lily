@@ -10,7 +10,7 @@ use crate::canvas::{CIRCLE_R, Canvas, MID, Painter, hex};
 use crate::chrome::{INK, PINK, WHITE};
 use crate::setup_backend::Finding;
 use crate::setup_flow::{
-    Flow, Reason, Severity, Step, bytes, finding_text, movies_available, progress_text,
+    Flow, Reason, Severity, Step, bytes, finding_text, movies_available, progress_text, shown,
 };
 use crate::ui::{Action, GREY, View};
 
@@ -36,7 +36,7 @@ pub fn view(c: Canvas, flow: &Flow, now: f64, t: f32) -> View {
             );
         }
         Step::Detecting(dir) => {
-            let shown = dir.display().to_string();
+            let shown = shown(dir);
             lines(&mut p, -60.0, &[("Looking at", GREY), (&shown, WHITE)]);
             dots(&mut p, 40.0, t);
             button(&mut p, 330.0, "BACK", Action::Back, false);
@@ -50,7 +50,7 @@ pub fn view(c: Canvas, flow: &Flow, now: f64, t: f32) -> View {
                 "Version: {}",
                 detected.version.as_deref().unwrap_or("unknown")
             );
-            let shown = dir.display().to_string();
+            let shown = shown(dir);
             lines(&mut p, -320.0, &[(&version, WHITE), (&shown, GREY)]);
             let report: Vec<(String, Rgba)> = detected
                 .report
