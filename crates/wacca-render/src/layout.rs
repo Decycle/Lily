@@ -424,9 +424,10 @@ pub fn letterbox(w: f32, h: f32) -> Rect {
 }
 
 /// The original portrait frame (1080 × 1920, see [`letterbox`]) and the centre of the round
-/// screen in it (measured on real frames).
+/// screen in it: the game renders its play view into the square (0, 228, 675, 675) of its
+/// 675 × 1200 window (RenderDoc viewport, doc 11 §2.2), centre y 565.5 → 904.8 of 1920.
 pub const PORTRAIT_FRAME: [f32; 2] = [1080.0, 1920.0];
-pub const PORTRAIT_RING_CENTER: [f32; 2] = [540.0, 900.0];
+pub const PORTRAIT_RING_CENTER: [f32; 2] = [540.0, 565.5 * 1920.0 / 1200.0];
 
 /// Square viewport for the playfield, shared by play and the menus (via [`ring`]); touch input
 /// maps through the same rectangle. Landscape window: the full height, centred. Portrait
@@ -734,18 +735,16 @@ mod tests {
             }
         );
         let p = playfield_viewport(900.0, 1600.0);
-        assert_eq!(
-            p,
-            Rect {
-                x: 0.0,
-                y: 300.0,
-                w: 900.0,
-                h: 900.0
-            }
-        );
+        assert_eq!((p.x, p.w, p.h), (0.0, 900.0, 900.0));
+        assert!((p.y - 304.0).abs() < 1e-3, "{}", p.y);
+        // The real game's 675 x 1200 window: its play view is the square at y = 228.
+        let p = playfield_viewport(675.0, 1200.0);
+        assert_eq!((p.x, p.w, p.h), (0.0, 675.0, 675.0));
+        assert!((p.y - 228.0).abs() < 1e-3, "{}", p.y);
         // Wider than 9:16 but still portrait: the frame is height-fitted.
         let p = playfield_viewport(900.0, 1200.0);
-        assert_eq!((p.x, p.w, p.y + p.h / 2.0), (112.5, 675.0, 562.5));
+        assert_eq!((p.x, p.w), (112.5, 675.0));
+        assert!((p.y + p.h / 2.0 - 565.5).abs() < 1e-3);
     }
 
     #[test]
@@ -756,7 +755,7 @@ mod tests {
         // Inside the viewport, a few percent short of its edge.
         assert!(r.radius < 600.0 && r.radius > 570.0);
         let r = ring(900.0, 1600.0);
-        assert_eq!(r.center, [450.0, 750.0]);
+        assert!((r.center[0] - 450.0).abs() < 1e-3 && (r.center[1] - 754.0).abs() < 1e-3);
     }
 
     #[test]
