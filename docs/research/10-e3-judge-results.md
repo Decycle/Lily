@@ -177,3 +177,84 @@ analyze_e2 <run> --compare 0 --timing-block 8     (timing check → e2.json; als
 analyze_e3 <run>... --report report.md            (panel.json, e3.json per run; pooled report)
 ```
 (run from a directory with `data/jackets` and `data/nav`; take `runs/LIVE.lock` first, doc GOALS.md.)
+
+## 8. E4 parity (offline: injected input → our judge vs the real verdicts)
+
+Tool: `judge_parity <run>... [--report r.md] [--table t.csv]` (`tools/realgame/src/bin/judge_parity.rs`, pure parts
+in `parity.rs`). Per run it reads the injector log (`inject.jsonl`: every edge/clear record at its **actual write
+time**), puts it on the judge clock (`t − δ(block) − c`: δ = the 8-note-block visual timing of `e2.json` relative to
+the run mean, c = the run's touch centre from `e3.json`), repeats each state every ¼ frame (the game feeds the judge
+every frame) and runs `wacca_game::judge::Judge` as on main (175 ms drop, HoldEnd free window, missed + dropped =
+Miss) on the parsed chart. Real verdicts: the resolved test notes of `e3.json`, plus unprobed notes that resolve to
+exactly one panel change and keep 0.1 s from every other note edge. Left out as in §1.3/§1.4: notes in a block next
+to a clock jump, notes within 0.3 s of a late (> 2 ms) write, and run 20261013-040534. A disagreement within 1 frame
+of a window or rule edge (window edges at the input offset; for hold probes also gap − 175 ms, or the release lead
+on the judge clock − (175 ms + 7 f)) counts as sampling noise: the game sees input once per 60 Hz frame.
+
+### 8.1 Agreement (7 runs, 845 notes)
+
+| Class | Probed | Perfect play | > 1 f from every edge | Disagreements: noise / unexplained |
+|---|---|---|---|---|
+| Touch | 489 / 567 (86.2 %) | 63 / 64 | **301 / 302 (99.7 %)** | 78 / 1 |
+| Hold | 74 / 87 (85.1 %) | 11 / 18 | **34 / 34** | 20 / 0 |
+| Chain | 36 / 38 (94.7 %) | 22 / 24 | **38 / 38** | 4 / 0 |
+| Slide | 33 / 35 (94.3 %) | 1 / 1 | **25 / 25** | 2 / 0 |
+| Snap | 10 / 10 | – | 7 / 7 | 0 / 0 |
+
+The probed figures are low by design: the sweeps put most test notes on window edges. Away from the edges our judge
+agrees on every note but one.
+
+### 8.2 Disagreements
+
+- **Touch (79):** 78 within 1 f of an edge. Ours is the more lenient in 51 (29 early, 22 late), the stricter in 28 —
+  the ~0.15–0.3 f narrower Great/Good of §0, at the method's resolution: no rule change. The unexplained one
+  (20261013-042834 note 29, input −7.3 f, real Good, ours Miss) is the stray of the §3 sweep (−7.0: 0/0/1/17).
+- **Hold (20):** all at start-window edges (an `= start` verdict one tier off) or at the drop boundary. Every
+  hold-rule probe (21 gaps, 19 early releases) agrees with the new rules except at an edge: gap 167 ms at start
+  −3.1 f (start edge) and release 233 ms before the end at start −3.85 f (real Gr, ours Gd). The latter is E3
+  bookkeeping: probe times are **script** times, but the script runs `δ + c` (here 64 ms) ahead of the judge clock,
+  so that release is **297 ms** before the end on the judge clock, 5 ms past our 175 ms + 7 f = 292 ms. On the judge
+  clock: a release lead ≤ 297 ms keeps the start judgement (n 14), ≥ 347 ms drops (n 4; one at 346 ms is ambiguous,
+  its start is on the Great/Good edge) — consistent with §6.2. Missed + dropped → Miss and missed + kept → Good agree.
+  7 "perfect play" hold misfits sit in two drift blocks at −4.75 and −5.0 f, on the Great/Good edge (block-level
+  sync error < 1 f; chains in the same block show the same shift).
+- **Chain (4):** all **real Miss / ours Marvelous**, the 25 ms contact *starting* −4.4…−4.9 f before the note;
+  contacts starting at −4.1 f or later are Marvelous on both, −5.4 f or earlier Miss on both. Ours hits a chain if
+  the lane is touched on any frame inside ±4 f, so a contact starting up to 5.5 f early still hits; the real early
+  edge on the contact start is ≈ −4.1…−4.4 f (§0: −3.96). Each case is < 1 f from an edge, but all go the same way.
+- **Slide (2):** at the Marvelous/Great edge (−4.7 f) and the late Miss edge (+9.3 f): noise. Slide jumps (1.0/1.5
+  lanes Miss, ≥ 2.0 lanes hit) and all snap ring moves agree.
+
+### 8.3 Hold paths: all joints vs control points
+
+The `.mer` column after the width is the render flag (1 = authored control point, 0 = generated joint); the four E3
+charts have 40 flag-1 and 1035 flag-0 joints. With each hold replaced by a straight lane/width line between its
+control points (sampled every frame), the generated joints are at most **1.2 lanes** off that line (≤ 0.1 lanes on
+3 of 4 charts) and **no verdict changes** on any note of any run (the E3 inputs keep the finger well inside the
+arc). E4 cannot tell the two apart on these Normal charts. Recommendation: follow the renderer — judge the hold arc
+on the straight path between control points (linear in unwrapped lane and width at `t`), not the step-wise "latest
+stored joint" of `hold_arc_at`; with `HoldNode.control` this is a small change in `hold_arc_at` and the autoplay
+`hold_finger`. Check a chart whose generated joints stray further (curved Hard/Expert holds) first.
+
+### 8.4 Recommended changes to `wacca-game/src/judge` (not applied here)
+
+1. **Chain early edge (tentative):** ≈ 4 f on the contact *start* in the game, ≈ 5.5 f in ours. Two rules fit:
+   (a) a chain needs a sensor turning on inside its ±4 f window, or (b) touched-while-open with the early window
+   shrunk by `AdjustRateFront` 20 % as a factor (4 × 0.8 = 3.2 f; + 1.5 f contact ≈ 4.7 f). They differ for a finger
+   already resting on the lane when the window opens: probe that (chains under contacts held −10…+2 f and −10…−3 f)
+   before choosing. Until then keep the current rule; the effect is ≤ 1.5 f on early chain touches only.
+2. **Hold arc:** straight path between control points (§8.3), once `HoldNode.control` exists.
+3. No change to the touch/hold/slide/snap windows, the 175 ms drop, the HoldEnd free window or missed + dropped =
+   Miss: every note > 1 f from an edge agrees.
+4. Harness (done): `e3::predict` fed only edge frames, so a lane touched before a chain's window and a hold body held
+   between two edges were never seen (holds started early and held came out Miss); `e3::judge_frames` now repeats held
+   states every ¼ frame. Plans generated from now on get a corrected `ours` column.
+
+### 8.5 Reproduce
+
+```
+cargo build --release -p wacca-realgame --bin judge_parity
+judge_parity runs\e3\20261013-023731 runs\e3\20261013-030310 runs\e3\20261013-034614 runs\e3\20261013-035555 ^
+  runs\e3\20261013-040029 runs\e3\20261013-042301 runs\e3\20261013-042834 --report parity.md --table parity.csv
+```
+(from the checkout root, after `analyze_e2` and `analyze_e3`; read-only on the run directories.)

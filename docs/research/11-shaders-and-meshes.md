@@ -85,7 +85,7 @@ Play-area masters (blend mode / key textures, CONFIRMED from the packages):
 | `vMX_2_SlideL_002` / `R` | Masked | `vT_SlideNote00_00_m`, `vT_SlideMsk00_00_m` | `NoteColor`, `UV_Scale (1,-0.1)` |
 | `vMX_2_SnapIn_001` / `Out` | Masked (mask = tex.B) | `vT_SnapNote00_00_m` | `NoteColor` |
 | `vMX_2_Hold_001..004` | Translucent (003: Masked) | `vT_HoldNote01_00_m`, `vT_HoldGrd00_00_m`, `vT_HoldENote00_00_m` | `U_Tiling 13`, `NoteLength_*`, `Alpha_RangePos 175`, `Add_Color (1.2,.4,.2)` |
-| `vMX_2_Sync_000` | Translucent | `vT_SyncNote00_00_m` | — |
+| `vMX_2_Sync_000` | **Opaque** (no blend mode set; PS ignores the texture alpha) | `vT_SyncNote00_00_m` | — (§3.9) |
 | `vMX_2_BarLine_000` | Masked | — | `B_Color_2 (.466,.468,.5)`, `Line_Width` |
 | `vMX_2_GuideLane_000` (+ MI `TUS_m_Lane00`) | Translucent | `vT_JudgeLine00_00_m`, `vT_JudgeColor01_00_m`, `vT_GuideLane01_00_m` | `JudgeLine_Pos .1473`, `NoteLength_*`, `GuideLane_Alpha`, `PercentageAlpha 420`, glow params |
 | `vMX_2_NoteAura_000` | Additive | `vT_SNote00_00_m` | `NewNoteColor` |
@@ -108,7 +108,7 @@ Notes are **3D meshes in UE units (cm), one asset per width 1..60 lanes** (`Vfx/
   per-mesh unwrap (lightmap-style), unused by the note PS (it reads `TEXCOORD0` only).
 * Variants: `DefaultNoteS_00` (S = with "support"/edge frame: extra 8-tri sections, r 139–181, |y| ≤ 15.9),
   `HoldStartNote00(S)`, `HoldEndNote00` (thin: r 152.6–174.1, y −3.2…1.0), `SlideNote00(S)` (+ chevron
-  quads to r 111.8), `SnapNote00(S)` (+ arrow quad, y to −24.6), `GuideSync00` (flat y = 0, r 145.8–171.9),
+  quads to r 111.8), `SnapNote00(S)` (+ arrow quad, y to −24.6), `GuideSync00` (flat y = 0, r 168.6–171.9, one section per lane spanning −0.19°…6.19°),
   `BarLine00_60_s` (flat y = 0, r ≈ 172.7, full circle), `vMsh_Hold01/02_00_m` (hold body quads, 12.2 × 29/66),
   `vMsh_circle03_00_m` (r 248.4 disc, 96 sectors).
 
@@ -407,3 +407,23 @@ Corrections (CONFIRMED unless marked):
 * Stage order: movie, note bodies / hold ends / bar lines (opaque, depth written), chevrons, guide lanes, hold
   ribbons, R-note aura (additive, depth-tested). Back faces culled (front CCW) as captured; the captured frames
   render pixel-identical with and without culling (every drawn triangle faces the camera).
+
+### 3.9 Sync connector (`vMX_2_Sync_000`, wacca-render `sync.rs`)
+The cyan line between simultaneous notes. No RenderDoc frame has one (no draw in any `cap3` dump uses the
+material's PS `560fe7d96c22cedc`); geometry and shader are from the assets, placement from the KING reference
+(`runs/e2/20261013-043842`: `0112-touch-r1-note29-*` R notes 32+13 / 45+13 at 39.04 s, `every-064` touches 28+12 /
+50+12 at 65.06 s, `every-116`).
+* Mesh `vMsh_GuideSync00_NN_s`: N identical per-lane sections (3×3 vertex grid, 8 triangles), flat at y = 0,
+  r 168.6–171.9, each lane −0.19°…6.19°; UV0 u = 0 → 1 inner → outer edge, v = 0 → 1 along the lane.
+* Transform: the note transform (§2.4) at the notes' time (same s), φ = 6°·first lane.
+* Spans (UNVERIFIED in detail): in a group of simultaneous notes sorted by lane, each note's end is joined to the
+  next note's start counter-clockwise except across the widest gap (for two notes: the shorter way round). The
+  line starts on the last lane of one note and ends on the first lane of the next (width = gap + 2): under the
+  opaque bodies it shows only through the end caps' holes, as in the reference. Touching notes (gap 0) still get
+  it (KING R notes); overlapping ones do not.
+* PS (`vfx/vMX_2_Sync_000/04_ps_TBasePassPSFNoLightMapPolicy_FLocalVertexFactory.asm`):
+  `t = vT_SyncNote00_00_m(uv)` (16×128, cooked sRGB; rows identical: white rims, cyan, dark blue middle),
+  `emissive = t.rgb · t.b · (1, 3, 3) + SelectionColor (0)`; opaque, alpha 0.
+* Order: with the opaque notes, after the bar lines (equal depth on the y = 0 plane: the line wins under
+  `GreaterEqual`); the note bodies (y ≈ +0.7 at r 170) are in front of it.
+
