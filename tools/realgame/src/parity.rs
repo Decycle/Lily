@@ -165,6 +165,8 @@ fn node_at(time: f64, lane: f64, width: f64, pos: wacca_chart::BeatPos) -> HoldN
             width: width.round().clamp(1.0, f64::from(LANES)) as u8,
         },
         lane_unwrapped: l as f32,
+        // Samples of the drawn (control-point) path are themselves on that path.
+        control: true,
     }
 }
 
@@ -562,6 +564,7 @@ mod tests {
             time,
             arc: Arc { lane, width },
             lane_unwrapped: f32::from(lane),
+            control: true,
         }
     }
 
