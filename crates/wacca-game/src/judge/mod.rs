@@ -1,8 +1,9 @@
 //! Judge engine: turns time-ordered sensor snapshots into one `JudgeEvent` per chart note.
 //!
-//! Spec: `docs/research/04-gameplay-mechanics.md` §3–4 (input rules are community-tuned values
-//! from the Saturn reimplementation; each such constant is marked `UNVERIFIED`).
-//! Judging is continuous-time with windows of `frames × FRAME_SECS`.
+//! Spec: `docs/research/04-gameplay-mechanics.md` §3–4; windows, hold rules, slide threshold and
+//! snap motion are measured on the real game in `docs/research/10-e3-judge-results.md`. Rules
+//! still taken from the Saturn reimplementation without a measurement are marked `UNVERIFIED`.
+//! Judging is continuous-time with windows of `frames × FRAME_SECS` (doc 10 §0).
 
 mod autoplay;
 mod sense;
@@ -17,9 +18,9 @@ use crate::input::{InputFrame, SensorState};
 use crate::rules::{FRAME_SECS, JudgeClass, JudgeEvent, JudgeWindows, Judgement};
 use wacca_chart::{Arc, Chart, Note, NoteBody};
 
-/// A hold released for longer than this (seconds) is downgraded to Good.
-// UNVERIFIED: Saturn `LeniencyMs` = 215, tuned by testing; the HoldEnd 7/7 row may mean ~117 ms.
-pub const HOLD_DROP_LENIENCY: f64 = 0.215;
+/// A hold released for longer than this (seconds) is dropped (downgraded to Good, or Miss when
+/// its start was missed). Measured between 167 and 183 ms (doc 10 §0, §6.1).
+pub const HOLD_DROP_LENIENCY: f64 = 0.175;
 
 /// Absorbs f64 rounding so the table's inclusive frame edges behave exactly.
 const EPS: f64 = 1e-9;
@@ -198,6 +199,8 @@ impl Judge {
         let note = &self.notes[i];
         let offset = t - note.time;
         let windows = self.table.windows(self.slots[i].class);
+        // Hold bodies are only checked until `end − HoldEnd` (7 f; doc 10 §6.2).
+        let hold_tail = self.table.windows(JudgeClass::HoldEnd).early_limit();
         let slot = &mut self.slots[i];
         let open = in_window(slot, offset);
         let closed = offset > slot.late + EPS;
@@ -206,18 +209,23 @@ impl Judge {
             (State::Done, _) => None,
             (State::Hold(h), NoteBody::Hold { nodes }) => {
                 let end = nodes.last().map_or(note.time, |n| n.time);
-                // A frame after the end describes input after it: only the release gap counts.
-                if (h.start.is_some() || offset >= -EPS) && t <= end + EPS {
+                let checked_until = end - hold_tail;
+                // Release / re-press in the last 7 f is free; an earlier release counts as a gap
+                // up to `checked_until` (doc 10 §6.2).
+                if (h.start.is_some() || offset >= -EPS) && t <= checked_until + EPS {
                     track_hold(h, sense::arc_touched(cur, hold_arc_at(note, t)), t);
                 }
                 if t < end - EPS {
                     return None;
                 }
-                if h.released_at.is_some_and(|r| end - r > HOLD_DROP_LENIENCY) {
+                if h.released_at
+                    .is_some_and(|r| checked_until - r > HOLD_DROP_LENIENCY)
+                {
                     h.dropped = true;
                 }
+                // Doc 10 §6.3: a missed start that is also dropped is a Miss.
                 Some(match (h.touched, h.start, h.dropped) {
-                    (false, _, _) => (Judgement::Miss, None),
+                    (false, _, _) | (true, None, true) => (Judgement::Miss, None),
                     (true, Some((j, o)), false) => (j, Some(o)),
                     (true, start, _) => (Judgement::Good, start.map(|(_, o)| o)),
                 })

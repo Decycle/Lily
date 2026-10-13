@@ -6,7 +6,7 @@ use wacca_chart::{Arc, LANES, SlideDir, SnapDir};
 const ALL_LANES: u64 = (1 << LANES) - 1;
 
 /// Slide fires when the mean pressed offset rises this many lanes above its minimum.
-// UNVERIFIED: Saturn's value, "chosen based on testing with the original game".
+// Saturn's value; consistent with the real game (≥ 2.0 lanes hits, ≤ 1.5 misses; doc 10 §0).
 const SLIDE_THRESHOLD: f64 = 1.9;
 /// Larger jumps are rejected as unrelated input (more than half a circle).
 // UNVERIFIED: Saturn.
@@ -46,7 +46,7 @@ fn depth_range(s: &SensorState, lanes: impl Iterator<Item = u8> + Clone) -> Opti
 /// Radial motion across depth rings inside `arc` between two frames. Checks every single lane
 /// and every adjacent pair; `In` (toward the centre, depth 0) fires when the min or max pressed
 /// depth decreased, `Out` when it increased.
-// UNVERIFIED: Saturn `SnapNote.Snapped`; one ring of movement suffices.
+// Saturn `SnapNote.Snapped`; one ring of movement suffices, as on the real game (doc 10 §0).
 pub fn snapped(prev: &SensorState, cur: &SensorState, arc: Arc, dir: SnapDir) -> bool {
     (0..arc.width).any(|i| {
         (1..=2u8).filter(|k| i + k <= arc.width).any(|k| {
