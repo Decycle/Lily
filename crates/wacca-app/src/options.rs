@@ -28,6 +28,8 @@ const OFFSET_UNIT_SECS: f64 = 1.0 / 120.0;
 pub enum Row {
     Speed,
     Offset,
+    /// Opens the timing check ([`crate::calibrate`]); has no value of its own.
+    Check,
     Mirror,
     Autoplay,
     Video,
@@ -35,9 +37,10 @@ pub enum Row {
     TouchGuide,
 }
 
-pub const ROWS: [Row; 7] = [
+pub const ROWS: [Row; 8] = [
     Row::Speed,
     Row::Offset,
+    Row::Check,
     Row::Mirror,
     Row::Autoplay,
     Row::Video,
@@ -87,6 +90,7 @@ impl OptionsMenu {
                 s.judge_offset = tenth(s.judge_offset + d * OFFSET_STEP)
                     .clamp(*OFFSET_RANGE.start(), *OFFSET_RANGE.end());
             }
+            Row::Check => {}
             Row::Mirror => s.mirror = !s.mirror,
             Row::Autoplay => *autoplay = !*autoplay,
             Row::Video => s.background_video = !s.background_video,
@@ -104,6 +108,7 @@ pub fn value(row: Row, s: &Settings, autoplay: bool) -> String {
     match row {
         Row::Speed => format!("{:.1}", s.note_speed),
         Row::Offset => format!("{:+.1}", s.judge_offset),
+        Row::Check => "START".into(),
         Row::Mirror => on_off(s.mirror).into(),
         Row::Autoplay => on_off(autoplay).into(),
         Row::Video => on_off(s.background_video).into(),
@@ -116,6 +121,7 @@ fn label(row: Row) -> &'static str {
     match row {
         Row::Speed => "SPEED",
         Row::Offset => "TIMING",
+        Row::Check => "TIMING CHECK",
         Row::Mirror => "MIRROR",
         Row::Autoplay => "AUTOPLAY",
         Row::Video => "BG MOVIE",
@@ -199,9 +205,9 @@ pub fn view(menu: &OptionsMenu, s: &Settings, autoplay: bool, title: &str, area:
     v
 }
 
-// Seven rows fit above the BACK tab (y 1300) and inside the circle.
+// Eight rows fit above the BACK tab (y 1300) and inside the circle.
 const ROW_TOP: f32 = 680.0;
-const ROW_PITCH: f32 = 76.0;
+const ROW_PITCH: f32 = 70.0;
 const ROW_H: f32 = 56.0;
 const LABEL_W: f32 = 290.0;
 const VALUE_W: f32 = 280.0;
@@ -243,6 +249,11 @@ mod tests {
             m.adjust(&mut s, &mut auto, -1);
         }
         assert_eq!(s.judge_offset, -10.0);
+        m.move_by(1);
+        assert_eq!(value(Row::Check, &s, auto), "START");
+        let before = s.clone();
+        m.adjust(&mut s, &mut auto, 1);
+        assert_eq!(s, before);
         m.move_by(1);
         m.adjust(&mut s, &mut auto, 1);
         assert!(s.mirror);

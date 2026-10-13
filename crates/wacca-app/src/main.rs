@@ -8,6 +8,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))] // tests may unwrap (CONTRIBUTING)
 
 mod args;
+mod calibrate;
 mod canvas;
 mod category;
 mod chrome;
@@ -193,6 +194,7 @@ fn run(args: &Args) -> Result<(), Error> {
         options: options::OptionsMenu::default(),
         settings: settings(&save.settings, args),
         autoplay: args.autoplay,
+        calibration: Default::default(),
     };
     let bgm = BgmBank::open(args.assets.join("Sound").join("Bgm"))?;
     let se = SeBank::open(args.assets.join("Sound").join("Se"))

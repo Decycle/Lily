@@ -3,7 +3,8 @@
 
 use wacca_game::save::Settings;
 
-use crate::options::{self, OptionsMenu};
+use crate::calibrate::Calibration;
+use crate::options::{self, OptionsMenu, Row};
 use crate::screen::{Event, Screen};
 use crate::select::SongList;
 use crate::ui::Action;
@@ -17,6 +18,8 @@ pub struct Menu {
     pub options: OptionsMenu,
     pub settings: Settings,
     pub autoplay: bool,
+    /// Taps of the timing check (restarted each time it opens).
+    pub calibration: Calibration,
 }
 
 impl Menu {
@@ -33,8 +36,25 @@ impl Menu {
         }
     }
 
+    /// The options row `action` would change, if that row is the timing check.
+    fn opens_check(&self, action: Action) -> bool {
+        let row = match action {
+            Action::Left | Action::Right => self.options.row,
+            Action::Pick(n) => n / 2,
+            _ => return false,
+        };
+        options::ROWS.get(row) == Some(&Row::Check)
+    }
+
     pub fn act(&mut self, screen: Screen, action: Action) -> Option<Event> {
         use Action::*;
+        if screen == Screen::Options && self.opens_check(action) {
+            if let Pick(n) = action {
+                self.options.row = n / 2;
+            }
+            self.calibration = Calibration::default();
+            return Some(Event::Calibrate);
+        }
         let list = &mut self.list;
         match (screen, action) {
             (_, Back) => return Some(Event::Back),
@@ -51,6 +71,12 @@ impl Menu {
                 return list.chart().is_some().then_some(Event::Confirm);
             }
             (Screen::Options, Confirm) => return Some(Event::Confirm),
+            // APPLY: only once there is a suggestion.
+            (Screen::Calibrate, Confirm) => {
+                let o = self.calibration.suggestion()?;
+                self.settings.judge_offset = o;
+                return Some(Event::Confirm);
+            }
 
             (Screen::Category, Left) => self.move_category(-1, false),
             (Screen::Category, Right) => self.move_category(1, false),
@@ -133,6 +159,7 @@ mod tests {
             options: OptionsMenu::default(),
             settings: Settings::default(),
             autoplay: false,
+            calibration: Calibration::default(),
         }
     }
 
@@ -202,6 +229,37 @@ mod tests {
             m.act(Screen::Results, Action::Confirm),
             Some(Event::Confirm)
         );
+    }
+
+    #[test]
+    fn timing_check_opens_from_its_row_and_applies() {
+        use crate::calibrate::{LEAD_IN, PERIOD};
+        let mut m = menu();
+        m.act(Screen::Options, Action::Down);
+        assert_eq!(m.act(Screen::Options, Action::Right), None); // TIMING +0.1
+        m.calibration.tap(LEAD_IN);
+        m.act(Screen::Options, Action::Down);
+        assert_eq!(m.act(Screen::Options, Action::Left), Some(Event::Calibrate));
+        assert!(m.calibration.errors().is_empty());
+        // Not enough taps yet: APPLY does nothing; Back leaves the setting alone.
+        assert_eq!(m.act(Screen::Calibrate, Action::Confirm), None);
+        for k in 0..16 {
+            m.calibration.tap(LEAD_IN + k as f64 * PERIOD - 0.0125);
+        }
+        assert_eq!(m.act(Screen::Calibrate, Action::Back), Some(Event::Back));
+        assert_eq!(m.settings.judge_offset, 0.1);
+        assert_eq!(
+            m.act(Screen::Calibrate, Action::Confirm),
+            Some(Event::Confirm)
+        );
+        assert_eq!(m.settings.judge_offset, 1.5);
+        // Tapping the row (either half) opens it too.
+        m.options.row = 0;
+        assert_eq!(
+            m.act(Screen::Options, Action::Pick(5)),
+            Some(Event::Calibrate)
+        );
+        assert_eq!(m.options.row, 2);
     }
 
     #[test]
