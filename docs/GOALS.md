@@ -12,8 +12,8 @@ Priority: **1) play area — fully faithful visual + control port**, 2) menus, 3
 - `CARGO_BUILD_JOBS=2`; keep pins (CONTRIBUTING.md).
 
 ## 1. Play area: visuals
-- [ ] Extract + disassemble the game's compiled shaders (d3dcompiler_47 `D3DDisassemble`), map shader → element
-- [ ] RenderDoc capture of a real gameplay frame (draw order, blend states, constants, meshes)
+- [x] Extract + disassemble the game's compiled shaders (d3dcompiler_47 `D3DDisassemble`), map shader → element (doc 11 §1)
+- [x] RenderDoc capture of a real gameplay frame (draw order, blend states, constants, meshes) — 16 captures, exact camera/transforms, port spec (doc 11 §2–3)
 - [ ] Real note/ring meshes in our renderer
 - [ ] Port key shaders to WGSL (notes, holds, chevrons, ring/rim, hit effects, movie overlay, post-process)
 - [ ] Side-by-side audit vs real frames: every difference fixed or listed
