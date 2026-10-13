@@ -102,14 +102,22 @@ pub fn demo(title: &str, artist: &str, jacket: &str, player: Player) -> Summary 
     }
 }
 
-// Entry animation, seconds after the screen appears (E2 recording).
-const INFO_AT: f32 = 0.4;
-const LIST_AT: f32 = 0.9;
-const SLIDE: f32 = 0.35;
-const COUNT_AT: f32 = 1.25;
-const COUNT_LEN: f32 = 1.35;
-const RANK_AT: f32 = 4.6;
-const FOOTER_AT: f32 = 5.0;
+// Entry animation, seconds after the screen appears (the user plate drops in), measured on
+// the 120 fps E3 recording (runs/e3/20261013-023731/video.mkv, plate at 161.8 s): song info
+// slides in at 0.9 s (~0.1 s), the judgement list at 1.37 s (~0.2 s), the score counts up
+// 1.83-2.83 s, the rank band shows at 4.8 s and its letters stamp 5.1-5.4 s, the rate / RP
+// footer slides up at 8.4 s and GO (with RETRY) appears at 11.0 s.
+const INFO_AT: f32 = 0.9;
+const INFO_SLIDE: f32 = 0.1;
+const LIST_AT: f32 = 1.37;
+const LIST_SLIDE: f32 = 0.2;
+const COUNT_AT: f32 = 1.83;
+const COUNT_LEN: f32 = 1.0;
+const RANK_AT: f32 = 4.8;
+const STAMP_AT: f32 = 5.1;
+const STAMP_LEN: f32 = 0.3;
+const FOOTER_AT: f32 = 8.4;
+pub const GO_AT: f32 = 11.0;
 
 const PANEL: Rgba = [0.95, 0.95, 0.94, 1.0];
 const PANEL_LOW: Rgba = [0.86, 0.86, 0.87, 1.0];
@@ -255,16 +263,16 @@ pub fn view(s: &Summary, menu: crate::canvas::Canvas, t: f32) -> View {
     if s.result.lamp == Lamp::Clear {
         clear_stamp(&mut v, &c);
     }
-    let e = ease(t, INFO_AT, SLIDE);
+    let e = ease(t, INFO_AT, INFO_SLIDE);
     info(&mut v, &c.moved([700.0 * (1.0 - e), 0.0], e), s);
-    let e = ease(t, LIST_AT, SLIDE);
+    let e = ease(t, LIST_AT, LIST_SLIDE);
     let d = 420.0 * (1.0 - e);
     list(&mut v, &c.moved([0.6 * d, 0.8 * d], e), s, t);
     rank(&mut v, &c, s.result.grade, t);
     footer(&mut v, &c.moved([0.0, 0.0], ease(t, FOOTER_AT, 0.3)), s);
     // The user plate stays on top, as on every menu.
     let mut p = Painter::new(menu);
-    if t >= FOOTER_AT {
+    if t >= GO_AT {
         chrome::retry_tab(&mut p);
         chrome::go(&mut p);
     }
@@ -591,7 +599,7 @@ fn rank(v: &mut View, c: &Canvas, g: Grade, t: f32) {
             }
         }
     }
-    let stamp = ease(t, RANK_AT + 0.1, 0.4);
+    let stamp = ease(t, STAMP_AT, STAMP_LEN);
     let letters = rank_art(g);
     let (size, pitch) = if g == Grade::Master {
         (82.0, 72.0)
@@ -769,7 +777,7 @@ mod tests {
 
     #[test]
     fn settled_screen_shows_counts_score_rank_and_record() {
-        let v = view(&summary(true), area(), 10.0);
+        let v = view(&summary(true), area(), 12.0);
         let text = joined(&v);
         for want in [
             "Song", "Artist", "PLAYER", "EXPERT", "12+", "0090", "0005", "0002", "0003", "090.0%",
@@ -805,7 +813,7 @@ mod tests {
     #[test]
     fn counters_use_the_numeral_face() {
         use wacca_render::text::Face;
-        let v = view(&summary(false), area(), 10.0);
+        let v = view(&summary(false), area(), 12.0);
         let face = |want: &str| {
             v.items.iter().find_map(|i| match i {
                 Item::Text { text, face, .. } if text == want => Some(*face),
@@ -821,7 +829,7 @@ mod tests {
         let stamp = |lamp: Lamp| {
             let mut s = summary(false);
             s.result.lamp = lamp;
-            images(&view(&s, area(), 10.0))
+            images(&view(&s, area(), 12.0))
                 .iter()
                 .any(|k| k.ends_with("uT_FTclear_904"))
         };
@@ -834,7 +842,7 @@ mod tests {
         let keys = |g: Grade| {
             let mut s = summary(false);
             s.result.grade = g;
-            images(&view(&s, area(), 10.0))
+            images(&view(&s, area(), 12.0))
                 .into_iter()
                 .filter(|k| k.contains("RTrate") && k.contains("BG"))
                 .map(str::to_string)
@@ -854,7 +862,7 @@ mod tests {
         assert!(!images(&early).iter().any(|k| k.contains("BG00")));
         assert!(joined(&early).contains("0000000"));
         assert!(!images(&early).iter().any(|k| k.contains("newrecord")));
-        let late = view(&s, area(), 10.0);
+        let late = view(&s, area(), 12.0);
         assert!(images(&late).iter().any(|k| k.contains("uT_FTrateST00")));
     }
 
@@ -868,7 +876,7 @@ mod tests {
             before: 3.0,
             after: 3.0,
         };
-        let v = view(&s, area(), 10.0);
+        let v = view(&s, area(), 12.0);
         let t = v.texts();
         assert!(t.contains(&"GIVEN UP") && t.contains(&"AUTOPLAY: NOT SAVED"));
         assert!(images(&v).contains(&"UI/Textures/FONT/uT_FTclear_095"));
