@@ -387,12 +387,14 @@ impl App {
                     w,
                     h,
                 };
-                let judge_art = self.gfx.as_ref().is_some_and(|g| {
+                let art = self.gfx.as_ref().is_some_and(|g| {
                     let sprites = g.renderer.sprites();
-                    sprites.get(Sprite::Judge(JudgeSprite::Marvelous)).is_some()
+                    [Sprite::Judge(JudgeSprite::Marvelous), Sprite::Digit(0)]
+                        .into_iter()
+                        .all(|s| sprites.get(s).is_some())
                 });
                 self.play.as_ref().map_or_else(View::default, |p| {
-                    let hud = p.hud(judge_art);
+                    let hud = p.hud(art);
                     hud::view(&hud, &p.spec.title, window, playfield_viewport(w, h))
                 })
             }

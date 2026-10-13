@@ -44,10 +44,15 @@ pub enum Sprite {
     Judge(JudgeSprite),
     /// "COMBO" word art.
     Combo,
+    /// Hit spark triangle (`vT_HitMarvPt01`).
+    Spark,
+    /// Combo digit `0..=9` rendered from the SHINBI font (see [`bake_digit`]).
+    Digit(u8),
 }
 
 impl Sprite {
-    pub const ALL: [Sprite; 13] = [
+    /// Sprites read from exported textures (digits come from a font).
+    pub const ALL: [Sprite; 14] = [
         Sprite::NoteFace,
         Sprite::ChainStripes,
         Sprite::Sparkle,
@@ -61,6 +66,7 @@ impl Sprite {
         Sprite::Judge(JudgeSprite::Good),
         Sprite::Judge(JudgeSprite::Miss),
         Sprite::Combo,
+        Sprite::Spark,
     ];
 }
 
@@ -107,7 +113,8 @@ pub struct Source {
 
 const ALL_ROWS: (f32, f32) = (0.0, 1.0);
 
-pub fn source(s: Sprite) -> Source {
+/// Texture source of `s` (`None` for font digits).
+pub fn source(s: Sprite) -> Option<Source> {
     let src = |file, bake| Source {
         file,
         rows: ALL_ROWS,
@@ -115,7 +122,7 @@ pub fn source(s: Sprite) -> Source {
         shrink: 0,
         mirror_u: false,
     };
-    match s {
+    Some(match s {
         // UNVERIFIED: which atlas rows the note meshes map is a guess from the channel layout
         // (rows 0.40..0.58 hold a bevelled rectangle: R = rim highlight, G = face shading).
         Sprite::NoteFace => Source {
@@ -178,7 +185,9 @@ pub fn source(s: Sprite) -> Source {
         ),
         // The white variant matches the attract-demo capture at low combos.
         Sprite::Combo => src("UI/Textures/FONT/uT_FTcombo01", Bake::Image),
-    }
+        Sprite::Spark => src("Vfx/Textures/vT_HitMarvPt01_00_m", Bake::Image),
+        Sprite::Digit(_) => return None,
+    })
 }
 
 /// RGBA8 image.
@@ -275,6 +284,90 @@ pub fn bake(img: &Image, src: &Source) -> Image {
             byte(a),
         ]
     })
+}
+
+/// Combo digits are rasterised at this font size (px).
+pub const DIGIT_PX: f32 = 96.0;
+/// Padding around a digit cell's cap height, as a fraction of the cap height (room for the
+/// outline). The scene subtracts it again when placing cells.
+pub const DIGIT_PAD: f32 = 0.12;
+/// Dark outline baked around the digits so they read over bright movies (straight RGB).
+const DIGIT_OUTLINE: [f32; 3] = [0.12, 0.06, 0.22];
+
+/// Digit `d` of `font` as a premultiplied cell: one advance wide and the cap height of `0`
+/// tall (all digits), plus [`DIGIT_PAD`] on every side; a white glyph inside a dark outline.
+pub fn bake_digit(font: &impl ab_glyph::Font, d: u8) -> Option<Image> {
+    use ab_glyph::{PxScale, ScaleFont};
+    let scaled = font.as_scaled(PxScale::from(DIGIT_PX));
+    let outline = |c: char| scaled.outline_glyph(scaled.scaled_glyph(c));
+    // Vertical extent shared by all ten digits (overshoots included).
+    let (top, bottom) = ('0'..='9')
+        .filter_map(|c| outline(c).map(|g| g.px_bounds()))
+        .fold((f32::MAX, f32::MIN), |(t, b), r| {
+            (t.min(r.min.y), b.max(r.max.y))
+        });
+    let cap = bottom - top;
+    let pad = (cap * DIGIT_PAD).ceil();
+    let c = char::from(b'0' + d.min(9));
+    let advance = scaled.h_advance(scaled.glyph_id(c));
+    let (w, h) = (
+        (advance + 2.0 * pad).ceil() as u32,
+        (cap + 2.0 * pad).ceil() as u32,
+    );
+    let mut cov = vec![0.0f32; (w * h) as usize];
+    let g = outline(c)?;
+    let b = g.px_bounds();
+    // The shared top lands at `pad`.
+    let (ox, oy) = (pad + b.min.x, pad + b.min.y - top);
+    g.draw(|x, y, v| {
+        let (px, py) = (ox as i64 + i64::from(x), oy as i64 + i64::from(y));
+        if (0..i64::from(w)).contains(&px) && (0..i64::from(h)).contains(&py) {
+            cov[(py as u32 * w + px as u32) as usize] = v;
+        }
+    });
+    let r = (pad * 0.7).max(1.0) as i64;
+    let at = |x: i64, y: i64| {
+        let inside = (0..i64::from(w)).contains(&x) && (0..i64::from(h)).contains(&y);
+        if inside {
+            cov[(y as u32 * w + x as u32) as usize]
+        } else {
+            0.0
+        }
+    };
+    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    Some(Image::from_fn([w, h], |x, y| {
+        let (x, y) = (i64::from(x), i64::from(y));
+        let mut ring = 0.0f32;
+        for dy in -r..=r {
+            for dx in -r..=r {
+                if dx * dx + dy * dy <= r * r {
+                    ring = ring.max(at(x + dx, y + dy));
+                }
+            }
+        }
+        let fill = at(x, y);
+        let edge = ring * (1.0 - fill) * 0.85;
+        let rgb = DIGIT_OUTLINE.map(|o| byte(fill + edge * o));
+        [rgb[0], rgb[1], rgb[2], byte(fill + edge)]
+    }))
+}
+
+/// The ten combo digits from the font file at `path` (none if it is missing or unreadable).
+pub fn load_digits(path: &Path) -> Vec<(Sprite, Image)> {
+    let font = std::fs::read(path)
+        .map_err(|e| log::warn!("combo font {}: {e}", path.display()))
+        .ok()
+        .and_then(|bytes| {
+            ab_glyph::FontVec::try_from_vec(bytes)
+                .map_err(|e| log::warn!("combo font {}: {e}", path.display()))
+                .ok()
+        });
+    let Some(font) = font else {
+        return Vec::new();
+    };
+    (0..10)
+        .filter_map(|d| bake_digit(&font, d).map(|img| (Sprite::Digit(d), img)))
+        .collect()
 }
 
 /// Where each loaded sprite sits in the atlas. Empty (`default`) = everything flat.
@@ -385,7 +478,7 @@ pub fn load_sources(ui_dir: &Path) -> Vec<(Sprite, Image)> {
     let mut cache: HashMap<&str, Option<Image>> = HashMap::new();
     let mut out = Vec::new();
     for sprite in Sprite::ALL {
-        let src = source(sprite);
+        let Some(src) = source(sprite) else { continue };
         let img = cache.entry(src.file).or_insert_with(|| {
             let path = ui_dir.join(format!("{}.png", src.file));
             read_png(&path).map_err(|e| log::warn!("{e}")).ok()
@@ -482,10 +575,27 @@ mod tests {
         assert!(load_sources(&dir).is_empty());
     }
 
+    /// Needs the exported game font: `WACCA_DATA` = the `data` dir; `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn shinbi_digits_share_one_cell_height() {
+        let dir = std::path::PathBuf::from(std::env::var("WACCA_DATA").unwrap());
+        let digits = load_digits(&dir.join("fonts").join("SHINBI.otf"));
+        assert_eq!(digits.len(), 10);
+        let h = digits[0].1.size[1];
+        for (s, img) in &digits {
+            assert_eq!(img.size[1], h, "{s:?}");
+            assert!(img.size[0] > h / 3, "{s:?} {:?}", img.size);
+            // Glyph pixels are opaque white, and the padding row stays empty.
+            assert!(img.rgba.chunks(4).any(|p| p == [255; 4]), "{s:?}");
+            assert!(img.rgba[..img.size[0] as usize * 4].iter().all(|&b| b == 0));
+        }
+    }
+
     #[test]
     fn every_sprite_has_a_source() {
         for s in Sprite::ALL {
-            let src = source(s);
+            let src = source(s).unwrap();
             assert!(src.rows.0 < src.rows.1 && !src.file.is_empty(), "{s:?}");
         }
     }
