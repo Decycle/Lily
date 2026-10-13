@@ -1,12 +1,11 @@
-//! UE4 4.19 cooked package reader (DataTables, textures, widgets). Spec: docs/research/02-data-tables.md, 06-visuals.md
+//! UE4 4.19 cooked package reader (DataTables, textures). Spec: docs/research/02-data-tables.md, 06-visuals.md
 #![cfg_attr(test, allow(clippy::unwrap_used))] // tests may unwrap (CONTRIBUTING)
 
 mod bcn;
 mod datatable;
 #[cfg(test)]
 mod fixture;
-mod json;
-pub mod package;
+mod package;
 mod property;
 mod reader;
 mod texture;

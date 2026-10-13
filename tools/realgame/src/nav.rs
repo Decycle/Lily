@@ -290,6 +290,7 @@ mod tests {
         let s = parse(include_str!("../scripts/e2-guest-fragile.nav.json")).unwrap();
         assert!(matches!(s.steps.last(), Some(Step::Seek { .. })));
         assert!(parse(include_str!("../scripts/e2-start.nav.json")).is_ok());
+        assert!(parse(include_str!("../scripts/e2-guest-king.nav.json")).is_ok());
     }
 
     #[test]

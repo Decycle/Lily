@@ -152,7 +152,8 @@ impl Chart {
     }
 
     /// BGM position at chart time `chart_time`: `chart_time - #OFFSET` (§5.2).
-    // UNVERIFIED: sign of #OFFSET (inferred from MercuryPlayer and the one-measure lead-in pattern).
+    // UNVERIFIED: sign of #OFFSET (inferred from MercuryPlayer and the one-measure lead-in pattern;
+    // still open after E2, `docs/research/09-e2-results.md` §7).
     pub fn audio_time(&self, chart_time: f64) -> f64 {
         chart_time - self.header.offset
     }

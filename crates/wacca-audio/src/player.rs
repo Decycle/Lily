@@ -467,15 +467,10 @@ impl Feed {
     }
 }
 
-/// Write one source frame to a device frame: mono goes to every channel, otherwise channel `c`
-/// takes source channel `c` and extra device channels are silent.
+/// Write one source frame to a device frame (see [`mixer::channel`]).
 fn map_frame(dst: &mut [f32], src: &[f32], gain: f32) {
     for (c, d) in dst.iter_mut().enumerate() {
-        let v = match src {
-            [mono] => *mono,
-            _ => src.get(c).copied().unwrap_or(0.0),
-        };
-        *d = v * gain;
+        *d = mixer::channel(src, c) * gain;
     }
 }
 

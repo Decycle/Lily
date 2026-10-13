@@ -7,12 +7,13 @@ const ALL_LANES: u64 = (1 << LANES) - 1;
 
 /// Slide fires when the mean pressed offset rises this many lanes above its minimum.
 // UNVERIFIED: Saturn's value, "chosen based on testing with the original game".
-pub const SLIDE_THRESHOLD: f64 = 1.9;
+const SLIDE_THRESHOLD: f64 = 1.9;
 /// Larger jumps are rejected as unrelated input (more than half a circle).
 // UNVERIFIED: Saturn.
 const SLIDE_MAX: f64 = 30.0;
 
-fn lane_at(arc: Arc, offset: u8) -> u8 {
+/// Lane `offset` steps counter-clockwise from the arc's start (mod 60).
+pub fn lane_at(arc: Arc, offset: u8) -> u8 {
     ((arc.lane as u16 + offset as u16) % LANES as u16) as u8
 }
 

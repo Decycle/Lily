@@ -1,6 +1,6 @@
 //! Per-class judgement windows (`JudgeParameterTable`) and note → class mapping.
 
-use crate::rules::{FRAME_SECS, JudgeClass, JudgeWindows, Window};
+use crate::rules::{JudgeClass, JudgeWindows, Window};
 use wacca_chart::{Note, NoteBody, SlideDir, SnapDir};
 
 /// Windows for every `JudgeClass`, in 60 fps frames.
@@ -67,11 +67,6 @@ impl JudgeTable {
     }
 }
 
-/// Earliest time before the note at which it can be hit (seconds).
-pub(crate) fn early_limit(w: &JudgeWindows) -> f64 {
-    w.good.early.max(w.great.early).max(w.marvelous.early) * FRAME_SECS
-}
-
 /// The table row that judges `note` (a hold is judged by its start).
 pub fn class_of(note: &Note) -> JudgeClass {
     match note.body {
@@ -88,6 +83,7 @@ pub fn class_of(note: &Note) -> JudgeClass {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rules::FRAME_SECS;
 
     #[test]
     fn reverse_values() {
@@ -97,6 +93,6 @@ mod tests {
         assert_eq!(t.windows(JudgeClass::SnapOut).great.late, 8.0);
         assert_eq!(t.windows(JudgeClass::SlideCw).marvelous.late, 7.0);
         assert_eq!(t.windows(JudgeClass::HoldEnd).good.early, 7.0);
-        assert!((early_limit(t.windows(JudgeClass::SnapIn)) - 10.0 * FRAME_SECS).abs() < 1e-12);
+        assert!((t.windows(JudgeClass::SnapIn).early_limit() - 10.0 * FRAME_SECS).abs() < 1e-12);
     }
 }

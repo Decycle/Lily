@@ -85,7 +85,7 @@ impl Judge {
                 };
                 Slot {
                     class,
-                    early: table::early_limit(w),
+                    early: w.early_limit(),
                     late: w.late_limit(),
                     state,
                 }

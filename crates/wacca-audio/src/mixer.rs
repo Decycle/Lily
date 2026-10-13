@@ -28,6 +28,15 @@ pub(crate) enum Command {
     },
 }
 
+/// Sample for device channel `c` from one source frame: mono feeds every channel, otherwise
+/// channel `c` takes source channel `c` and extra device channels are silent.
+pub(crate) fn channel(src: &[f32], c: usize) -> f32 {
+    match src {
+        [mono] => *mono,
+        _ => src.get(c).copied().unwrap_or(0.0),
+    }
+}
+
 #[derive(Debug)]
 struct Voice {
     id: u64,
@@ -73,11 +82,7 @@ impl Voice {
                 return false;
             };
             for (c, d) in frame.iter_mut().enumerate() {
-                let v = match src {
-                    [mono] => *mono,
-                    _ => src.get(c).copied().unwrap_or(0.0),
-                };
-                *d += v * gain;
+                *d += channel(src, c) * gain;
             }
             self.pos += 1;
         }

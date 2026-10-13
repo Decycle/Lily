@@ -17,7 +17,7 @@ use std::time::Instant;
 
 use wacca_game::Difficulty;
 
-const USAGE: &str = "usage: wacca-convert --assets <dir> --out <dir> [--textures] [--fonts]                      [--export-ui <subdir under assets>]...";
+const USAGE: &str = "usage: wacca-convert --assets <dir> --out <dir> [--textures] [--fonts] [--export-ui <subdir under assets>]...";
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
@@ -84,26 +84,30 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, Error> {
     }
 }
 
-/// Writes `data` to `path`, creating parent directories.
-fn write(path: &Path, data: &[u8]) -> Result<(), Error> {
-    let io = |source| Error::Io {
+/// [`Error::Io`] for an IO error on `path`.
+fn io_err(path: &Path) -> impl Fn(std::io::Error) -> Error + '_ {
+    move |source| Error::Io {
         path: path.to_owned(),
         source,
-    };
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(io)?;
     }
-    std::fs::write(path, data).map_err(io)
 }
 
-fn read(path: PathBuf) -> Result<Vec<u8>, Error> {
-    std::fs::read(&path).map_err(|source| Error::Io { path, source })
+/// Writes `data` to `path`, creating parent directories.
+fn write(path: &Path, data: &[u8]) -> Result<(), Error> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(io_err(path))?;
+    }
+    std::fs::write(path, data).map_err(io_err(path))
+}
+
+fn read(path: &Path) -> Result<Vec<u8>, Error> {
+    std::fs::read(path).map_err(io_err(path))
 }
 
 fn read_table(assets: &Path, table: &'static str) -> Result<wacca_ue4::DataTable, Error> {
     let base = assets.join("Table").join(table);
-    let uasset = read(base.with_extension("uasset"))?;
-    let uexp = read(base.with_extension("uexp"))?;
+    let uasset = read(&base.with_extension("uasset"))?;
+    let uexp = read(&base.with_extension("uexp"))?;
     wacca_ue4::read_datatable(&uasset, &uexp).map_err(|source| Error::Table { table, source })
 }
 

@@ -74,6 +74,15 @@ impl JudgeWindows {
         .map(|(_, j)| j)
     }
 
+    /// Earliest time before the note at which it can be hit (seconds).
+    pub fn early_limit(&self) -> f64 {
+        self.good
+            .early
+            .max(self.great.early)
+            .max(self.marvelous.early)
+            * FRAME_SECS
+    }
+
     /// Latest time after the note at which it can still be hit (seconds).
     pub fn late_limit(&self) -> f64 {
         self.good.late.max(self.great.late).max(self.marvelous.late) * FRAME_SECS
@@ -102,5 +111,6 @@ mod tests {
         assert_eq!(t.judge(5.5 * FRAME_SECS), Some(Judgement::Good));
         assert_eq!(t.judge(6.5 * FRAME_SECS), None);
         assert!((t.late_limit() - 0.1).abs() < 1e-12);
+        assert!((t.early_limit() - 0.1).abs() < 1e-12);
     }
 }

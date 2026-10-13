@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::Error;
+use crate::{Error, io_err, read};
 
 /// File extension for a font file, from its magic: TrueType, CFF OpenType or a collection.
 pub fn sniff(data: &[u8]) -> Option<&'static str> {
@@ -22,17 +22,13 @@ pub fn copy_fonts(
     out: &Path,
 ) -> Result<(BTreeMap<&'static str, usize>, usize), Error> {
     let dir = assets.join("UI/Font");
-    let io = |path: &Path| {
-        let path = path.to_owned();
-        move |source| Error::Io { path, source }
-    };
     let (mut counts, mut failed) = (BTreeMap::new(), 0);
-    for entry in std::fs::read_dir(&dir).map_err(io(&dir))? {
-        let path = entry.map_err(io(&dir))?.path();
+    for entry in std::fs::read_dir(&dir).map_err(io_err(&dir))? {
+        let path = entry.map_err(io_err(&dir))?.path();
         if path.extension().is_none_or(|e| e != "ufont") {
             continue;
         }
-        let data = std::fs::read(&path).map_err(io(&path))?;
+        let data = read(&path)?;
         let (Some(ext), Some(stem)) = (sniff(&data), path.file_stem()) else {
             log::warn!("{}: unknown font magic, skipped", path.display());
             failed += 1;
