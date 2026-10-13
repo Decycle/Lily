@@ -125,11 +125,12 @@ fn hold(m: Material, uv: vec2<f32>) -> vec4<f32> {
     let lv = uv.y + p[2].x;
     let line = smooth01((2.0 * lv * (1.0 - lv) - p[2].y) / (p[2].z - p[2].y));
     var a = core + line * p[2].w;
-    // Side mask: CustomRotator(UV + (U_pos, 0), Rotate) — UNVERIFIED uniform values.
+    // Side mask: CustomRotator(UV + (U_pos, 0), Rotate) (KING frame 9103: U_pos 0.46, axis (1, 0)).
     let r = p[3].y * TAU;
     let d = dot(uv + vec2<f32>(p[3].x, 0.0) - 0.5, vec2<f32>(cos(r), -sin(r))) + 0.5;
     a = a * clamp(floor(2.0 * d), 0.0, 1.0);
-    let flick = sin(TAU * fx.time.x * p[3].z) * (p[3].w - p[4].w) + p[4].w;
+    // FlickStrength_Max + (Min − Max)·sin (KING frame 9103 eid 4008: cb4[15] = (10, Min 0.4, Max 0.6)).
+    let flick = sin(TAU * fx.time.x * p[3].z) * (p[4].w - p[3].w) + p[3].w;
     return vec4<f32>(max(col, vec3<f32>(0.0)), clamp(a * flick, 0.0, 1.0));
 }
 

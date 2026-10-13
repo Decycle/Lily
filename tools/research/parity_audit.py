@@ -28,7 +28,7 @@ import sys
 
 FFMPEG = os.environ.get("WACCA_FFMPEG", r"C:\Users\<user>\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0.2-full_build\bin\ffmpeg.exe")
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-EXAMPLES = os.path.join(ROOT, "target", "release", "examples")
+EXAMPLES = os.environ.get("WACCA_AUDIT_EXAMPLES", os.path.join(ROOT, "target", "release", "examples"))
 ASSETS = os.environ.get("WACCA_ASSETS", r"C:\Users\<user>\OneDrive\Documents\WACCA\WACCA_slim\assets")
 # Regions (px from the centre of the 675 px view; the judgement ring is at 292-315 px).
 REGIONS = [("centre", 0, 100), ("inner", 100, 200), ("outer", 200, 275), ("ring", 275, 325), ("rim", 325, 999)]
@@ -79,7 +79,7 @@ def replay(run, latency, hit_latency):
             probe = o.get("probe") or {}
             shift = probe.get("ms", 0.0) / 1000.0 if probe.get("probe") == "shift" else 0.0
             shown = o["time"] + o["shown"] if o.get("shown") is not None else o["end"]
-            hit = shown if o["real"] == "Miss" else o["time"] + shift + hit_latency
+            hit = (shown if o["real"] == "Miss" else o["time"] + shift) + hit_latency
             if o["class"] != "hold":
                 shown = hit
             hits.append({"note": o["note"], "kind": o["real"], "hit": hit, "shown": shown})
