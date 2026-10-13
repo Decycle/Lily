@@ -3,7 +3,8 @@
 // material instance values (NoteColor, Line, ChainNote, Bornus*) come per vertex from a table.
 // BLEND_Masked + MSM_Unlit: emissive colour, discard below OpacityMaskClipValue 0.3333.
 // Bar lines (vMX_2_BarLine_000, doc 11 §3.1, captured PS d12365/2493) and hold end caps
-// (vMX_2_Hold_003, opaque, captured PS d12365/2680) share the pipeline; the R-note aura
+// (vMX_2_Hold_003, opaque, captured PS d12365/2680) and the sync connector (vMX_2_Sync_000,
+// opaque, sync.rs) share the pipeline; the R-note aura
 // (vMX_2_NoteAura_000, additive) has its own entry point `fs_aura`.
 // Constant names in comments are the material parameters (cb4 / cb3 slots in the disassembly).
 
@@ -11,19 +12,20 @@ struct Material {
     color: vec4<f32>,
     // Dark, HighLight, Line, ChainNote
     p0: vec4<f32>,
-    // BornusNote, BornusNoteFlip, kind (0 tap, 1 bar line, 2 hold end, 3 aura), -
+    // BornusNote, BornusNoteFlip, kind (0 tap, 1 bar line, 2 hold end, 3 aura, 4 sync), -
     p1: vec4<f32>,
 };
 
-@group(0) @binding(0) var<uniform> materials: array<Material, 13>;
+@group(0) @binding(0) var<uniform> materials: array<Material, 14>;
 @group(0) @binding(1) var note_base: texture_2d<f32>;   // vT_NoteBase00_00_m (sRGB)
 @group(0) @binding(2) var note_mask: texture_2d<f32>;   // vT_NoteBase01_00_m (linear)
 @group(0) @binding(3) var hold_grd: texture_2d<f32>;    // vT_HoldGrd00_00_m (sRGB, 13 colours)
 @group(0) @binding(4) var hold_end: texture_2d<f32>;    // vT_HoldENote00_00_m (sRGB)
 @group(0) @binding(5) var snote: texture_2d<f32>;       // vT_SNote00_00_m (linear grayscale)
-@group(0) @binding(6) var clamp_samp: sampler;          // SSM_Clamp_WorldGroupSettings
-@group(0) @binding(7) var wrap_samp: sampler;
-@group(0) @binding(8) var strip_samp: sampler;          // clamp u, mirror v
+@group(0) @binding(6) var sync_tex: texture_2d<f32>;    // vT_SyncNote00_00_m (sRGB)
+@group(0) @binding(7) var clamp_samp: sampler;          // SSM_Clamp_WorldGroupSettings
+@group(0) @binding(8) var wrap_samp: sampler;
+@group(0) @binding(9) var strip_samp: sampler;          // clamp u, mirror v
 
 // vMPC_NoteCustomize_00.NoteHeight default.
 const NOTE_HEIGHT: f32 = 0.5;
@@ -143,6 +145,14 @@ fn hold_end_cap(uv: vec2<f32>) -> vec3<f32> {
     return max(c * (k * k - 0.5 * k + 0.5), vec3<f32>(0.0));
 }
 
+// vMX_2_Sync_000 (TBasePassPSFNoLightMapPolicy<FLocalVertexFactory>, BLEND_Opaque, unlit):
+// emissive = t.rgb · (t.b · (1, 3, 3)) + SelectionColor (0); t = vT_SyncNote00_00_m at UV0 (u across
+// the band: white rims, cyan, dark blue middle).
+fn sync_line(uv: vec2<f32>) -> vec3<f32> {
+    let t = textureSample(sync_tex, clamp_samp, uv).rgb;
+    return max(t * (t.z * vec3<f32>(1.0, 3.0, 3.0)), vec3<f32>(0.0));
+}
+
 // What to write for a final colour `c`: the linear scene colour of the stage pass (stage_gpu
 // composes the game's final 1/2.2 power, doc 11 §2.6).
 fn output(c: vec3<f32>) -> vec3<f32> {
@@ -157,8 +167,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // All evaluated (texture sampling needs uniform control flow), then picked.
     let tap = note_tap(in.uv, in.w, m, sync);
     let cap = vec4<f32>(hold_end_cap(in.uv), 1.0);
+    let line = vec4<f32>(sync_line(in.uv), 1.0);
     var c = tap;
-    if kind > 1.5 {
+    if kind > 3.5 {
+        c = line;
+    } else if kind > 1.5 {
         c = cap;
     } else if kind > 0.5 {
         c = bar_line(in.uv, in.w, m);

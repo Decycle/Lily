@@ -14,6 +14,7 @@ pub mod sprites;
 pub mod stage;
 mod stage_gpu;
 pub mod style;
+pub mod sync;
 pub mod text;
 mod video;
 
