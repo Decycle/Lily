@@ -29,6 +29,8 @@ pub enum Action {
     /// Jump to the previous / next genre folder.
     Genre(i32),
     Retry,
+    /// Open first-run setup again (title screen).
+    Setup,
 }
 
 #[derive(Clone, Debug, PartialEq)]

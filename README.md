@@ -92,16 +92,18 @@ Some dependencies are pinned to versions that build on the GNU toolchain, so don
 
 | Flag | Meaning |
 |---|---|
-| `--assets <dir>` | Game `Content` folder |
-| `--data <dir>` | Output of `wacca-convert` (default `data`) |
-| `--save <file>` | Save file (default `%APPDATA%\lily\save.json`) |
+| `--assets <dir>` | Game `Content` folder (default: `assets` next to the executable) |
+| `--data <dir>` | Output of `wacca-convert` (default `data`; next to the executable when `--assets` is not given either) |
+| `--save <file>` | Save file (default `%APPDATA%\lily\save.json`, or `save\save.json` next to the executable when portable) |
+| `--portable` | Keep the save next to the executable (same as a `portable.txt` file there) |
 | `--windowed` | Start in a 450×800 window instead of borderless fullscreen |
 | `--autoplay` | Start with AUTOPLAY on |
 | `--speed <1.0–6.0>` | Note speed for this session (overrides the saved one) |
 | `--offset-ms <N>` | Timing offset in ms for this session, rounded to the TIMING step (8.33 ms) and clamped to ±83 ms |
 | `--chart <path>` | Play this chart right away. The path is relative to `--assets`: either `MusicData/<song>/<song>_NN.mer` or `MusicData/<song>` together with `--difficulty` |
 | `--difficulty normal\|hard\|expert\|inferno` | Difficulty for `--chart` |
-| `--screen title\|mode\|category\|select\|options\|calibrate\|results` | Open on this screen (for debugging) |
+| `--screen title\|mode\|category\|select\|options\|calibrate\|results\|setup` | Open on this screen (for debugging) |
+| `--setup-source <dir>` | Open setup and inspect this folder right away (debugging); with `--setup-start` also start it (without videos) |
 
 ## Controls
 
