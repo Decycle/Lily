@@ -13,7 +13,9 @@
 
 use wacca_chart::{HoldNode, LANES};
 
-use crate::layout::{Paint, Vertex, paint_sector, polar, push_rect, push_sector};
+use crate::layout::{
+    Paint, Vertex, paint_sector, polar, push_oriented_rect, push_sector, push_strip,
+};
 use crate::sprites::{JudgeSprite, Sprite, SpriteSheet};
 use crate::style::Rgba;
 
@@ -33,9 +35,12 @@ pub const SHOOT_SECS: f32 = 0.12;
 pub const SHOOT_DIST: f32 = 0.75;
 pub const SHOOT_LEN: f32 = 0.35;
 pub const SHOOT_ARC: f32 = 0.6;
+/// Width of the wedge's head relative to its tail.
+// UNVERIFIED: wedge taper eyeballed from the 120 fps recordings.
+pub const SHOOT_TAPER: f32 = 0.35;
 /// White band over the rim: life and radial extent outside the line.
 pub const RIM_SECS: f32 = 0.22;
-pub const RIM_WIDTH: f32 = 0.1;
+pub const RIM_WIDTH: f32 = 0.133;
 /// Sparks: life range (s), inward speed range (radius / s), size (half extent).
 pub const SPARK_LIFE: (f32, f32) = (0.2, 0.4);
 pub const SPARK_SPEED: (f32, f32) = (0.3, 1.2);
@@ -314,7 +319,10 @@ impl Effects {
                     c[3] *= 1.0 - t;
                     let head = 1.0 - SHOOT_DIST * (1.0 - (1.0 - t).powi(2));
                     let tail = (head + SHOOT_LEN).min(1.0);
-                    paint_sector(out, tail, head, p.lane, p.span, &fill(c));
+                    // A wedge: full width at the tail, narrowing towards the head.
+                    let w = p.span * SHOOT_TAPER;
+                    let head_arc = (head, p.lane + (p.span - w) / 2.0, w);
+                    push_strip(out, (tail, p.lane, p.span), head_arc, &fill(c));
                 }
                 Shape::Rim => {
                     let c = [1.0, 1.0, 1.0, 1.0 - t * t];
@@ -328,7 +336,9 @@ impl Effects {
                     }
                     .additive();
                     let s = SPARK_SIZE * p.r.max(0.2);
-                    push_rect(out, polar(p.r, p.lane), [s, s], &paint);
+                    // Pointing along its motion (inwards or outwards).
+                    let dir = polar(if p.vr < 0.0 { -1.0 } else { 1.0 }, p.lane);
+                    push_oriented_rect(out, polar(p.r, p.lane), [s, s], dir, &paint);
                 }
             }
         }

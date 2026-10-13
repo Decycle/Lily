@@ -5,7 +5,8 @@
 //! Keys: Up/Down note speed, Space pause, R restart. `RUST_LOG=info` for diagnostics.
 //!
 //! `WACCA_SHOT=<out.png>@<seconds>` renders that one moment (1024x1024, as after a perfect play
-//! up to it: hit effects, judgement, combo) to a PNG without opening a window.
+//! up to it: hit effects, judgement, combo, score row) to a PNG without opening a window.
+//! `WACCA_SHOT_BARS=1` adds bar lines, `WACCA_SHOT_TITLE` the song title on the rim.
 
 use std::error::Error;
 use std::sync::Arc as Shared;
@@ -15,7 +16,9 @@ use wacca_chart::{
     Arc, BeatPos, Bonus, Chart, ChartHeader, HoldNode, MaskDir, MaskEvent, Note, NoteBody,
     ScrollSegment, SlideDir, SnapDir,
 };
-use wacca_render::{Effects, JudgeSprite, LiveState, Renderer, SceneOptions, build_scene};
+use wacca_render::{
+    Effects, JudgeSprite, LiveState, Renderer, RimState, SceneOptions, build_scene,
+};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -299,19 +302,31 @@ fn snapshot(
         t += dt;
     }
     let last = done.last().map(|n| (at - n.time) as f32);
+    // Rim texts and score as for a perfect play (WACCA_SHOT_TITLE names the song).
+    let title = std::env::var("WACCA_SHOT_TITLE").unwrap_or_default();
+    renderer.set_rim_texts("NORMAL/Lv.1", &title);
+    let share = done.len() as f32 / chart.notes.len().max(1) as f32;
     let live = LiveState {
         effects: Some(&fx),
         judgement: last.map(|age| (kind, age)),
         combo: (done.len() as u32, last.unwrap_or(0.0)),
+        rim: Some(RimState {
+            score: (share * 1_000_000.0) as u32,
+            progress: (at / chart.end_time) as f32,
+            difficulty_color: [0.20, 0.70, 1.0, 1.0],
+        }),
+        gauge: Some((share, 0.5)),
         ..LiveState::default()
     };
+    let flag = |name| std::env::var_os(name).is_some();
     let opts = SceneOptions {
         note_speed: std::env::var("WACCA_SHOT_SPEED")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(2.0),
         movie: false,
-        bar_lines: false,
+        bar_lines: flag("WACCA_SHOT_BARS"),
+        touch_guide: false,
     };
     let scene = build_scene(chart, at, &opts, &live, renderer.sprites());
     let mut encoder = device.create_command_encoder(&Default::default());

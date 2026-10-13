@@ -48,6 +48,18 @@ pub enum Sprite {
     Spark,
     /// Combo digit `0..=9` rendered from the SHINBI font (see [`bake_digit`]).
     Digit(u8),
+    /// Text along the rim, rendered from the UI font (see [`bake_text`]).
+    Text(TextSprite),
+}
+
+/// The rim texts of the play screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TextSprite {
+    /// The fixed "SCORE" label.
+    ScoreLabel,
+    /// Difficulty and level, e.g. `NORMAL/Lv.1`.
+    Difficulty,
+    Title,
 }
 
 impl Sprite {
@@ -113,7 +125,7 @@ pub struct Source {
 
 const ALL_ROWS: (f32, f32) = (0.0, 1.0);
 
-/// Texture source of `s` (`None` for font digits).
+/// Texture source of `s` (`None` for font-rendered sprites).
 pub fn source(s: Sprite) -> Option<Source> {
     let src = |file, bake| Source {
         file,
@@ -186,7 +198,7 @@ pub fn source(s: Sprite) -> Option<Source> {
         // The white variant matches the attract-demo capture at low combos.
         Sprite::Combo => src("UI/Textures/FONT/uT_FTcombo01", Bake::Image),
         Sprite::Spark => src("Vfx/Textures/vT_HitMarvPt01_00_m", Bake::Image),
-        Sprite::Digit(_) => return None,
+        Sprite::Digit(_) | Sprite::Text(_) => return None,
     })
 }
 
@@ -352,17 +364,66 @@ pub fn bake_digit(font: &impl ab_glyph::Font, d: u8) -> Option<Image> {
     }))
 }
 
+/// Rim texts are rasterised at this font size (px).
+pub const TEXT_PX: f32 = 64.0;
+
+/// `text` in `font` as a premultiplied white sprite one line box (ascent to descent) tall;
+/// `None` for empty text.
+pub fn bake_text(font: &impl ab_glyph::Font, text: &str) -> Option<Image> {
+    use ab_glyph::{PxScale, ScaleFont};
+    let scaled = font.as_scaled(PxScale::from(TEXT_PX));
+    let mut x = 0.0f32;
+    let mut glyphs = Vec::new();
+    let mut prev = None;
+    for c in text.chars() {
+        let id = scaled.glyph_id(c);
+        if let Some(p) = prev {
+            x += scaled.kern(p, id);
+        }
+        glyphs.push(id.with_scale_and_position(TEXT_PX, ab_glyph::point(x, scaled.ascent())));
+        x += scaled.h_advance(id);
+        prev = Some(id);
+    }
+    let (w, h) = (
+        x.ceil() as u32 + 2,
+        (scaled.ascent() - scaled.descent()).ceil() as u32,
+    );
+    if glyphs.is_empty() || h == 0 {
+        return None;
+    }
+    let mut cov = vec![0.0f32; (w * h) as usize];
+    for g in glyphs.into_iter().filter_map(|g| scaled.outline_glyph(g)) {
+        let b = g.px_bounds();
+        g.draw(|gx, gy, v| {
+            let (px, py) = (
+                b.min.x as i64 + i64::from(gx) + 1,
+                b.min.y as i64 + i64::from(gy),
+            );
+            if (0..i64::from(w)).contains(&px) && (0..i64::from(h)).contains(&py) {
+                let c = &mut cov[(py as u32 * w + px as u32) as usize];
+                *c = (*c + v).min(1.0);
+            }
+        });
+    }
+    Some(Image::from_fn([w, h], |x, y| {
+        let a = (cov[(y * w + x) as usize] * 255.0).round() as u8;
+        [a; 4]
+    }))
+}
+
+/// The font at `path` (first face of a collection); `None` (logged) if missing or unreadable.
+pub fn load_font(path: &Path) -> Option<ab_glyph::FontVec> {
+    let bytes = std::fs::read(path)
+        .map_err(|e| log::warn!("font {}: {e}", path.display()))
+        .ok()?;
+    ab_glyph::FontVec::try_from_vec_and_index(bytes, 0)
+        .map_err(|e| log::warn!("font {}: {e}", path.display()))
+        .ok()
+}
+
 /// The ten combo digits from the font file at `path` (none if it is missing or unreadable).
 pub fn load_digits(path: &Path) -> Vec<(Sprite, Image)> {
-    let font = std::fs::read(path)
-        .map_err(|e| log::warn!("combo font {}: {e}", path.display()))
-        .ok()
-        .and_then(|bytes| {
-            ab_glyph::FontVec::try_from_vec(bytes)
-                .map_err(|e| log::warn!("combo font {}: {e}", path.display()))
-                .ok()
-        });
-    let Some(font) = font else {
+    let Some(font) = load_font(path) else {
         return Vec::new();
     };
     (0..10)
@@ -590,6 +651,23 @@ mod tests {
             assert!(img.rgba.chunks(4).any(|p| p == [255; 4]), "{s:?}");
             assert!(img.rgba[..img.size[0] as usize * 4].iter().all(|&b| b == 0));
         }
+    }
+
+    /// Needs the exported game font: `WACCA_DATA` = the `data` dir; `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn rim_texts_render_latin_and_kana() {
+        let dir = std::path::PathBuf::from(std::env::var("WACCA_DATA").unwrap());
+        let font = load_font(&dir.join("fonts").join("DF-KaGei-W6.ttc")).unwrap();
+        let short = bake_text(&font, "SCORE").unwrap();
+        let long = bake_text(&font, "NORMAL/Lv.1").unwrap();
+        let kana = bake_text(&font, "フラジール").unwrap();
+        assert_eq!(short.size[1], long.size[1]);
+        assert!(long.size[0] > short.size[0]);
+        for img in [&short, &kana] {
+            assert!(img.rgba.chunks(4).any(|p| p == [255; 4]));
+        }
+        assert!(bake_text(&font, "").is_none());
     }
 
     #[test]

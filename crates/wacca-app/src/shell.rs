@@ -30,7 +30,7 @@ use crate::play::{PlayOptions, PlaySpec, PlayState, VideoSetup, load_chart, movi
 use crate::results::Summary;
 use crate::screen::{self, Event, Next, Screen};
 use crate::ui::{Action, Item, View, WHITE};
-use crate::{category, hud, jacket, options, preview, record, results, select_ui};
+use crate::{category, hud, jacket, options, play, preview, record, results, select_ui};
 
 /// Contact id used for the mouse (touch ids come from the OS).
 const MOUSE_ID: u64 = u64::MAX;
@@ -484,7 +484,13 @@ impl App {
             autoplay: m.autoplay,
             mirror: m.settings.mirror,
             bonus_effect: m.settings.bonus_effect,
+            bar_lines: m.settings.bar_lines,
+            touch_guide: m.settings.touch_guide,
         };
+        if let Some(gfx) = &mut self.gfx {
+            gfx.renderer
+                .set_rim_texts(&play::rim_difficulty(&spec), &spec.title);
+        }
         self.last_spec = Some(spec.clone());
         let (cache, se) = (&mut self.hits, &mut self.s.se);
         let hits = |rate| hit_sounds(cache, se, rate);

@@ -273,6 +273,7 @@ fn render_ours(
             note_speed: speed,
             movie: false,
             bar_lines: false,
+            touch_guide: false,
         },
         &LiveState::default(),
         &SpriteSheet::default(),

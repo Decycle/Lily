@@ -12,17 +12,18 @@ use std::sync::Arc;
 use wacca_audio::{BgmBank, HitSounds, Player, VoiceId};
 use wacca_chart::{Arc as LaneArc, Chart, Difficulty, NoteBody};
 use wacca_game::grade::PlayResult;
-use wacca_game::input::InputFrame;
+use wacca_game::input::{DEPTHS, InputFrame};
 use wacca_game::rules::{JudgeClass, JudgeEvent, Judgement};
 use wacca_render::effects::hold_arc_at;
 use wacca_render::layout::Rect;
 use wacca_render::{
-    Effects, JudgeSprite, LiveState, SceneOptions, SpriteSheet, Vertex, build_scene,
+    Effects, JudgeSprite, LiveState, RimState, SceneOptions, SpriteSheet, Vertex, build_scene,
 };
 use wacca_video::{Frame, VideoPlayer};
 
 use crate::hitsound::{self, Cue, HoldStarts};
 use crate::hud::Hud;
+use crate::labels;
 use crate::session::{Autoplay, Session, chart_now, end_time, start_position};
 use crate::touch_mapping::{Contacts, sensor_at_pixel};
 
@@ -67,6 +68,10 @@ pub struct PlayOptions {
     /// Play the left-right mirrored chart (judging and drawing alike).
     pub mirror: bool,
     pub bonus_effect: bool,
+    /// Measure lines on the playfield.
+    pub bar_lines: bool,
+    /// Depth-ring guides and pressed-sensor highlight (touchscreen aid).
+    pub touch_guide: bool,
 }
 
 /// What [`PlayState::new`] needs to show the background movie.
@@ -117,6 +122,8 @@ pub struct PlayState {
     holding: Vec<usize>,
     /// Chart time of the last combo change (count animation).
     combo_at: f64,
+    /// Sensors of the last input frame (touch guide).
+    pressed: [u64; DEPTHS],
     /// Chart time at which the play is over.
     end: f64,
     pub paused: bool,
@@ -172,6 +179,7 @@ impl PlayState {
             effects_at: f64::NEG_INFINITY,
             holding: Vec::new(),
             combo_at: f64::NEG_INFINITY,
+            pressed: [0; DEPTHS],
             end,
             paused: false,
             video,
@@ -262,6 +270,7 @@ impl PlayState {
         if self.session.combo() != combo {
             self.combo_at = frame.time;
         }
+        self.pressed = frame.sensors.rings;
         self.effects
             .touch(frame.sensors.rings.iter().fold(0, |a, r| a | r));
         for e in &events {
@@ -371,14 +380,23 @@ impl PlayState {
             &SceneOptions {
                 note_speed: self.opts.note_speed,
                 movie: self.video_shown.is_some(),
-                // Guest default; the bar-line option is not in the options screen yet.
-                bar_lines: false,
+                bar_lines: self.opts.bar_lines,
+                touch_guide: self.opts.touch_guide,
             },
             &LiveState {
                 judged: self.session.judged(),
                 effects: Some(&self.effects),
                 judgement,
                 combo: (self.session.combo(), (now - self.combo_at) as f32),
+                rim: Some(RimState {
+                    score: self.session.score(),
+                    progress: progress(now, self.end),
+                    difficulty_color: labels::difficulty_color(
+                        self.spec.difficulty.unwrap_or(Difficulty::Normal),
+                    ),
+                }),
+                gauge: Some((self.session.gauge() as f32, self.spec.norma)),
+                pressed: self.pressed,
             },
             sprites,
         )
@@ -396,6 +414,24 @@ impl PlayState {
             autoplay: self.autoplay.is_some(),
             art,
         }
+    }
+}
+
+/// Played fraction of a song that ends at chart time `end` (the rim's progress arc).
+pub fn progress(now: f64, end: f64) -> f32 {
+    if end > 0.0 {
+        (now / end).clamp(0.0, 1.0) as f32
+    } else {
+        0.0
+    }
+}
+
+/// Difficulty and level as written along the rim, e.g. `NORMAL/Lv.1`.
+pub fn rim_difficulty(spec: &PlaySpec) -> String {
+    let name = labels::difficulty(spec.difficulty.unwrap_or(Difficulty::Normal));
+    match spec.level {
+        Some(l) => format!("{name}/Lv.{}", labels::level(l)),
+        None => name.to_string(),
     }
 }
 
@@ -468,6 +504,38 @@ mod tests {
         let mut bad = e(JudgeClass::Touch);
         bad.note = 7;
         assert_eq!(hit_arc(&chart, &bad), None);
+    }
+
+    #[test]
+    fn rim_texts_and_progress() {
+        let spec = PlaySpec {
+            title: "Fragile".into(),
+            jacket: String::new(),
+            song_id: None,
+            difficulty: Some(Difficulty::Normal),
+            level: Some(1.0),
+            chart_path: PathBuf::new(),
+            norma: 0.5,
+            movie: None,
+        };
+        assert_eq!(rim_difficulty(&spec), "NORMAL/Lv.1");
+        let hard = PlaySpec {
+            difficulty: Some(Difficulty::Expert),
+            level: Some(12.7),
+            ..spec.clone()
+        };
+        assert_eq!(rim_difficulty(&hard), "EXPERT/Lv.12+");
+        assert_eq!(
+            rim_difficulty(&PlaySpec {
+                level: None,
+                ..spec
+            }),
+            "NORMAL"
+        );
+        assert_eq!(progress(20.0, 100.0), 0.2);
+        assert_eq!(progress(-3.0, 100.0), 0.0);
+        assert_eq!(progress(150.0, 100.0), 1.0);
+        assert_eq!(progress(1.0, 0.0), 0.0);
     }
 
     #[test]

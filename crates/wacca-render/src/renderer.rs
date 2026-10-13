@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use crate::layout::{ATLAS_SIZE, Vertex, playfield_viewport};
-use crate::sprites::{self, SpriteSheet};
+use crate::sprites::{self, Sprite, SpriteSheet, TextSprite};
 use crate::style::VIEW_EXTENT;
 use crate::video::VideoLayer;
 
@@ -21,6 +21,10 @@ pub struct Renderer {
     atlas: wgpu::Texture,
     atlas_group: wgpu::BindGroup,
     sheet: SpriteSheet,
+    /// Sprites from [`Renderer::load_sprites`], kept to re-pack with new rim texts.
+    base: Vec<(Sprite, sprites::Image)>,
+    /// Font of the rim texts.
+    text_font: Option<ab_glyph::FontVec>,
     vertices: wgpu::Buffer,
     /// Multisampled colour target and its size, recreated when the output size changes.
     msaa: Option<(wgpu::TextureView, [u32; 2])>,
@@ -144,6 +148,8 @@ impl Renderer {
             atlas,
             atlas_group,
             sheet: SpriteSheet::default(),
+            base: Vec::new(),
+            text_font: None,
             vertices: vertex_buffer(device, MIN_BUFFER_BYTES),
             msaa: None,
             video: VideoLayer::new(device, format, SAMPLE_COUNT),
@@ -156,10 +162,38 @@ impl Renderer {
     /// Load the playfield sprites from `ui_dir` (the `data/ui` export). Missing textures are
     /// logged and drawn in flat colours. Combo digits come from the SHINBI font next to it
     /// (`data/fonts/SHINBI.otf`, 06 §3).
+    /// The rim texts use the UI font `data/fonts/DF-KaGei-W6.ttc`.
     pub fn load_sprites(&mut self, ui_dir: &Path) {
+        let fonts = ui_dir.with_file_name("fonts");
         let mut all = sprites::load_sources(ui_dir);
-        let font = ui_dir.with_file_name("fonts").join("SHINBI.otf");
-        all.extend(sprites::load_digits(&font));
+        all.extend(sprites::load_digits(&fonts.join("SHINBI.otf")));
+        self.text_font = sprites::load_font(&fonts.join("DF-KaGei-W6.ttc"));
+        if let Some(img) = self
+            .text_font
+            .as_ref()
+            .and_then(|f| sprites::bake_text(f, "SCORE"))
+        {
+            all.push((Sprite::Text(TextSprite::ScoreLabel), img));
+        }
+        self.base = all;
+        self.repack(Vec::new());
+    }
+
+    /// Bake the play screen's rim texts (difficulty/level and song title) into the atlas.
+    pub fn set_rim_texts(&mut self, difficulty: &str, title: &str) {
+        let Some(font) = &self.text_font else { return };
+        let texts = [
+            (TextSprite::Difficulty, difficulty),
+            (TextSprite::Title, title),
+        ]
+        .into_iter()
+        .filter_map(|(s, t)| Some((Sprite::Text(s), sprites::bake_text(font, t)?)))
+        .collect();
+        self.repack(texts);
+    }
+
+    fn repack(&mut self, extra: Vec<(Sprite, sprites::Image)>) {
+        let all = self.base.iter().cloned().chain(extra).collect();
         let (sheet, placed) = sprites::pack(all);
         self.upload(placed);
         self.sheet = sheet;

@@ -3,26 +3,40 @@
 //! With an empty [`SpriteSheet`] everything is drawn in flat colours; each loaded sprite switches
 //! its element to the original texture.
 
-use std::f32::consts::PI;
+use std::f32::consts::{PI, TAU};
 
 use wacca_chart::{BeatPos, Bonus, Chart, LANES, Note, NoteBody, SlideDir, SnapDir};
 
 use crate::effects::Effects;
 use crate::layout::{
     Paint, UvRect, Vertex, depth_to_radius, last_drawable_time, mask_state, paint_sector, polar,
-    push_hold_body, push_radial_line, push_rect, push_sector, raw_depth, three_slice, tiles,
+    push_hold_body, push_oriented_rect, push_radial_line, push_rect, push_sector, raw_depth,
+    sensor_ring, three_slice, tiles,
 };
-use crate::sprites::{DIGIT_PAD, JudgeSprite, Sprite, SpriteSheet};
+use crate::sprites::{DIGIT_PAD, JudgeSprite, Sprite, SpriteSheet, TextSprite};
 use crate::style;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SceneOptions {
     /// Player note-speed option (1.0..=6.0).
     pub note_speed: f64,
-    /// A background movie plays: no guide sectors over it, only faint lane lines.
+    /// A background movie plays: dark translucent guide sectors over it, faint lane lines.
     pub movie: bool,
-    /// Measure lines (`BarLineTable` option; off for a guest, the E2 frames show none).
+    /// Measure lines (`BarLineTable` option).
     pub bar_lines: bool,
+    /// Touch guide: faint depth-ring circles and pressed sensors (an aid for touchscreens; the
+    /// cabinet's rings are physical, the real game draws none).
+    pub touch_guide: bool,
+}
+
+/// Score row and song progress along the rim.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RimState {
+    pub score: u32,
+    /// Played fraction of the song, 0..=1.
+    pub progress: f32,
+    /// Colour of the difficulty/level text.
+    pub difficulty_color: style::Rgba,
 }
 
 /// Live play state drawn on top of the chart.
@@ -38,6 +52,12 @@ pub struct LiveState<'a> {
     /// Current combo (counter and COMBO word show while it is non-zero) and seconds since it
     /// last changed (count animation).
     pub combo: (u32, f32),
+    /// Score row and progress on the rim.
+    pub rim: Option<RimState>,
+    /// Clear gauge `(fill, norma)`, both 0..=1.
+    pub gauge: Option<(f32, f32)>,
+    /// Pressed sensors per depth ring (bit per lane, innermost first), for the touch guide.
+    pub pressed: [u64; style::SENSOR_DEPTHS],
 }
 
 impl Default for SceneOptions {
@@ -46,6 +66,7 @@ impl Default for SceneOptions {
             note_speed: 1.0,
             movie: false,
             bar_lines: false,
+            touch_guide: false,
         }
     }
 }
@@ -86,13 +107,15 @@ pub fn even_tile(span: f32, len: f32) -> f32 {
     span / (span / len).round().max(1.0)
 }
 
-/// Slide chevron tile phase at `now` (moves towards higher lanes for counter-clockwise).
-pub fn slide_arrow_phase(now: f32, dir: SlideDir) -> f32 {
-    let p = now * style::SLIDE_ARROW_SPEED / style::SLIDE_ARROW_LANES;
-    match dir {
-        SlideDir::Ccw => -p,
-        SlideDir::Cw => p,
-    }
+/// Slide chevron positions (lanes) at `now` along a note of `span` lanes, measured from its
+/// back (where the slide starts) towards its front; they travel forwards over time.
+pub fn slide_arrow_slots(span: f32, now: f32) -> Vec<f32> {
+    let pitch = style::SLIDE_ARROW_LANES;
+    let phase = (now * style::SLIDE_ARROW_SPEED / pitch).rem_euclid(1.0);
+    (0..)
+        .map(|k| (k as f32 + phase) * pitch)
+        .take_while(|&pos| pos < span)
+        .collect()
 }
 
 /// Triangle list (back to front) of the playfield at chart time `now`.
@@ -107,15 +130,21 @@ pub fn build_scene(
     let lanes = LANES as usize;
 
     let mask = mask_state(&chart.masks, now);
-    // Over a movie the real game draws no guide sectors, only faint lane lines (E2 frames).
+    // Over a movie the guide sectors are a dark translucent tunnel: lanes that are on dim the
+    // movie towards the rim, masked lanes show it bright (E2 frames).
     let guide = sheet.get(Sprite::GuideLane);
-    for lane in (0..lanes).filter(|&l| mask[l] && !opts.movie) {
+    let (tint, flat) = if opts.movie {
+        (style::GUIDE_LANE_MOVIE, style::GUIDE_LANE_MOVIE_FLAT)
+    } else {
+        (style::GUIDE_LANE_TINT, style::GUIDE_LANE)
+    };
+    for lane in (0..lanes).filter(|&l| mask[l]) {
         match guide {
             Some(uv) => {
-                let paint = Paint::image(style::GUIDE_LANE_TINT, uv);
+                let paint = Paint::image(tint, uv);
                 paint_sector(&mut out, 1.0, 0.0, lane as f32, 1.0, &paint);
             }
-            None => push_sector(&mut out, 0.0, 1.0, lane as f32, 1.0, style::GUIDE_LANE),
+            None => push_sector(&mut out, 0.0, 1.0, lane as f32, 1.0, flat),
         }
     }
     let line = if opts.movie {
@@ -126,6 +155,9 @@ pub fn build_scene(
     for lane in (0..lanes).filter(|&l| mask[l] || mask[(l + lanes - 1) % lanes]) {
         let w = style::LANE_LINE_HALF_WIDTH;
         push_radial_line(&mut out, lane as f32, 0.0, 1.0, w, line);
+    }
+    if opts.touch_guide {
+        push_touch_guide(&mut out, &live.pressed);
     }
 
     let last_time = last_drawable_time(chart, now);
@@ -181,6 +213,9 @@ pub fn build_scene(
     }
 
     push_judge_ring(&mut out, sheet, &mask);
+    if let Some(rim) = &live.rim {
+        push_rim_row(&mut out, sheet, rim);
+    }
     if let Some(fx) = live.effects {
         fx.draw(&mut out, sheet);
     }
@@ -203,15 +238,19 @@ pub fn judge_ring_color(lane: u8) -> style::Rgba {
     [0, 1, 2, 3].map(|i| a[i] + (b[i] - a[i]) * t)
 }
 
-/// On every lane that is on: the thick glowing band from the line outwards (E2: 292–317 px at
-/// a 291.8 px line), soft additive glow on both of its sides, then a dark rim with a thin light
-/// edge.
+/// The dark rim with its thin outer edge all the way round (black beyond it), and on every
+/// lane that is on the thick band from the line outwards (E2: 292–315 px at a 291.8 px line):
+/// two bright stripes over a dimmer middle, soft additive glow on both sides.
 fn push_judge_ring(out: &mut Vec<Vertex>, sheet: &SpriteSheet, mask: &[bool]) {
     let band_out = 1.0 + style::JUDGE_BAND_WIDTH;
     let rim_out = band_out + style::RIM_WIDTH;
+    let all = LANES as f32;
     // Nothing shows outside the cabinet rim (the movie quad would, E2 frames are black there).
     let corner = style::VIEW_EXTENT * std::f32::consts::SQRT_2;
-    push_sector(out, rim_out, corner, 0.0, LANES as f32, style::OUTSIDE);
+    push_sector(out, rim_out, corner, 0.0, all, style::OUTSIDE);
+    push_sector(out, band_out, rim_out, 0.0, all, style::RIM);
+    let e = style::RIM_EDGE_HALF_WIDTH;
+    push_sector(out, rim_out - e, rim_out + e, 0.0, all, style::RIM_EDGE);
     let glow = sheet.get(Sprite::GuideLane).map(|[u0, v0, u1, v1]| {
         // A single column of the gradient (bright at v0), stretched along the ring.
         let u = (u0 + u1) / 2.0;
@@ -220,20 +259,136 @@ fn push_judge_ring(out: &mut Vec<Vertex>, sheet: &SpriteSheet, mask: &[bool]) {
     for lane in (0..LANES).filter(|&l| mask[usize::from(l)]) {
         let l = f32::from(lane);
         let color = judge_ring_color(lane);
-        push_sector(out, band_out, rim_out, l, 1.0, style::RIM);
-        let e = style::RIM_EDGE_HALF_WIDTH;
-        push_sector(out, rim_out - e, rim_out + e, l, 1.0, style::RIM_EDGE);
-        push_sector(out, 1.0, band_out, l, 1.0, color);
+        let k = style::JUDGE_BAND_MID;
+        let mid = [color[0] * k, color[1] * k, color[2] * k, 1.0];
+        push_sector(out, 1.0, band_out, l, 1.0, mid);
+        let w = style::JUDGE_STRIPE_HALF_WIDTH;
+        for r in style::JUDGE_STRIPES {
+            push_sector(out, r - w, r + w, l, 1.0, color);
+        }
         if let Some(uv) = glow {
             let paint = Paint::image([color[0], color[1], color[2], style::JUDGE_GLOW_ALPHA], uv)
                 .additive();
             let w = style::JUDGE_GLOW_WIDTH;
             paint_sector(out, 1.0, 1.0 - w, l, 1.0, &paint);
-            // Hot core in the middle of the band.
-            let mid = 1.0 + style::JUDGE_BAND_WIDTH / 2.0;
-            paint_sector(out, mid, 1.0, l, 1.0, &paint);
-            paint_sector(out, mid, band_out, l, 1.0, &paint);
+            paint_sector(out, band_out, band_out + w, l, 1.0, &paint);
         }
+    }
+}
+
+/// Lane at `deg` degrees clockwise from 12 o'clock.
+fn lane_at_deg(deg: f32) -> f32 {
+    LANES as f32 / 4.0 - deg * LANES as f32 / 360.0
+}
+
+/// Image `uv` bent along the ring, upright at the top: centred on `lane` at radius `r`, `size`
+/// = `[arc length, height]` (playfield units), its top edge outwards.
+fn push_bent(out: &mut Vec<Vertex>, uv: UvRect, lane: f32, r: f32, size: [f32; 2], c: style::Rgba) {
+    let [u0, v0, u1, v1] = uv;
+    let lanes = size[0] / r * LANES as f32 / TAU;
+    let (top, bottom) = (r + size[1] / 2.0, r - size[1] / 2.0);
+    // Lanes grow counter-clockwise (right to left at the top): the text's right end first.
+    let paint = Paint::image(c, [u1, v0, u0, v1]);
+    paint_sector(out, top, bottom, lane - lanes / 2.0, lanes, &paint);
+}
+
+/// Song progress on the dark rim, the score row ("SCORE", seven SHINBI digits), the
+/// difficulty/level and the song title along the top of the band (layout in `style`).
+fn push_rim_row(out: &mut Vec<Vertex>, sheet: &SpriteSheet, rim: &RimState) {
+    let (r0, r1) = style::PROGRESS_RADII;
+    let progress = rim.progress.clamp(0.0, 1.0) * LANES as f32;
+    if progress > 0.0 {
+        push_sector(out, r0, r1, LANES as f32 / 4.0, progress, style::PROGRESS);
+    }
+    let texts = [
+        (
+            TextSprite::ScoreLabel,
+            style::SCORE_LABEL_AT,
+            style::SCORE_LABEL_COLOR,
+        ),
+        (
+            TextSprite::Difficulty,
+            style::DIFFICULTY_AT,
+            rim.difficulty_color,
+        ),
+        (TextSprite::Title, style::TITLE_AT, style::TITLE_COLOR),
+    ];
+    for (t, (deg, r, h, stretch), c) in texts {
+        let s = Sprite::Text(t);
+        if let (Some(uv), Some(aspect)) = (sheet.get(s), sheet.aspect(s)) {
+            let max = style::TITLE_MAX_DEG.to_radians() * r;
+            let w = (h / aspect * stretch).min(max);
+            push_bent(out, uv, lane_at_deg(deg), r, [w, h], c);
+        }
+    }
+    let digits = format!("{:0width$}", rim.score, width = style::SCORE_DIGITS);
+    let cell_h = style::SCORE_DIGIT_H * (1.0 + 2.0 * DIGIT_PAD);
+    let r = style::SCORE_RADIUS;
+    let n = digits.len() as f32;
+    for (k, b) in digits.bytes().enumerate() {
+        let s = Sprite::Digit(b - b'0');
+        if let (Some(uv), Some(aspect)) = (sheet.get(s), sheet.aspect(s)) {
+            let arc = (k as f32 - (n - 1.0) / 2.0) * style::SCORE_PITCH;
+            let lane = LANES as f32 / 4.0 - arc / r * LANES as f32 / TAU;
+            push_bent(
+                out,
+                uv,
+                lane,
+                r,
+                [cell_h / aspect, cell_h],
+                style::SCORE_COLOR,
+            );
+        }
+    }
+}
+
+/// Faint circles at the sensor depth-ring edges and the pressed sensors filled.
+fn push_touch_guide(out: &mut Vec<Vertex>, pressed: &[u64; style::SENSOR_DEPTHS]) {
+    let w = style::TOUCH_GUIDE_RING_HALF_WIDTH;
+    for (depth, &bits) in pressed.iter().enumerate() {
+        let (r_in, r_out) = sensor_ring(depth);
+        for lane in (0..LANES).filter(|&l| bits >> l & 1 == 1) {
+            let c = style::TOUCH_GUIDE_PRESSED;
+            push_sector(out, r_in, r_out, f32::from(lane), 1.0, c);
+        }
+        let edges = if depth + 1 == style::SENSOR_DEPTHS {
+            vec![r_in, r_out]
+        } else {
+            vec![r_in]
+        };
+        for r in edges {
+            push_sector(
+                out,
+                r - w,
+                r + w,
+                0.0,
+                LANES as f32,
+                style::TOUCH_GUIDE_RING,
+            );
+        }
+    }
+}
+
+/// Clear gauge bar above the combo: dark track, pink fill from the left with a light core,
+/// diamond end marks and a mark at the norma line.
+fn push_gauge(out: &mut Vec<Vertex>, (fill, norma): (f32, f32)) {
+    let (hw, hh, y) = (style::GAUGE_HALF_W, style::GAUGE_HALF_H, style::GAUGE_Y);
+    push_rect(out, [0.0, y], [hw, hh], &Paint::flat(style::GAUGE_TRACK));
+    let f = fill.clamp(0.0, 1.0) * hw;
+    if f > 0.0 {
+        push_rect(out, [f - hw, y], [f, hh], &Paint::flat(style::GAUGE_FILL));
+        push_rect(
+            out,
+            [f - hw, y],
+            [f, hh * 0.3],
+            &Paint::flat(style::GAUGE_CORE),
+        );
+    }
+    let m = style::GAUGE_MARK_HALF;
+    let x_norma = (norma.clamp(0.0, 1.0) * 2.0 - 1.0) * hw;
+    for x in [-hw, hw, x_norma] {
+        let paint = Paint::flat(style::GAUGE_MARK);
+        push_oriented_rect(out, [x, y], [m, m], [1.0, 1.0], &paint);
     }
 }
 
@@ -264,6 +419,9 @@ fn push_bar_lines(out: &mut Vec<Vertex>, chart: &Chart, now: f64, depth_of: impl
 /// Judgement word art, the combo counter (SHINBI digits) and the COMBO word at the centre
 /// (each only with its sprites loaded). Layout measured on the E2 frames, see `style`.
 fn push_hud_sprites(out: &mut Vec<Vertex>, sheet: &SpriteSheet, live: &LiveState) {
+    if let Some(g) = live.gauge {
+        push_gauge(out, g);
+    }
     if let Some((j, age)) = live.judgement
         && let Some(alpha) = judge_sprite_alpha(age)
         && let (Some(uv), Some(aspect)) =
@@ -369,7 +527,7 @@ fn push_note(
     );
     match look.body {
         Some(NoteBody::Slide(dir)) => {
-            push_slide_arrows(out, sheet, now, arrows, (start, span), look.color, *dir)
+            push_slide_arrows(out, sheet, now, r, (start, span), look.color, *dir)
         }
         Some(NoteBody::Snap(dir)) => {
             push_snap_arrows(out, sheet, now, arrows, (start, span), look.color, *dir)
@@ -422,28 +580,45 @@ fn push_note(
     }
 }
 
-/// Chevrons scrolling along the band `arrows = (outer, inner radius)` in the slide direction.
+/// Separate chevrons inside a slide note at radius `r`, pointing and travelling in the slide
+/// direction and growing from its back to its front (see `style::SLIDE_ARROW_*`).
 fn push_slide_arrows(
     out: &mut Vec<Vertex>,
     sheet: &SpriteSheet,
     now: f32,
-    (r_a, r_b): (f32, f32),
+    r: f32,
     (start, span): (f32, f32),
     color: style::Rgba,
     dir: SlideDir,
 ) {
-    let Some([u0, v0, u1, v1]) = sheet.get(Sprite::SlideArrow) else {
+    let Some(uv) = sheet.get(Sprite::SlideArrow) else {
         return;
     };
-    // The chevron points towards +v; flip it to point clockwise (towards lower lanes).
-    let uv = match dir {
-        SlideDir::Ccw => [u0, v0, u1, v1],
-        SlideDir::Cw => [u0, v1, u1, v0],
-    };
-    let paint = Paint::mask(color, uv).along_v();
-    let phase = slide_arrow_phase(now, dir);
-    for (off, len, s0, s1) in tiles(span, style::SLIDE_ARROW_LANES, phase) {
-        paint_sector(out, r_a, r_b, start + off, len, &paint.sub_arc(s0, s1));
+    let rc = r * style::SLIDE_ARROW_RADIUS;
+    let pitch = style::SLIDE_ARROW_LANES;
+    for pos in slide_arrow_slots(span, now) {
+        let f = pos / span;
+        let size =
+            r * (style::SLIDE_ARROW_MIN + (style::SLIDE_ARROW_MAX - style::SLIDE_ARROW_MIN) * f);
+        // Fade in at the back, out at the front edge.
+        let alpha = (pos / pitch)
+            .min((span - pos) / (pitch * 0.5))
+            .clamp(0.0, 1.0);
+        // Counter-clockwise slides run towards higher lanes.
+        let (lane, sign) = match dir {
+            SlideDir::Ccw => (start + pos, 1.0),
+            SlideDir::Cw => (start + span - pos, -1.0),
+        };
+        let a = crate::layout::lane_angle(lane);
+        let tangent = [-a.sin() * sign, a.cos() * sign];
+        let paint = Paint::mask([color[0], color[1], color[2], alpha], uv);
+        push_oriented_rect(
+            out,
+            polar(rc, lane),
+            [size / 2.0, size * 0.6],
+            tangent,
+            &paint,
+        );
     }
 }
 
@@ -476,7 +651,7 @@ fn push_snap_arrows(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::{APPROACH_SECS, tiles};
+    use crate::layout::{APPROACH_SECS, lane_angle, tiles};
     use wacca_chart::{Arc, BeatPos, ChartHeader, HoldNode, MaskDir, MaskEvent, ReverseSection};
 
     fn chart(notes: Vec<Note>) -> Chart {
@@ -537,8 +712,9 @@ mod tests {
         );
         assert_eq!(count(&v, style::GUIDE_LANE), 60 * 6);
         assert_eq!(count(&v, style::LANE_LINE), 60 * 6);
-        // Lane 15 (top) has a ring colour of its own; the rim goes all the way round.
-        assert_eq!(count(&v, judge_ring_color(15)), 6);
+        // Lane 15 (top) has a ring colour of its own (two bright stripes); the rim goes all the
+        // way round.
+        assert_eq!(count(&v, judge_ring_color(15)), 2 * 6);
         assert_eq!(count(&v, style::RIM), 60 * 6);
         assert_eq!(v.len() % 3, 0);
         let movie = SceneOptions {
@@ -546,13 +722,111 @@ mod tests {
             ..Default::default()
         };
         let none = SpriteSheet::default();
-        // Over a movie: no guide sectors (flat or textured), faint lane lines.
-        for sheet in [&none, &full_sheet()] {
-            let v = build_scene(&chart(vec![]), 0.0, &movie, &LiveState::default(), sheet);
-            assert_eq!(count(&v, style::GUIDE_LANE), 0);
-            assert_eq!(count(&v, style::GUIDE_LANE_TINT), 0);
-            assert_eq!(count(&v, style::LANE_LINE_MOVIE), 60 * 6);
+        // Over a movie: dark translucent guide sectors, faint lane lines.
+        let v = build_scene(&chart(vec![]), 0.0, &movie, &LiveState::default(), &none);
+        assert_eq!(count(&v, style::GUIDE_LANE), 0);
+        assert_eq!(count(&v, style::GUIDE_LANE_MOVIE_FLAT), 60 * 6);
+        assert_eq!(count(&v, style::LANE_LINE_MOVIE), 60 * 6);
+        let v = build_scene(
+            &chart(vec![]),
+            0.0,
+            &movie,
+            &LiveState::default(),
+            &full_sheet(),
+        );
+        assert_eq!(count(&v, style::GUIDE_LANE_TINT), 0);
+        assert_eq!(count(&v, style::GUIDE_LANE_MOVIE), 60 * 6);
+    }
+
+    #[test]
+    fn rim_row_progress_and_gauge() {
+        let mut sheet = full_sheet();
+        for t in [
+            TextSprite::ScoreLabel,
+            TextSprite::Difficulty,
+            TextSprite::Title,
+        ] {
+            sheet.insert(Sprite::Text(t), [0.9, 0.0, 0.95, 0.1], [400, 40]);
         }
+        let live = |progress| LiveState {
+            rim: Some(RimState {
+                score: 82_759,
+                progress,
+                difficulty_color: [0.1, 0.4, 1.0, 1.0],
+            }),
+            gauge: Some((0.5, 0.7)),
+            ..LiveState::default()
+        };
+        let v = build_scene(
+            &chart(vec![]),
+            0.0,
+            &SceneOptions::default(),
+            &live(0.25),
+            &sheet,
+        );
+        // Progress: a quarter of the ring from 12 o'clock counter-clockwise (to 9 o'clock).
+        let lit: Vec<_> = v.iter().filter(|p| p.color == style::PROGRESS).collect();
+        assert_eq!(lit.len(), 15 * 6);
+        assert!(lit.iter().all(|p| p.pos[0] <= 1e-4 && p.pos[1] >= -1e-4));
+        // Seven score digits "0082759", all at the top, orange.
+        let digits: Vec<_> = v.iter().filter(|p| p.color == style::SCORE_COLOR).collect();
+        assert!(digits.len() >= 7 * 6);
+        assert!(
+            digits
+                .iter()
+                .all(|p| p.pos[1] > 0.85 && p.pos[0].abs() < 0.45)
+        );
+        let zero = sheet.get(Sprite::Digit(0)).unwrap();
+        let zeros = digits
+            .iter()
+            .filter(|p| p.uv[0] >= zero[0] && p.uv[0] <= zero[2]);
+        assert!(zeros.count() >= 2 * 6);
+        // Texts: SCORE left of the top, difficulty and title right of it.
+        let cx = |c: style::Rgba| {
+            let p: Vec<_> = v.iter().filter(|p| p.color == c).collect();
+            p.iter().map(|p| p.pos[0]).sum::<f32>() / p.len() as f32
+        };
+        assert!(cx(style::SCORE_LABEL_COLOR) < 0.0);
+        assert!(cx([0.1, 0.4, 1.0, 1.0]) > 0.0);
+        assert!(cx(style::TITLE_COLOR) > cx([0.1, 0.4, 1.0, 1.0]));
+        // Gauge: track, half fill (and its core), three marks.
+        assert_eq!(count(&v, style::GAUGE_TRACK), 6);
+        let fill: Vec<_> = v.iter().filter(|p| p.color == style::GAUGE_FILL).collect();
+        assert_eq!(fill.len(), 6);
+        assert!(fill.iter().all(|p| p.pos[0] <= 1e-5));
+        assert_eq!(count(&v, style::GAUGE_MARK), 3 * 6);
+        let none = build_scene(
+            &chart(vec![]),
+            0.0,
+            &SceneOptions::default(),
+            &live(0.0),
+            &sheet,
+        );
+        assert_eq!(count(&none, style::PROGRESS), 0);
+    }
+
+    #[test]
+    fn touch_guide_draws_rings_and_pressed_sensors() {
+        let mut pressed = [0u64; style::SENSOR_DEPTHS];
+        pressed[1] = 1 << 7 | 1 << 8;
+        let live = LiveState {
+            pressed,
+            ..LiveState::default()
+        };
+        let on = SceneOptions {
+            touch_guide: true,
+            ..Default::default()
+        };
+        let none = SpriteSheet::default();
+        let v = build_scene(&chart(vec![]), 0.0, &on, &live, &none);
+        assert_eq!(count(&v, style::TOUCH_GUIDE_PRESSED), 2 * 6);
+        assert_eq!(
+            count(&v, style::TOUCH_GUIDE_RING),
+            (style::SENSOR_DEPTHS + 1) * 60 * 6
+        );
+        let off = build_scene(&chart(vec![]), 0.0, &SceneOptions::default(), &live, &none);
+        assert_eq!(count(&off, style::TOUCH_GUIDE_PRESSED), 0);
+        assert_eq!(count(&off, style::TOUCH_GUIDE_RING), 0);
     }
 
     #[test]
@@ -608,7 +882,10 @@ mod tests {
             &SpriteSheet::default(),
         );
         assert_eq!(count(&v, style::GUIDE_LANE), 10 * 6);
-        assert_eq!(count(&v, style::RIM), 10 * 6);
+        // The band follows the mask, the dark rim stays.
+        assert_eq!(count(&v, judge_ring_color(5)), 2 * 6);
+        assert_eq!(count(&v, judge_ring_color(45)), 0);
+        assert_eq!(count(&v, style::RIM), 60 * 6);
         assert_eq!(count(&v, style::LANE_LINE), 11 * 6);
     }
 
@@ -857,9 +1134,55 @@ mod tests {
         assert!((shift - 0.5).abs() < 1e-5 && (alpha - 1.0).abs() < 1e-5);
         assert!(snap_arrow_anim(0.0).1.abs() < 1e-6);
 
-        // Tile boundaries move towards higher lanes for counter-clockwise slides, lower for clockwise.
-        let first = |t, dir| tiles(10.0, style::SLIDE_ARROW_LANES, slide_arrow_phase(t, dir))[0].1;
-        assert!(first(0.02, SlideDir::Ccw) > first(0.01, SlideDir::Ccw));
-        assert!(first(0.02, SlideDir::Cw) < first(0.01, SlideDir::Cw));
+        // Slide chevrons sit one pitch apart inside the note and travel forwards.
+        let a = slide_arrow_slots(10.0, 0.0);
+        assert_eq!(a.len(), (10.0 / style::SLIDE_ARROW_LANES).ceil() as usize);
+        assert!(
+            a.windows(2)
+                .all(|w| (w[1] - w[0] - style::SLIDE_ARROW_LANES).abs() < 1e-5)
+        );
+        let b = slide_arrow_slots(10.0, 0.01);
+        assert!(b[0] > a[0] && b.iter().all(|p| (0.0..10.0).contains(p)));
+    }
+
+    #[test]
+    fn slide_chevrons_grow_towards_the_slide_direction() {
+        let sheet = full_sheet();
+        let arrow = sheet.get(Sprite::SlideArrow).unwrap();
+        // A slide over lanes 10..20 at the line: `(angle, size)` of each chevron, by angle.
+        let chevrons = |dir| {
+            let mut v = Vec::new();
+            let body = NoteBody::Slide(dir);
+            let look = NoteLook {
+                color: style::SLIDE_CW,
+                body: Some(&body),
+                bonus: Bonus::None,
+            };
+            push_note(&mut v, &sheet, 0.3, 0.0, 10, 10, &look);
+            let arrows: Vec<Vertex> = v
+                .into_iter()
+                .filter(|p| uv_range(std::slice::from_ref(p), arrow) == 1)
+                .collect();
+            let mut out: Vec<(f32, f32)> = arrows
+                .chunks(6)
+                .map(|q| {
+                    let c = [0, 1].map(|k| q.iter().map(|p| p.pos[k]).sum::<f32>() / 6.0);
+                    let ext = q
+                        .iter()
+                        .map(|p| (p.pos[0] - c[0]).hypot(p.pos[1] - c[1]))
+                        .fold(0.0, f32::max);
+                    (c[1].atan2(c[0]), ext)
+                })
+                .collect();
+            out.sort_by(|a, b| a.0.total_cmp(&b.0));
+            out
+        };
+        let ccw = chevrons(SlideDir::Ccw);
+        assert!(ccw.len() >= 4);
+        assert!(ccw[0].1 < ccw[ccw.len() - 1].1, "{ccw:?}");
+        let cw = chevrons(SlideDir::Cw);
+        assert!(cw[0].1 > cw[cw.len() - 1].1, "{cw:?}");
+        let (a0, a1) = (lane_angle(10.0), lane_angle(20.0));
+        assert!(ccw.iter().all(|&(a, _)| a > a0 && a < a1), "{ccw:?}");
     }
 }

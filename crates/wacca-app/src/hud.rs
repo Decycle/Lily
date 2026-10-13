@@ -64,7 +64,8 @@ pub struct Hud {
     pub note_speed: f64,
     pub paused: bool,
     pub autoplay: bool,
-    /// The playfield draws the judgement word art and the combo counter; skip their text.
+    /// The playfield draws the judgement word art, the combo counter and the rim's score and
+    /// title; skip their text.
     pub art: bool,
 }
 
@@ -77,8 +78,11 @@ pub fn view(h: &Hud, title: &str, window: Rect, playfield: Rect) -> View {
     let (x, top) = (window.x + 2.0 * u, window.y + 2.0 * u);
     let margin = playfield.x - window.x;
     let side = if margin > 20.0 * u { margin } else { window.w } - 4.0 * u;
-    v.text_in(title, [x, top], 3.5 * u, GREY, Align::Left, Some(side));
-    v.text(format_score(h.score), [x, top + 4.5 * u], 6.0 * u, WHITE);
+    // With the art the playfield writes title and score along its rim, like the game.
+    if !h.art {
+        v.text_in(title, [x, top], 3.5 * u, GREY, Align::Left, Some(side));
+        v.text(format_score(h.score), [x, top + 4.5 * u], 6.0 * u, WHITE);
+    }
     let cx = playfield.x + playfield.w / 2.0;
     let mid = playfield.y + playfield.h / 2.0;
     // Fallback text where the sprites are missing, placed like the art (combo ~0.19 R above
@@ -187,6 +191,6 @@ mod tests {
         );
         assert_eq!(idle.texts(), ["Song", "123,456", "x4.0  AUTO"]);
         let art = view(&Hud { art: true, ..h }, "Song", r, r);
-        assert_eq!(art.texts(), ["Song", "123,456", "x4.0  AUTO"]);
+        assert_eq!(art.texts(), ["x4.0  AUTO"]);
     }
 }
