@@ -278,7 +278,7 @@ mod tests {
                 .iter()
                 .any(|f| matches!(f, Finding::MissingUpdates(m) if m.len() == 6))
         );
-        // Empty fake files: every one is flagged as a size mismatch (incomplete download).
+        // Empty fake files: every one is flagged as a size mismatch (incomplete file).
         let mismatches = d
             .report
             .iter()

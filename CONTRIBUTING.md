@@ -10,7 +10,8 @@
 | `wacca-audio` | CRI @UTF/ACB/AFS2, HCA/ADX decode, audio output + clock | — |
 | `wacca-render` | wgpu playfield/notes/effects | chart |
 | `wacca-video` | `.usm` demux, background-movie decode via an external `ffmpeg` process (`WACCA_FFMPEG`, `PATH` or winget) | — |
-| `wacca-convert` | `assets/` → `data/` CLI | ue4, game |
+| `wacca-convert` | `assets/` → `data/` library + CLI | ue4, game |
+| `wacca-setup` | first-run import: Reverse `.7z` archives (via 7-Zip's CLI) or an installed game → portable `assets/` (runtime subset) + `data/`; the read set is documented in `readset.rs` | convert, audio, chart, game |
 
 Shared vocabulary lives in `wacca-chart::model` and `wacca-game::{rules, input, catalog}`. Change those only when
 necessary, keep the change minimal, and say so in the PR.

@@ -57,7 +57,7 @@ pub enum Finding {
     ChecksumNotVerified,
     /// An archive recognised by its exact size although its name differs.
     Renamed { archive: PathBuf, version: String },
-    /// Name matches but the size doesn't: probably an incomplete download.
+    /// Name matches but the size doesn't: probably an incomplete or damaged file.
     SizeMismatch {
         archive: PathBuf,
         expected: u64,

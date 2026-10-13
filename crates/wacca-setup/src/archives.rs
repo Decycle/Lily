@@ -209,7 +209,7 @@ mod tests {
         let c = vec![
             (PathBuf::from("d/WACCA Reverse (3.07.01).7z"), KNOWN[8].size),
             (PathBuf::from("d/renamed.7z"), KNOWN[1].size),
-            (PathBuf::from("d/WACCA Reverse (3.00.00).7z"), 5), // truncated download
+            (PathBuf::from("d/WACCA Reverse (3.00.00).7z"), 5), // truncated file
             (PathBuf::from("d/other.7z"), 1234),
             (
                 PathBuf::from("d/WACCA Reverse (3.07.01) (1).7z"),

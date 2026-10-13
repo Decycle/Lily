@@ -120,7 +120,7 @@ pub fn collect(content: &Path, include_movies: bool) -> Result<Vec<FileEntry>, S
     dirs.dedup();
     let mut out = Vec::new();
     for dir in dirs {
-        let root = content.join(dir);
+        let root = dir.split('/').fold(content.to_owned(), |p, c| p.join(c));
         if root.is_dir() {
             walk(content, &root, include_movies, &mut out)?;
         }
