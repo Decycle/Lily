@@ -7,7 +7,19 @@ Multiplayer, cards, servers, unlocks and other arcade-only features are not incl
 **You need your own copy of the original game.** This repository contains no game files. Charts, audio, movies,
 textures, fonts and meshes are all read from your install. Personal use only.
 
-## Quick start (Windows)
+## Portable folder (players)
+
+`tools\make-portable.ps1` builds `dist\WACCA_slim\`: `wacca-app.exe`, 7-Zip's `7z.exe`/`7z.dll` (LGPL, licence
+included), `README-portable.txt` and a `portable.txt` marker, and no game data. You need your own copy of WACCA Reverse
+3.07.01: either the Reverse update archives (3.00.00 base + 3.01.00 … 3.07.01) or an installed/unpacked game folder.
+On first run the app finds no game files and opens **setup**: choose the folder with the `.7z` archives or the game
+folder, review what was found, choose whether to include the background videos, and wait for the progress screen.
+Setup writes `assets\` and `data\` next to the executable, then shows the title. The **SETUP** button at the top of
+the title screen (or **F2**) runs it again, e.g. to add the videos. With `portable.txt` (or `--portable`) the save is
+`save\save.json` next to the executable. FFmpeg stays optional (videos only); an `ffmpeg.exe` next to the executable
+is used too.
+
+## Quick start (Windows, from source)
 
 1. **Toolchain.** Install Rust with `winget install Rustlang.Rustup`, then select the GNU toolchain:
    `rustup default stable-x86_64-pc-windows-gnu`. Some dependencies are pinned to versions that build on this
@@ -35,16 +47,18 @@ textures, fonts and meshes are all read from your install. Personal use only.
 
 | Flag | Meaning |
 |---|---|
-| `--assets <dir>` | Game `Content` folder (required) |
-| `--data <dir>` | Output of `wacca-convert` (default `data`) |
-| `--save <file>` | Save file (default `%APPDATA%\wacca-slim\save.json`) |
+| `--assets <dir>` | Game `Content` folder (default: `assets` next to the executable) |
+| `--data <dir>` | Output of `wacca-convert` (default `data`; next to the executable when `--assets` is not given either) |
+| `--save <file>` | Save file (default `%APPDATA%\wacca-slim\save.json`, or `save\save.json` next to the executable when portable) |
+| `--portable` | Keep the save next to the executable (same as a `portable.txt` file there) |
 | `--windowed` | Start in a 450×800 window instead of borderless fullscreen |
 | `--autoplay` | Start with AUTOPLAY on |
 | `--speed <1.0–6.0>` | Note speed for this session (overrides the saved one) |
 | `--offset-ms <N>` | Timing offset in ms for this session, rounded to the TIMING step (8.33 ms) and clamped to ±83 ms |
 | `--chart <path>` | Play this chart right away. The path is relative to `--assets`: either `MusicData/<song>/<song>_NN.mer` or `MusicData/<song>` together with `--difficulty` |
 | `--difficulty normal\|hard\|expert\|inferno` | Difficulty for `--chart` |
-| `--screen title\|mode\|category\|select\|options\|calibrate\|results` | Open on this screen (for debugging) |
+| `--screen title\|mode\|category\|select\|options\|calibrate\|results\|setup` | Open on this screen (for debugging) |
+| `--setup-source <dir>` | Open setup and inspect this folder right away (debugging); with `--setup-start` also start it (without videos) |
 
 ## How to play
 
