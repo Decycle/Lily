@@ -13,7 +13,9 @@ use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use wacca_realgame::inject::{self, Kind, Publish, Record};
-use wacca_realgame::shm::{self, MemBuffer, ShmError};
+#[cfg(windows)]
+use wacca_realgame::shm;
+use wacca_realgame::shm::{MemBuffer, ShmError};
 use wacca_realgame::timeline;
 
 const USAGE: &str = "usage: wacca-realgame inject --script <taps.json> [--dry-run] [--start-delay-ms N] [--log <path>]";
@@ -40,10 +42,12 @@ enum Error {
         path: PathBuf,
         source: serde_json::Error,
     },
+    #[cfg(windows)]
     #[error("opening the shared buffer: {0} (is the game with waccon_io.dll running?)")]
     Open(std::io::Error),
     #[error(transparent)]
     Abi(#[from] ShmError),
+    #[cfg(windows)]
     #[error(
         "waccon_io.dll heartbeat is missing or older than {} ms",
         inject::HEARTBEAT_MAX_AGE_MS

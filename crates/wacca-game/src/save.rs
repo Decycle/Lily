@@ -190,9 +190,14 @@ pub fn save_path_in(appdata: &Path) -> PathBuf {
     appdata.join("wacca-slim").join("save.json")
 }
 
-/// Default save path from `%APPDATA%`, if set.
+/// Default save path: `%APPDATA%` on Windows; elsewhere `$XDG_DATA_HOME`, else `~/.local/share`.
 pub fn default_path() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|a| save_path_in(Path::new(&a)))
+    let var = |name| std::env::var_os(name).filter(|v| !v.is_empty());
+    let base = var("APPDATA")
+        .map(PathBuf::from)
+        .or_else(|| var("XDG_DATA_HOME").map(PathBuf::from))
+        .or_else(|| var("HOME").map(|h| Path::new(&h).join(".local").join("share")))?;
+    Some(save_path_in(&base))
 }
 
 /// `path` with `suffix` appended to the file name (`save.json` → `save.json.bak`).

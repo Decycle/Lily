@@ -179,6 +179,8 @@ fn start_spec(args: &Args, chart: &Path, songs: &[Song]) -> Result<PlaySpec, Arg
     })
 }
 
+// cpal's output stream is not `Send` on macOS; the player is only used on the main (event loop) thread.
+#[allow(clippy::arc_with_non_send_sync)]
 fn run(args: &Args, started: std::time::Instant) -> Result<(), Error> {
     let songs = record::load_songs(&args.data.join("songs.json"))?.unwrap_or_else(|| {
         log::warn!(
