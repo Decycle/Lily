@@ -10,12 +10,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use wacca_audio::{BgmBank, HitSounds, Player, VoiceId};
-use wacca_chart::{Chart, Difficulty};
+use wacca_chart::{Arc as LaneArc, Chart, Difficulty, NoteBody};
 use wacca_game::grade::PlayResult;
 use wacca_game::input::InputFrame;
-use wacca_game::rules::{JudgeClass, JudgeEvent};
+use wacca_game::rules::{JudgeClass, JudgeEvent, Judgement};
 use wacca_render::layout::Rect;
-use wacca_render::{LiveState, SceneOptions, Vertex, build_scene};
+use wacca_render::style::FLASH_SECS;
+use wacca_render::{Flash, JudgeSprite, LiveState, SceneOptions, SpriteSheet, Vertex, build_scene};
+use wacca_video::{Frame, VideoPlayer};
 
 use crate::hitsound::{self, Cue, HoldStarts};
 use crate::hud::Hud;
@@ -48,6 +50,8 @@ pub struct PlaySpec {
     pub level: Option<f32>,
     pub chart_path: PathBuf,
     pub norma: f32,
+    /// Background movie (`.usm`), if the chart has one.
+    pub movie: Option<PathBuf>,
 }
 
 /// Player-chosen options for one play.
@@ -61,6 +65,20 @@ pub struct PlayOptions {
     /// Play the left-right mirrored chart (judging and drawing alike).
     pub mirror: bool,
     pub bonus_effect: bool,
+}
+
+/// What [`PlayState::new`] needs to show the background movie.
+#[derive(Clone, Copy, Debug)]
+pub struct VideoSetup<'a> {
+    pub ffmpeg: &'a std::path::Path,
+    /// Decode size (the playfield's side in pixels).
+    pub size: u32,
+}
+
+/// `<assets>/Movie/<name>.usm` for a catalog movie name (`None`, `""` and `"-"` = no movie).
+pub fn movie_path(assets: &std::path::Path, name: Option<&str>) -> Option<PathBuf> {
+    name.filter(|n| !n.is_empty() && *n != "-")
+        .map(|n| assets.join("Movie").join(format!("{n}.usm")))
 }
 
 pub fn load_chart(path: &PathBuf) -> Result<Chart, PlayError> {
@@ -89,9 +107,14 @@ pub struct PlayState {
     /// Sustain voices of holds being held, by note index.
     hold_voices: HashMap<usize, Vec<VoiceId>>,
     contacts: Contacts,
+    /// Judgements of the last [`FLASH_SECS`] (hit flashes).
+    recent: Vec<JudgeEvent>,
     /// Chart time at which the play is over.
     end: f64,
     pub paused: bool,
+    video: Option<VideoPlayer>,
+    /// Index of the movie frame last handed out by [`PlayState::video_frame`].
+    video_shown: Option<u64>,
 }
 
 impl PlayState {
@@ -103,6 +126,7 @@ impl PlayState {
         player: Arc<Player>,
         bgm: &BgmBank,
         hits: impl FnOnce(u32) -> Option<HitSounds>,
+        video: Option<VideoSetup>,
     ) -> Result<Self, PlayError> {
         let chart = load_chart(&spec.chart_path)?;
         let chart = if opts.mirror {
@@ -120,6 +144,11 @@ impl PlayState {
             opts.mirror
         );
         let hits = hits(player.sample_rate());
+        let video = video.zip(spec.movie.as_deref()).and_then(|(v, path)| {
+            VideoPlayer::open(path, v.ffmpeg, Some(v.size))
+                .map_err(|e| log::warn!("background movie: {e}; playing without it"))
+                .ok()
+        });
         Ok(Self {
             session: Session::new(&chart, opts.bonus_effect),
             autoplay: opts.autoplay.then(|| Autoplay::new(&chart)),
@@ -131,8 +160,11 @@ impl PlayState {
             hits,
             hold_voices: HashMap::new(),
             contacts: Contacts::default(),
+            recent: Vec::new(),
             end,
             paused: false,
+            video,
+            video_shown: None,
         })
     }
 
@@ -147,6 +179,21 @@ impl PlayState {
 
     pub fn now(&self) -> f64 {
         chart_now(&self.chart, self.player.position(), self.opts.offset)
+    }
+
+    /// Movie time: chart time minus `#MOVIEOFFSET`.
+    // UNVERIFIED: same relation as `#OFFSET` (01-chart-format §5.2); the user judgement offset is not applied.
+    fn movie_time(&self) -> f64 {
+        self.chart.chart_time(self.player.position()) - self.chart.header.movie_offset
+    }
+
+    /// The background-movie frame to show now (`None` = no movie on screen) and whether it is new since the
+    /// last call (only new frames need uploading).
+    pub fn video_frame(&mut self) -> Option<(&Frame, bool)> {
+        let t = self.movie_time();
+        let frame = self.video.as_mut().and_then(|v| v.frame_at(t));
+        let previous = std::mem::replace(&mut self.video_shown, frame.map(|f| f.index));
+        frame.map(|f| (f, previous != Some(f.index)))
     }
 
     pub fn toggle_pause(&mut self) {
@@ -196,6 +243,9 @@ impl PlayState {
             self.hold_voices.insert(note, voices);
         }
         let events = self.session.feed(frame);
+        self.recent
+            .retain(|e| frame.time - e.time < f64::from(FLASH_SECS));
+        self.recent.extend(events.iter().copied());
         self.sound(&events);
     }
 
@@ -260,31 +310,49 @@ impl PlayState {
     }
 
     fn stop_all(&mut self) {
+        self.video = None;
+        self.video_shown = None;
         let voices: Vec<_> = self.hold_voices.drain().flat_map(|(_, v)| v).collect();
         self.stop_voices(voices);
         self.player.pause();
     }
 
-    pub fn scene(&self) -> Vec<Vertex> {
+    pub fn scene(&self, sprites: &SpriteSheet) -> Vec<Vertex> {
         let touched = if self.autoplay.is_some() {
             [0; 4]
         } else {
             self.contacts.sensors().rings
         };
+        let now = self.now();
+        let flashes: Vec<Flash> = self
+            .recent
+            .iter()
+            .map(|e| flash(&self.chart, e, now))
+            .collect();
+        let judgement = self
+            .session
+            .last_event()
+            .map(|e| (judge_sprite(e.judgement), (now - e.time) as f32));
         build_scene(
             &self.chart,
-            self.now(),
+            now,
             &SceneOptions {
                 note_speed: self.opts.note_speed,
+                movie: self.video_shown.is_some(),
             },
             &LiveState {
                 judged: self.session.judged(),
                 touched,
+                flashes: &flashes,
+                judgement,
+                combo: self.session.combo(),
             },
+            sprites,
         )
     }
 
-    pub fn hud(&self) -> Hud {
+    /// `judge_art`: the playfield draws the judgement word art (no text popup).
+    pub fn hud(&self, judge_art: bool) -> Hud {
         Hud {
             score: self.session.score(),
             combo: self.session.combo(),
@@ -293,6 +361,98 @@ impl PlayState {
             note_speed: self.opts.note_speed,
             paused: self.paused,
             autoplay: self.autoplay.is_some(),
+            judge_art,
         }
+    }
+}
+
+pub fn judge_sprite(j: Judgement) -> JudgeSprite {
+    match j {
+        Judgement::Marvelous => JudgeSprite::Marvelous,
+        Judgement::Great => JudgeSprite::Great,
+        Judgement::Good => JudgeSprite::Good,
+        Judgement::Miss => JudgeSprite::Miss,
+    }
+}
+
+/// Hit flash for `e` at chart time `now` over the judged arc (a hold release flashes at the
+/// hold's end node).
+pub fn flash(chart: &Chart, e: &JudgeEvent, now: f64) -> Flash {
+    let note = chart.notes.get(e.note);
+    let arc = match (e.class, note.map(|n| &n.body)) {
+        (JudgeClass::HoldEnd, Some(NoteBody::Hold { nodes })) => nodes.last().map(|n| n.arc),
+        _ => note.map(|n| n.arc),
+    }
+    .unwrap_or(LaneArc { lane: 0, width: 0 });
+    Flash {
+        lane: arc.lane,
+        width: arc.width,
+        kind: judge_sprite(e.judgement),
+        age: (now - e.time) as f32,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+    use wacca_chart::{BeatPos, Bonus, ChartHeader, HoldNode, Note};
+
+    #[test]
+    fn flash_covers_the_judged_arc() {
+        let node = |lane| HoldNode {
+            pos: BeatPos::default(),
+            time: 0.0,
+            arc: LaneArc { lane, width: 4 },
+            lane_unwrapped: f32::from(lane),
+        };
+        let chart = Chart {
+            header: ChartHeader::default(),
+            notes: vec![Note {
+                pos: BeatPos::default(),
+                time: 1.0,
+                arc: LaneArc { lane: 10, width: 4 },
+                bonus: Bonus::None,
+                body: NoteBody::Hold {
+                    nodes: vec![node(10), node(20)],
+                },
+                file_index: 0,
+            }],
+            masks: vec![],
+            tempo: vec![],
+            scroll: vec![],
+            reverses: vec![],
+            tutorial_tags: vec![],
+            end: BeatPos::default(),
+            end_time: 5.0,
+        };
+        let e = |class| JudgeEvent {
+            note: 0,
+            class,
+            bonus: Bonus::None,
+            judgement: Judgement::Great,
+            offset: None,
+            time: 1.0,
+        };
+        let f = flash(&chart, &e(JudgeClass::Hold), 1.1);
+        assert_eq!((f.lane, f.width, f.kind), (10, 4, JudgeSprite::Great));
+        assert!((f.age - 0.1).abs() < 1e-6);
+        assert_eq!(flash(&chart, &e(JudgeClass::HoldEnd), 1.0).lane, 20);
+        // Unknown note index: an empty flash, not a panic.
+        let mut bad = e(JudgeClass::Touch);
+        bad.note = 7;
+        assert_eq!(flash(&chart, &bad, 1.0).width, 0);
+    }
+
+    #[test]
+    fn movie_paths() {
+        let a = Path::new("assets");
+        assert_eq!(
+            movie_path(a, Some("mv_S02_204")),
+            Some(a.join("Movie").join("mv_S02_204.usm"))
+        );
+        assert_eq!(movie_path(a, Some("-")), None);
+        assert_eq!(movie_path(a, Some("")), None);
+        assert_eq!(movie_path(a, None), None);
     }
 }

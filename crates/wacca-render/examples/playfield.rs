@@ -1,7 +1,11 @@
 //! Minimal playfield demo: a chart scrolling in real time (no audio).
 //!
-//! `cargo run -p wacca-render --example playfield -- [path/to/chart.mer]`; without a path a
-//! synthetic chart is shown. Keys: Up/Down note speed, Space pause, R restart. `RUST_LOG=info` for diagnostics.
+//! `cargo run -p wacca-render --example playfield -- [path/to/chart.mer | -] [ui dir]`; without a
+//! path a synthetic chart is shown. Sprites are read from the ui dir (default `data/ui`).
+//! Keys: Up/Down note speed, Space pause, R restart. `RUST_LOG=info` for diagnostics.
+//!
+//! `WACCA_SHOT=<out.png>@<seconds>` renders that one moment (1024x1024, with a sample judgement,
+//! combo and hit flashes) to a PNG without opening a window.
 
 use std::error::Error;
 use std::sync::Arc as Shared;
@@ -11,7 +15,7 @@ use wacca_chart::{
     Arc, BeatPos, Bonus, Chart, ChartHeader, HoldNode, MaskDir, MaskEvent, Note, NoteBody,
     ScrollSegment, SlideDir, SnapDir,
 };
-use wacca_render::{LiveState, Renderer, SceneOptions, build_scene};
+use wacca_render::{Flash, JudgeSprite, LiveState, Renderer, SceneOptions, build_scene};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -23,16 +27,30 @@ const LEAD_IN: f64 = -1.0;
 
 fn main() -> Result<(), Box<dyn Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
-    let chart = match std::env::args_os().nth(1) {
+    let chart = match std::env::args_os().nth(1).filter(|p| p != "-") {
         Some(path) => wacca_chart::parse(&std::fs::read(path)?)?,
         None => demo_chart(),
     };
+    let ui = std::env::args_os()
+        .nth(2)
+        .map_or_else(|| "data/ui".into(), std::path::PathBuf::from);
     log::info!("{} notes, {:.1} s", chart.notes.len(), chart.end_time);
+    if let Some(shot) = std::env::var_os("WACCA_SHOT") {
+        let shot = shot.to_string_lossy().into_owned();
+        let (out, at) = shot
+            .rsplit_once('@')
+            .ok_or("WACCA_SHOT=<out.png>@<seconds>")?;
+        return snapshot(&chart, &ui, at.parse()?, std::path::Path::new(out));
+    }
     let mut app = App {
         gfx: None,
+        ui,
         chart,
         clock: Clock::start(LEAD_IN),
-        opts: SceneOptions { note_speed: 2.0 },
+        opts: SceneOptions {
+            note_speed: 2.0,
+            ..Default::default()
+        },
     };
     EventLoop::new()?.run_app(&mut app)?;
     Ok(())
@@ -48,7 +66,7 @@ struct Gfx {
 }
 
 impl Gfx {
-    fn new(window: Shared<Window>) -> Result<Self, Box<dyn Error>> {
+    fn new(window: Shared<Window>, ui: &std::path::Path) -> Result<Self, Box<dyn Error>> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let surface = instance.create_surface(window.clone())?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -63,7 +81,8 @@ impl Gfx {
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .ok_or("surface not supported by adapter")?;
         surface.configure(&device, &config);
-        let renderer = Renderer::new(&device, &queue, config.format);
+        let mut renderer = Renderer::new(&device, &queue, config.format);
+        renderer.load_sprites(ui);
         Ok(Self {
             window,
             surface,
@@ -137,6 +156,7 @@ impl Clock {
 
 struct App {
     gfx: Option<Gfx>,
+    ui: std::path::PathBuf,
     chart: Chart,
     clock: Clock,
     opts: SceneOptions,
@@ -170,7 +190,7 @@ impl ApplicationHandler for App {
         let gfx = event_loop
             .create_window(attrs)
             .map_err(Box::from)
-            .and_then(|w| Gfx::new(Shared::new(w)));
+            .and_then(|w| Gfx::new(Shared::new(w), &self.ui));
         match gfx {
             Ok(gfx) => self.gfx = Some(gfx),
             Err(e) => {
@@ -201,13 +221,14 @@ impl ApplicationHandler for App {
                 if self.clock.now() > self.chart.end_time + 1.0 {
                     self.clock = Clock::start(LEAD_IN);
                 }
-                let scene = build_scene(
-                    &self.chart,
-                    self.clock.now(),
-                    &self.opts,
-                    &LiveState::default(),
-                );
                 if let Some(gfx) = &mut self.gfx {
+                    let scene = build_scene(
+                        &self.chart,
+                        self.clock.now(),
+                        &self.opts,
+                        &LiveState::default(),
+                        gfx.renderer.sprites(),
+                    );
                     gfx.draw(&scene);
                 }
             }
@@ -220,6 +241,90 @@ impl ApplicationHandler for App {
             gfx.window.request_redraw();
         }
     }
+}
+
+/// Render the chart at `at` seconds offscreen and save it as a PNG.
+fn snapshot(
+    chart: &Chart,
+    ui: &std::path::Path,
+    at: f64,
+    out: &std::path::Path,
+) -> Result<(), Box<dyn Error>> {
+    // Rows must be 256-byte aligned for the readback.
+    const SIDE: u32 = 1024;
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default()))?;
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
+    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+    let target = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("snapshot"),
+        size: wgpu::Extent3d {
+            width: SIDE,
+            height: SIDE,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let mut renderer = Renderer::new(&device, &queue, format);
+    renderer.load_sprites(ui);
+    let flashes: Vec<Flash> = [
+        (0u8, JudgeSprite::Marvelous),
+        (20, JudgeSprite::Great),
+        (40, JudgeSprite::Good),
+    ]
+    .into_iter()
+    .map(|(lane, kind)| Flash {
+        lane,
+        width: 6,
+        kind,
+        age: 0.05,
+    })
+    .collect();
+    let live = LiveState {
+        flashes: &flashes,
+        judgement: Some((JudgeSprite::Marvelous, 0.1)),
+        combo: 123,
+        ..LiveState::default()
+    };
+    let opts = SceneOptions {
+        note_speed: 2.0,
+        movie: false,
+    };
+    let scene = build_scene(chart, at, &opts, &live, renderer.sprites());
+    let mut encoder = device.create_command_encoder(&Default::default());
+    let view = target.create_view(&Default::default());
+    renderer.render(&mut encoder, &view, [SIDE, SIDE], &scene);
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("snapshot readback"),
+        size: u64::from(SIDE * SIDE * 4),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    encoder.copy_texture_to_buffer(
+        target.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(SIDE * 4),
+                rows_per_image: Some(SIDE),
+            },
+        },
+        target.size(),
+    );
+    queue.submit([encoder.finish()]);
+    buffer.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+    device.poll(wgpu::PollType::wait_indefinitely())?;
+    let pixels = buffer.slice(..).get_mapped_range().to_vec();
+    image::save_buffer(out, &pixels, SIDE, SIDE, image::ExtendedColorType::Rgba8)?;
+    log::info!("wrote {}", out.display());
+    Ok(())
 }
 
 /// ~30 s of every note kind, a wrapping hold, mask sweeps, hi-speed, a stop and a negative hi-speed.

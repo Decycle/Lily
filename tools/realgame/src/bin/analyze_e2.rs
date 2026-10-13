@@ -23,6 +23,7 @@ use wacca_realgame::frame::Rgb;
 use wacca_realgame::playfield::{self, Approach, Candidate, Geometry};
 use wacca_realgame::record::{video, wav};
 use wacca_realgame::{raster, reference, sync};
+use wacca_render::sprites::SpriteSheet;
 use wacca_render::{LiveState, SceneOptions, build_scene, layout};
 
 #[derive(Debug, thiserror::Error)]
@@ -40,6 +41,8 @@ enum Error {
     Data(String),
     #[error(transparent)]
     Video(#[from] video::VideoError),
+    #[error(transparent)]
+    Find(#[from] wacca_video::ffmpeg::FindError),
 }
 
 fn io(path: &Path) -> impl FnOnce(std::io::Error) -> Error + '_ {
@@ -266,8 +269,12 @@ fn render_ours(
     let scene = build_scene(
         chart,
         t,
-        &SceneOptions { note_speed: speed },
+        &SceneOptions {
+            note_speed: speed,
+            movie: false,
+        },
         &LiveState::default(),
+        &SpriteSheet::default(),
     );
     let mut img = Rgb {
         width: size.0,

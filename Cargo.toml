@@ -13,6 +13,7 @@ wacca-game = { path = "crates/wacca-game" }
 wacca-ue4 = { path = "crates/wacca-ue4" }
 wacca-audio = { path = "crates/wacca-audio" }
 wacca-render = { path = "crates/wacca-render" }
+wacca-video = { path = "crates/wacca-video" }
 log = "0.4"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }

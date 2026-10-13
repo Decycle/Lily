@@ -64,6 +64,8 @@ pub struct Hud {
     pub note_speed: f64,
     pub paused: bool,
     pub autoplay: bool,
+    /// The playfield draws the judgement word art; skip the text popup.
+    pub judge_art: bool,
 }
 
 /// HUD for a `window` with the square `playfield` inside it: title and score in the top-left
@@ -89,7 +91,7 @@ pub fn view(h: &Hud, title: &str, window: Rect, playfield: Rect) -> View {
             None,
         );
     }
-    if let Some((label, color)) = popup(h.last, h.now) {
+    if let Some((label, color)) = popup(h.last, h.now).filter(|_| !h.judge_art) {
         v.text_in(
             label,
             [cx, mid + 1.0 * u],
@@ -164,6 +166,7 @@ mod tests {
             note_speed: 4.0,
             paused: false,
             autoplay: true,
+            judge_art: false,
         };
         let v = view(&h, "Song", r, r);
         assert_eq!(
@@ -181,5 +184,15 @@ mod tests {
             r,
         );
         assert_eq!(idle.texts(), ["Song", "123,456", "x4.0  AUTO"]);
+        let art = view(
+            &Hud {
+                judge_art: true,
+                ..h
+            },
+            "Song",
+            r,
+            r,
+        );
+        assert_eq!(art.texts(), ["Song", "123,456", "12", "x4.0  AUTO"]);
     }
 }

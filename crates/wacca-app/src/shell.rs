@@ -3,7 +3,7 @@
 //! `hud`); this file only wires them to the window, audio and save file.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -12,7 +12,7 @@ use wacca_game::grade::PlayResult;
 use wacca_game::save::{self, SaveData};
 use wacca_render::layout::{Rect, letterbox, playfield_viewport};
 use wacca_render::text::{Fonts, TextRenderer};
-use wacca_render::{Renderer, Vertex};
+use wacca_render::{JudgeSprite, Renderer, Sprite, SpriteSheet, Vertex};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{
@@ -24,7 +24,7 @@ use winit::window::{Fullscreen, Window, WindowId};
 
 use crate::gesture::{Gesture, Pointer, Scroller};
 use crate::menu::Menu;
-use crate::play::{PlayOptions, PlaySpec, PlayState, load_chart};
+use crate::play::{PlayOptions, PlaySpec, PlayState, VideoSetup, load_chart, movie_path};
 use crate::results::Summary;
 use crate::screen::{self, Event, Next, Screen};
 use crate::ui::{Action, Item, View, WHITE};
@@ -61,6 +61,8 @@ pub struct Setup {
     /// Play this right away (`--chart`).
     pub start: Option<PlaySpec>,
     pub windowed: bool,
+    /// External decoder for background movies (`None` = no movies).
+    pub ffmpeg: Option<PathBuf>,
 }
 
 pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
@@ -97,7 +99,8 @@ struct Gfx {
 }
 
 impl Gfx {
-    fn new(window: Arc<Window>, fonts: Fonts) -> Result<Self, ShellError> {
+    /// `ui_dir`: exported UI/Vfx textures (`data/ui`) for the playfield sprites.
+    fn new(window: Arc<Window>, fonts: Fonts, ui_dir: &Path) -> Result<Self, ShellError> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let surface = instance.create_surface(window.clone()).map_err(gfx_err)?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -115,7 +118,8 @@ impl Gfx {
             .ok_or_else(|| gfx_err("surface not supported by adapter"))?;
         config.present_mode = wgpu::PresentMode::AutoVsync;
         surface.configure(&device, &config);
-        let renderer = Renderer::new(&device, &queue, config.format);
+        let mut renderer = Renderer::new(&device, &queue, config.format);
+        renderer.load_sprites(ui_dir);
         let text = TextRenderer::new(&device, &queue, config.format, fonts);
         Ok(Self {
             window,
@@ -367,8 +371,13 @@ impl App {
                     w,
                     h,
                 };
+                let judge_art = self.gfx.as_ref().is_some_and(|g| {
+                    let sprites = g.renderer.sprites();
+                    sprites.get(Sprite::Judge(JudgeSprite::Marvelous)).is_some()
+                });
                 self.play.as_ref().map_or_else(View::default, |p| {
-                    hud::view(&p.hud(), &p.spec.title, window, playfield_viewport(w, h))
+                    let hud = p.hud(judge_art);
+                    hud::view(&hud, &p.spec.title, window, playfield_viewport(w, h))
                 })
             }
         }
@@ -406,6 +415,7 @@ impl App {
             level: Some(c.level),
             chart_path: self.s.assets.join(&c.chart_path),
             norma: c.norma,
+            movie: movie_path(&self.s.assets, c.movie.as_deref()),
         })
     }
 
@@ -422,8 +432,18 @@ impl App {
         self.last_spec = Some(spec.clone());
         let (cache, se) = (&mut self.hits, &mut self.s.se);
         let hits = |rate| hit_sounds(cache, se, rate);
+        let [w, h] = self.gfx.as_ref().map_or([1080.0; 2], Gfx::size);
+        let video = self
+            .s
+            .ffmpeg
+            .as_deref()
+            .filter(|_| m.settings.background_video)
+            .map(|ffmpeg| VideoSetup {
+                ffmpeg,
+                size: w.min(h).round() as u32,
+            });
         let player = Arc::clone(&self.s.player);
-        match PlayState::new(spec, opts, player, &self.s.bgm, hits).and_then(|mut p| {
+        match PlayState::new(spec, opts, player, &self.s.bgm, hits, video).and_then(|mut p| {
             p.start()?;
             Ok(p)
         }) {
@@ -599,12 +619,28 @@ impl App {
                 let over = self.play.as_mut().and_then(PlayState::frame);
                 if let Some(r) = over {
                     self.end_play(event_loop, r, true);
-                } else if let Some(p) = &self.play {
-                    scene = p.scene();
+                } else if let Some(p) = &mut self.play {
+                    let video = p.video_frame();
+                    if let Some(gfx) = &mut self.gfx {
+                        gfx.renderer.show_video(video.is_some());
+                        if let Some((f, true)) = video
+                            && let Some(planes) = f.planes()
+                        {
+                            gfx.renderer.set_video_frame([f.width, f.height], planes);
+                        }
+                    }
+                    let empty = SpriteSheet::default();
+                    let sprites = self.gfx.as_ref().map_or(&empty, |g| g.renderer.sprites());
+                    scene = p.scene(sprites);
                 }
             }
             Screen::Results => {}
             _ => self.preview.update(&self.s),
+        }
+        if self.screen != Screen::Play
+            && let Some(gfx) = &mut self.gfx
+        {
+            gfx.renderer.show_video(false);
         }
         let view = self.view();
         let mut jackets = Jackets {
@@ -628,7 +664,8 @@ impl App {
             .fonts
             .take()
             .ok_or_else(|| gfx_err("window created twice"))?;
-        self.gfx = Some(Gfx::new(Arc::new(window), fonts)?);
+        let ui_dir = self.s.data.join("ui");
+        self.gfx = Some(Gfx::new(Arc::new(window), fonts, &ui_dir)?);
         if let Some(spec) = self.s.start.take() {
             self.start_play(spec);
         }

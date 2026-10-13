@@ -10,6 +10,7 @@ wacca-chart.workspace = true
 wacca-game.workspace = true
 wacca-audio.workspace = true
 wacca-render.workspace = true
+wacca-video.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true

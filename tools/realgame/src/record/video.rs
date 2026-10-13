@@ -15,9 +15,8 @@
 
 use crate::game::Rect;
 use serde::Serialize;
-use std::ffi::OsStr;
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -25,12 +24,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum VideoError {
-    #[error(
-        "ffmpeg not found (tried --ffmpeg, PATH, %LOCALAPPDATA%\\Microsoft\\WinGet); install it with `winget install Gyan.FFmpeg` or pass --ffmpeg <path>"
-    )]
-    NotFound,
-    #[error("--ffmpeg {} does not exist", .0.display())]
-    BadPath(PathBuf),
+    #[error(transparent)]
+    Find(#[from] wacca_video::ffmpeg::FindError),
     #[error("starting ffmpeg: {0}")]
     Spawn(std::io::Error),
     #[error("ffmpeg exited before the first frame; last output:\n{0}")]
@@ -44,60 +39,8 @@ pub enum Grabber {
     Gdigrab,
 }
 
-const FFMPEG_EXE: &str = "ffmpeg.exe";
-
-/// `explicit`, else `ffmpeg.exe` on `path_var`, else winget's `Links\ffmpeg.exe`, else the newest
-/// `Packages\Gyan.FFmpeg*\*\bin\ffmpeg.exe` under `local_app_data`.
-pub fn find_ffmpeg(
-    explicit: Option<&Path>,
-    path_var: Option<&OsStr>,
-    local_app_data: Option<&Path>,
-) -> Result<PathBuf, VideoError> {
-    if let Some(p) = explicit {
-        return if p.is_file() {
-            Ok(p.to_path_buf())
-        } else {
-            Err(VideoError::BadPath(p.to_path_buf()))
-        };
-    }
-    let on_path = path_var
-        .into_iter()
-        .flat_map(std::env::split_paths)
-        .map(|d| d.join(FFMPEG_EXE));
-    let winget = local_app_data.map(|l| l.join(r"Microsoft\WinGet"));
-    let link = winget.iter().map(|w| w.join("Links").join(FFMPEG_EXE));
-    let packages = winget
-        .iter()
-        .flat_map(|w| winget_packages(&w.join("Packages")));
-    on_path
-        .chain(link)
-        .chain(packages)
-        .find(|p| p.is_file())
-        .ok_or(VideoError::NotFound)
-}
-
-/// `Gyan.FFmpeg*/<build>/bin/ffmpeg.exe`, newest name first.
-fn winget_packages(dir: &Path) -> Vec<PathBuf> {
-    let mut found: Vec<PathBuf> = subdirs(dir)
-        .filter(|p| {
-            p.file_name()
-                .is_some_and(|n| n.to_string_lossy().starts_with("Gyan.FFmpeg"))
-        })
-        .flat_map(|pkg| subdirs(&pkg).map(|b| b.join("bin").join(FFMPEG_EXE)))
-        .collect();
-    found.sort();
-    found.reverse();
-    found
-}
-
-fn subdirs(dir: &Path) -> impl Iterator<Item = PathBuf> + use<> {
-    std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.is_dir())
-}
+/// ffmpeg discovery is shared with the game (`wacca_video::ffmpeg`).
+pub use wacca_video::ffmpeg::find_ffmpeg;
 
 /// Makes Desktop Duplication work on hybrid-graphics laptops (see module docs); harmless elsewhere.
 const GPU_ENV: (&str, &str) = ("SHIM_MCCOMPAT", "0x800000000");
@@ -561,52 +504,5 @@ mod tests {
         assert_eq!(s.input_start_unix_s, Some(10.5));
         assert_eq!(s.first_progress, Some((t1, 3)));
         assert_eq!(s.last_frame, 6);
-    }
-
-    fn scratch(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("wacca-realgame-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        d
-    }
-
-    fn touch(p: &Path) {
-        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-        std::fs::write(p, b"").unwrap();
-    }
-
-    #[test]
-    fn discovery_order() {
-        let root = scratch("ffmpeg-discovery");
-        let lad = root.join("lad");
-        let pkgs = lad.join(r"Microsoft\WinGet\Packages");
-        let old = pkgs.join(r"Gyan.FFmpeg_x\ffmpeg-8.0-full_build\bin\ffmpeg.exe");
-        let new = pkgs.join(r"Gyan.FFmpeg_x\ffmpeg-9.0.2-full_build\bin\ffmpeg.exe");
-        touch(&old);
-        touch(&new);
-        touch(&pkgs.join(r"Other.Tool\x\bin\ffmpeg.exe"));
-        assert_eq!(find_ffmpeg(None, None, Some(&lad)).unwrap(), new);
-
-        let path_dir = root.join("pathdir");
-        touch(&path_dir.join(FFMPEG_EXE));
-        let path_var = std::env::join_paths([root.join("empty"), path_dir.clone()]).unwrap();
-        assert_eq!(
-            find_ffmpeg(None, Some(&path_var), Some(&lad)).unwrap(),
-            path_dir.join(FFMPEG_EXE)
-        );
-
-        let explicit = root.join("custom.exe");
-        assert!(matches!(
-            find_ffmpeg(Some(&explicit), Some(&path_var), Some(&lad)),
-            Err(VideoError::BadPath(_))
-        ));
-        touch(&explicit);
-        assert_eq!(find_ffmpeg(Some(&explicit), None, None).unwrap(), explicit);
-
-        assert!(matches!(
-            find_ffmpeg(None, None, Some(&root.join("nothing"))),
-            Err(VideoError::NotFound)
-        ));
-        let _ = std::fs::remove_dir_all(&root);
     }
 }

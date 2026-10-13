@@ -126,6 +126,10 @@ more live run.
 - Hold/chain/slide rules were all Marvelous with autoplay-shaped input (34 ms contacts, ring 0 taps, ring 3 hold
   finger) — consistent with our rules but not a test of their edges.
 
+- After merging main (textured notes, sprites), `raster.rs` still draws every vertex as a flat colour with an empty
+  `SpriteSheet` (UVs and additive/mask flags ignored). The numbers above were measured on the pre-merge flat
+  renderer; the side-by-sides should move to a headless wgpu render of the real renderer.
+
 ## 8. Reproduce
 
 ```

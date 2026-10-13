@@ -155,7 +155,8 @@ mod tests {
         let mut m = menu();
         m.act(Screen::Options, Action::Right);
         assert_eq!(m.settings.note_speed, 4.5);
-        m.act(Screen::Options, Action::Up); // wraps to autoplay
+        m.act(Screen::Options, Action::Up); // wraps to background video
+        m.act(Screen::Options, Action::Up);
         m.act(Screen::Options, Action::Left);
         assert!(m.autoplay);
         assert_eq!(

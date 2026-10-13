@@ -100,7 +100,11 @@ mod tests {
     use super::*;
 
     fn v(x: f32, y: f32, color: [f32; 4]) -> Vertex {
-        Vertex { pos: [x, y], color }
+        Vertex {
+            pos: [x, y],
+            color,
+            ..Vertex::default()
+        }
     }
 
     #[test]
