@@ -363,11 +363,10 @@ Shown after each play (including give-up):
 - **RETRY tab**: the real results screen has a FAVORITE tab (pale-blue rim wedge, white disc icon,
   small turned label) right of GO. We keep RETRY, drawn as that tab in its place.
 
-Remaining visible menu differences (vs E3 frames): no CREDIT/COIN header (arcade only); the guest
-icon ring is flat pink instead of the gradient; options screen is our own layout (no user plate,
-no character art); results background lacks the teal ring art; countdown digits use our numeral face
-instead of the game's outlined font; title glitch is an approximation (RGB-split copies and slipping
-strips on a pseudo-random schedule, not the `uT_CM_Glitch_*` displacement material).
+Remaining visible menu differences: see doc 14 (menu parity audit). Fixed there: the guest icon
+ring (real icon texture), options screen (real final-check layout), results ring art (bands),
+countdown font (SHINBI); still open: title key-art materials, mode art, per-genre backdrops; no
+CREDIT/COIN header (arcade only).
 
 ---
 
