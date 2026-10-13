@@ -237,18 +237,21 @@ fn run(args: &Args, started: std::time::Instant) -> Result<(), Error> {
         Some(p) => fonts.with_numerals(p, NUMERAL_FACE),
         None => fonts,
     };
-    // `Kakugo_kana` (player name): `TT_UDKakugoC60-B`.
-    let kakugo = [
-        args.data.join("fonts").join("TT_UDKakugoC60-B.ttf"),
-        args.assets
-            .join("UI")
-            .join("Font")
-            .join("TT_UDKakugoC60-B.ufont"),
-    ];
-    let fonts = match kakugo.iter().find(|p| p.exists()) {
-        Some(p) => fonts.with_face(Face::Kakugo, p, 0),
-        None => fonts,
-    };
+    // `Kakugo_kana` (player name) and `SHINBI_Font` (menu countdown).
+    let mut fonts = fonts;
+    for (face, file) in [
+        (Face::Kakugo, "TT_UDKakugoC60-B.ttf"),
+        (Face::Shinbi, "SHINBI.otf"),
+    ] {
+        let ufont = Path::new(file).with_extension("ufont");
+        let paths = [
+            args.data.join("fonts").join(file),
+            args.assets.join("UI").join("Font").join(ufont),
+        ];
+        if let Some(p) = paths.iter().find(|p| p.exists()) {
+            fonts = fonts.with_face(face, p, 0);
+        }
+    }
     shell::run(
         Setup {
             assets: args.assets.clone(),

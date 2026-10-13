@@ -321,6 +321,22 @@ impl Painter {
         self.layer(at).numerals(s, p, px * m.scale, color, align);
     }
 
+    /// One line in `face` at UMG font `size`, vertically centred on `at[1]`.
+    pub fn text_face(
+        &mut self,
+        s: impl Into<String>,
+        at: [f32; 2],
+        size: f32,
+        color: Rgba,
+        (align, face): (Align, Face),
+    ) {
+        let px = font_px(size);
+        let m = self.c.place(at);
+        let p = m.pt([at[0], at[1] - px * 0.62]);
+        self.layer(at)
+            .text_face(s, p, px * m.scale, color, align, face);
+    }
+
     /// One line in the `Kakugo_kana` face at UMG font `size`, vertically centred on `at[1]`,
     /// left-aligned, with `spacing` design units added after each character (UMG letter
     /// spacing). Advances are estimated at 0.5 em (the condensed C60 Latin is about that).

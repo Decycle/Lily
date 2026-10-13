@@ -21,7 +21,7 @@ const SIDE_DISC: f32 = 500.0;
 const DISC_SIZE: f32 = 480.0;
 const LOCKED_TEXT: u32 = 0x8a0f45;
 /// The selected mode's name (UMG linear (0.73, 0.0, 0.14) ≈ sRGB).
-const MODE_TEXT: u32 = 0xc8106a;
+const MODE_TEXT: u32 = 0xa5127a;
 /// `t_mode_manual00` (linear (0.29, 0.24, 0.52)).
 const MANUAL_TEXT: u32 = 0x9287bf;
 /// `ColorTable` `DecideBtnColor`.
@@ -35,7 +35,7 @@ pub fn view(c: Canvas, t: f32, who: &chrome::Player) -> View {
     disc_image(&mut p, "uT_RGclear03", DIAL, 620.0);
     discs(&mut p);
     dial(&mut p, t);
-    pills(&mut p);
+    pills(&mut p, t);
     chrome::user_plate(&mut p, who);
     bottom(&mut p);
     p.button([0.0, 283.0], [400.0, 170.0], Action::Confirm);
@@ -73,7 +73,7 @@ fn discs(p: &mut Painter) {
     let size = [DISC_SIZE, DISC_SIZE];
     p.tex("uT_STmode002", [-SIDE_DISC, 0.0], size, WHITE);
     p.tex("uT_STmode002", [SIDE_DISC, 0.0], size, WHITE);
-    p.tex("uT_STmode003", [0.0, SIDE_DISC], size, WHITE);
+    p.tex("uT_STmode001", [0.0, SIDE_DISC], size, WHITE);
 }
 
 /// Dark band, teal ring, the glowing dial and its texts; the down chevron bobs (`uM_CM_move01`).
@@ -115,14 +115,30 @@ fn dial(p: &mut Painter, t: f32) {
     p.line([12.0, y - 6.0], [0.0, y + 4.0], 3.0, PINK);
 }
 
-/// Mode name plates: the selected one framed in pink, the locked ones dark with a lock.
-fn pills(p: &mut Painter) {
-    p.tex("uT_STmode_obj03", [0.0, 300.0], [470.0, 235.0], WHITE);
-    p.tex("uT_STmode_obj02", [0.0, 300.0], [455.0, 228.0], WHITE);
+/// Mode name plates: the selected one in its frame with the pulsing `uM_CM_active01` glow
+/// (emissive `(1 + sin(2π · 2.2 · t)) · color1` over the frame), the locked ones dark with a
+/// lock. Pill fill and text colours measured on the E3 frame.
+// UNVERIFIED: glow colour / strength from the frame (magenta at about 55 %); the pulse rate is
+// the material's default `speed` 2.2.
+fn pills(p: &mut Painter, t: f32) {
+    p.tex("uT_STmode_obj03", [0.0, 280.0], [470.0, 235.0], WHITE);
+    let pulse = 1.0 + 0.35 * (t * 2.2 * std::f32::consts::TAU).sin();
+    p.tex(
+        "uT_STmode_obj04",
+        [0.0, 280.0],
+        [650.0, 395.0],
+        hex(0xfe07fd, 0.55 * pulse),
+    );
+    p.tex(
+        "uT_STmode_obj02",
+        [0.0, 280.0],
+        [455.0, 228.0],
+        hex(0xe7e7e7, 1.0),
+    );
     p.text(
         "Singleplayer",
         [0.0, 283.0],
-        26.0,
+        27.0,
         hex(MODE_TEXT, 1.0),
         Align::Center,
     );
@@ -145,13 +161,13 @@ fn bottom(p: &mut Painter) {
         );
     }
     chrome::icon(p, Icon::Go, [-20.0, 487.0], 40.0, 0.0);
-    p.text("GO", [22.0, 487.0], 22.0, WHITE, Align::Center);
+    p.text("GO", [22.0, 487.0], 27.0, WHITE, Align::Center);
     for (x, y, icon, deg) in [
         (-223.0, 438.0, Icon::Left, 45.0),
         (222.0, 437.0, Icon::Right, -45.0),
     ] {
-        p.tex("uT_CMen64_00", [x, y], [52.0, 52.0], WHITE);
-        chrome::icon(p, icon, [x, y], 36.0, deg);
+        p.tex("uT_CMen64_00", [x, y], [40.0, 40.0], WHITE);
+        chrome::icon(p, icon, [x, y], 28.0, deg);
     }
 }
 

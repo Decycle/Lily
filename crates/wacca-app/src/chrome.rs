@@ -4,7 +4,7 @@
 //! on the real frames (`runs/e2/*/nav-*.png`, 0.625 px per unit, centre (337.5, 563)).
 
 use wacca_render::style::Rgba;
-use wacca_render::text::Align;
+use wacca_render::text::{Align, Face};
 
 use crate::canvas::{MID, Painter, hex};
 use crate::ui::Action;
@@ -154,14 +154,19 @@ pub fn user_plate(p: &mut Painter, who: &Player) {
     );
 }
 
-/// The arcade's menu countdown: two pink digits above GO (`LimitationTimeTable`; E3 frames,
-/// centre (0, 450)). Only drawn with the `menu_timers` setting.
+/// The arcade's menu countdown (`BP_Time02`): two pink `SHINBI` digits, UMG size 25 with a
+/// 1-unit violet outline, above GO (`LimitationTimeTable`; E3 frames, centre (0, 450)). Only
+/// drawn with the `menu_timers` setting.
 pub fn countdown(p: &mut Painter, secs: u32) {
     let text = format!("{:02}", secs.min(99));
-    let (at, px) = ([0.0, 449.0], 34.0);
-    let rim = hex(0xffffff, 0.8);
-    p.numerals(text.clone(), [at[0], at[1] + 1.5], px, rim, Align::Center);
-    p.numerals(text, at, px, hex(0xff14b4, 1.0), Align::Center);
+    let (at, size) = ([0.0, 449.0], 25.0);
+    let style = (Align::Center, Face::Shinbi);
+    // Outline (linear (0.227, 0, 0.352)) as offset copies.
+    let rim = hex(0x8300a0, 1.0);
+    for (dx, dy) in [(-1.5, 0.0), (1.5, 0.0), (0.0, -1.5), (0.0, 1.5)] {
+        p.text_face(text.clone(), [at[0] + dx, at[1] + dy], size, rim, style);
+    }
+    p.text_face(text, at, size, PINK, style);
 }
 
 /// Which rim buttons a screen shows.
@@ -191,7 +196,7 @@ fn wedge(p: &mut Painter, degrees: f32, radius: f32, size: [f32; 2], tint: Rgba)
 pub fn go(p: &mut Painter) {
     wedge(p, 0.0, 480.0, [230.0, 110.0], DECIDE_BTN);
     icon(p, Icon::Go, [-20.0, 487.0], 40.0, 0.0);
-    p.text("GO", [22.0, 487.0], 22.0, WHITE, Align::Center);
+    p.text("GO", [22.0, 487.0], 27.0, WHITE, Align::Center);
     p.button([0.0, 480.0], [200.0, 90.0], Action::Confirm);
 }
 

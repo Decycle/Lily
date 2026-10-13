@@ -20,6 +20,8 @@ pub enum Face {
     Numerals,
     /// The `Kakugo_kana` UMG font (player name) of [`Fonts::with_face`], else [`Face::Ui`].
     Kakugo,
+    /// `SHINBI` (menu countdown digits) of [`Fonts::with_face`], else [`Face::Ui`].
+    Shinbi,
 }
 
 impl Face {
@@ -29,6 +31,7 @@ impl Face {
             Face::Ui => None,
             Face::Numerals => Some(0),
             Face::Kakugo => Some(1),
+            Face::Shinbi => Some(2),
         }
     }
 }
@@ -37,7 +40,7 @@ impl Face {
 pub struct Fonts {
     faces: Vec<(PathBuf, FontVec)>,
     /// Indices into `faces` of the special faces ([`Face::slot`]), kept after the fallback chain.
-    special: [Option<usize>; 2],
+    special: [Option<usize>; 3],
 }
 
 impl std::fmt::Debug for Fonts {
@@ -74,7 +77,7 @@ impl Fonts {
         );
         Ok(Self {
             faces,
-            special: [None; 2],
+            special: [None; 3],
         })
     }
 
