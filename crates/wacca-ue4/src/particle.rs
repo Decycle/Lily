@@ -246,8 +246,19 @@ pub enum Module {
     PivotOffset([f32; 2]),
     /// Sub-image index over relative time.
     SubImage(Distribution),
+    /// `ParticleModuleParameterDynamic`: the four material `DynamicParameter` values (user set).
+    DynamicParam(Vec<DynamicParam>),
     /// A module class not simulated; kept so missing behaviour is visible.
     Unsupported(String),
+}
+
+/// One `FEmitterDynamicParameter` (`EDPV_UserSet`): its value over the particle's relative
+/// time (or the emitter time), evaluated once at spawn when `spawn_only`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DynamicParam {
+    pub value: Distribution,
+    pub spawn_only: bool,
+    pub emitter_time: bool,
 }
 
 /// An enabled emitter of a particle system (LOD 0).
@@ -366,7 +377,17 @@ fn u8_field(v: &Value, name: &str) -> u8 {
 /// A `FRawDistributionFloat/Vector` property: its baked table, or (not baked) the constant /
 /// uniform distribution object it points at; `default` when absent.
 fn distribution(objs: &Objects, o: &Object, name: &str, default: &[f32]) -> Distribution {
-    let Some(raw) = o.get(name) else {
+    raw_distribution(objs, o.get(name), &format!("{}.{name}", o.name), default)
+}
+
+/// [`distribution`] of a raw distribution struct value (`what` names it in warnings).
+fn raw_distribution(
+    objs: &Objects,
+    raw: Option<&Value>,
+    what: &str,
+    default: &[f32],
+) -> Distribution {
+    let Some(raw) = raw else {
         return Distribution::constant(default);
     };
     if let Some(table) = raw.field("Table") {
@@ -403,7 +424,7 @@ fn distribution(objs: &Objects, o: &Object, name: &str, default: &[f32]) -> Dist
             bake_curve(d.get("ConstantCurve")).unwrap_or_else(|| Distribution::constant(default))
         }
         Some(d) => {
-            log::warn!("{}.{name}: unbaked {} not supported", o.name, d.class);
+            log::warn!("{what}: unbaked {} not supported", d.class);
             Distribution::constant(default)
         }
         None => Distribution::constant(default),
@@ -614,6 +635,32 @@ fn module(objs: &Objects, m: &Object) -> Module {
             Module::PivotOffset(p.map(|v| v.unwrap_or(0.0)))
         }
         "ParticleModuleSubUV" => Module::SubImage(d("SubImageIndex", &[0.0])),
+        "ParticleModuleParameterDynamic" => {
+            let params = match m.get("DynamicParams") {
+                Some(Value::Array(v)) => v.as_slice(),
+                _ => &[],
+            };
+            Module::DynamicParam(
+                params
+                    .iter()
+                    .map(|p| {
+                        let method = match p.field("ValueMethod") {
+                            Some(Value::Enum(e)) => e.as_str(),
+                            _ => "EDPV_UserSet",
+                        };
+                        if method != "EDPV_UserSet" {
+                            log::warn!("{}: dynamic parameter {method} taken as user set", m.name);
+                        }
+                        let flag = |n| matches!(p.field(n), Some(Value::Bool(true)));
+                        DynamicParam {
+                            value: raw_distribution(objs, p.field("ParamValue"), &m.name, &[1.0]),
+                            spawn_only: flag("bSpawnTimeOnly"),
+                            emitter_time: flag("bUseEmitterTime"),
+                        }
+                    })
+                    .collect(),
+            )
+        }
         other => Module::Unsupported(other.to_owned()),
     }
 }

@@ -48,6 +48,10 @@ pub enum FxShader {
     Dissolve,
     /// `vMX_1_Miss_000`: the Miss shards.
     Miss,
+    /// `vM_1_Base_003`: colour texture × particle colour, mask texture green as opacity.
+    Base003,
+    /// `vMX_3_RankUp_000`: the R-note hit's growing squares.
+    RankUp,
     /// Not ported: drawn as texture × particle colour.
     Other,
 }
@@ -97,6 +101,12 @@ pub struct TouchEffect {
 
 /// The default touch effect (`TouchEffectTable` row 312001, guest play).
 pub const DEFAULT_TOUCH_EFFECT: &str = "312001";
+/// R-note hit (`SNoteEffectTable` ON): one system per hit at the screen centre, behind the
+/// guide lanes (RenderDoc KING frame 9800: drawn before the lanes, component at (0, −610, 0)).
+pub const R_NOTE_EFFECT: &str = "vb_SnoteHit_00";
+/// World Y of the R-note effect's component.
+pub const BEHIND_Y: f32 = -610.0;
+
 /// Key beam (`KeyBeamEffectTable` ON): one per touched lane. Captured: `vMX_2_Tap_000_TUS_m_00`
 /// (`LineLength_Change_ONOFF` 1) at radius 170 + 18, scale 1 (frame 12365).
 pub const KEY_BEAM: &str = "vo_ftap000_00";
@@ -253,6 +263,32 @@ fn pack(master: &str, m: &MaterialParams) -> (FxShader, [[f32; 4]; 6], [Option<&
             return (FxShader::Base005, p, [Some("Color_texture"), None]);
         }
         "vM_2_Scroll_003" => return (FxShader::Scroll, p, [Some("Mask_Dslv"), None]),
+        "vM_1_Base_003" => {
+            let (c, k) = (vector(m, "Color_Tiling"), vector(m, "Mask_Tiling"));
+            p[0] = [c[0], c[1], k[0], k[1]];
+            p[1][0] = s("BG_Mask_0");
+            return (
+                FxShader::Base003,
+                p,
+                [Some("Color_texture"), Some("Mask_texture")],
+            );
+        }
+        "vMX_3_RankUp_000" => {
+            let (sin, cos) = s("Rotate").to_radians().sin_cos();
+            p[0] = [s("BG_Mask_0"), s("ColorTex_ONOFF"), cos, sin];
+            p[1] = [
+                s("1_UV_Tiling"),
+                s("WaveInside_Density"),
+                s("SmoothStep_Min"),
+                s("SmoothStep_Max"),
+            ];
+            p[2] = [s("Shape_Min"), s("Shape_Max"), 0.0, 0.0];
+            return (
+                FxShader::RankUp,
+                p,
+                [Some("Color_Texture"), Some("Texture")],
+            );
+        }
         "vM_2_Dslv_003" => {
             p[0][0] = s("ColorPower");
             return (FxShader::Dissolve, p, [Some("Color"), Some("DslvTex")]);
@@ -352,8 +388,8 @@ impl EffectLibrary {
         self.textures.len() as u32 - 1
     }
 
-    /// Loads `data_dir/effects` (systems of the default touch effect and the key beam, their
-    /// materials; not the R-note effect, see `effects`) and the meshes they use from `data_dir/meshes`.
+    /// Loads `data_dir/effects` (systems of the default touch effect, the key beam and the R-note
+    /// hit, their materials) and the meshes they use from `data_dir/meshes`.
     pub fn load(data_dir: &Path) -> Result<Self, FxError> {
         let dir = data_dir.join("effects");
         let path = dir.join("touch_effects.json");
@@ -363,7 +399,11 @@ impl EffectLibrary {
             .map(TouchEffect::from_row)
             .ok_or_else(|| FxError::NoTouchRow(DEFAULT_TOUCH_EFFECT.into()))?;
         let mut systems = Vec::new();
-        let names: Vec<String> = touch.all().chain([KEY_BEAM]).map(str::to_owned).collect();
+        let names: Vec<String> = touch
+            .all()
+            .chain([KEY_BEAM, R_NOTE_EFFECT])
+            .map(str::to_owned)
+            .collect();
         for name in names {
             if systems.iter().any(|(n, _)| *n == name) {
                 continue;
@@ -430,6 +470,9 @@ pub struct Placement {
     pub lane: f32,
     pub radius: f32,
     pub scale: f32,
+    /// At the screen centre, [`BEHIND_Y`] deep, unrotated and drawn before the guide lanes (the
+    /// R-note hit) instead of on the ring.
+    pub behind: bool,
 }
 
 impl Placement {
@@ -439,11 +482,29 @@ impl Placement {
             lane,
             radius: EFFECT_RADIUS,
             scale: HIT_SCALE,
+            behind: false,
+        }
+    }
+
+    /// The R-note hit: the screen centre behind the lanes, scale 1.
+    pub fn behind() -> Self {
+        Self {
+            lane: 0.0,
+            radius: 0.0,
+            scale: 1.0,
+            behind: true,
         }
     }
 
     /// Component-local → world (cm, UE axes) and the rotated axes.
     fn frame(&self) -> Frame {
+        if self.behind {
+            return Frame {
+                origin: [0.0, BEHIND_Y, 0.0],
+                axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                scale: self.scale,
+            };
+        }
         let phi = lane_angle(self.lane) + std::f32::consts::FRAC_PI_2;
         let (s, c) = phi.sin_cos();
         let centre = lane_angle(self.lane + 0.5);
@@ -494,6 +555,8 @@ struct Particle {
     sub_image: f32,
     /// Mesh roll/pitch/yaw (degrees).
     orientation: [f32; 3],
+    /// Material `DynamicParameter` (`ParticleModuleParameterDynamic`; 1 without the module).
+    dynamic: [f32; 4],
 }
 
 impl Particle {
@@ -651,7 +714,18 @@ impl ParticleWorld {
         out: &mut Vec<FxVertex>,
         runs: &mut Vec<(FxBlend, u32, u32)>,
     ) {
-        for inst in &self.instances {
+        self.build_layer(lib, out, runs, false);
+    }
+
+    /// [`ParticleWorld::build`] of the instances with `place.behind == behind` only.
+    pub fn build_layer(
+        &self,
+        lib: &EffectLibrary,
+        out: &mut Vec<FxVertex>,
+        runs: &mut Vec<(FxBlend, u32, u32)>,
+        behind: bool,
+    ) {
+        for inst in self.instances.iter().filter(|i| i.place.behind == behind) {
             let frame = inst.place.frame();
             for (def, st) in inst.system.emitters.iter().zip(&inst.emitters) {
                 let Some((material, m)) = lib.material(&def.material) else {
@@ -774,6 +848,7 @@ fn spawn_particle(def: &Emitter, emitter_time: f32, seed: &mut u32) -> Particle 
         random: next_rand(seed),
         sub_image: 0.0,
         orientation: [0.0; 3],
+        dynamic: [1.0; 4],
     };
     let t = emitter_time;
     for m in &def.modules {
@@ -840,6 +915,12 @@ fn spawn_particle(def: &Emitter, emitter_time: f32, seed: &mut u32) -> Particle 
                 p.rotation_rate += d.eval1(t, next_rand(seed)) * std::f32::consts::TAU;
             }
             Module::SubImage(d) => p.sub_image = d.eval1(0.0, next_rand(seed)),
+            Module::DynamicParam(params) => {
+                for (k, d) in params.iter().take(4).enumerate() {
+                    let at = if d.emitter_time { t } else { 0.0 };
+                    p.dynamic[k] = d.value.eval1(at, next_rand(seed));
+                }
+            }
             _ => {}
         }
     }
@@ -891,6 +972,15 @@ fn apply_life_modules(def: &Emitter, p: &mut Particle) {
                     p.vel[k] = if *absolute { v[k] } else { p.vel[k] * v[k] };
                 });
             }
+            // UNVERIFIED: emitter-time parameters are kept at their spawn value (none of the
+            // game's systems uses them).
+            Module::DynamicParam(params) => {
+                for (k, d) in params.iter().take(4).enumerate() {
+                    if !d.spawn_only && !d.emitter_time {
+                        p.dynamic[k] = d.value.eval1(rt, 0.0);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -928,6 +1018,8 @@ pub struct FxVertex {
     pub uv: [f32; 2],
     pub color: [f32; 4],
     pub extra: [f32; 4],
+    /// Material `DynamicParameter`.
+    pub dynamic: [f32; 4],
     pub material: u32,
 }
 
@@ -950,6 +1042,7 @@ fn vertex(world: [f32; 3], uv: [f32; 2], p: &Particle, material: u32) -> FxVerte
         uv,
         color: p.color,
         extra: [p.random, p.relative_time(), 0.0, 0.0],
+        dynamic: p.dynamic,
         material,
     }
 }
@@ -990,8 +1083,10 @@ fn push_sprite(
         let v = if v == [0.0; 3] { [0.0, 0.0, 1.0] } else { v };
         (norm(cross(v, to_cam)), v.map(|x| -x))
     } else {
-        // The play camera looks down −Y: screen right = +X, screen up = +Z.
-        ([1.0, 0.0, 0.0], [0.0, 0.0, 1.0])
+        // The play camera looks down −Y: screen right = +X, screen up = +Z. UE's sprite "up"
+        // is the view's down (UV v grows downwards: KING frame 9800 eid 2765, UV (0, 0) at the
+        // top-left corner).
+        ([1.0, 0.0, 0.0], [0.0, 0.0, -1.0])
     };
     let (s, c) = p.rotation.sin_cos();
     let r = [0, 1, 2].map(|k| right[k] * c + up[k] * s);
@@ -1245,6 +1340,7 @@ mod tests {
             lane: 45.0,
             radius: 170.0,
             scale: 1.0,
+            behind: false,
         };
         let zc = 170.0 * 273f32.to_radians().sin();
         w.spawn(&sys, place, None);

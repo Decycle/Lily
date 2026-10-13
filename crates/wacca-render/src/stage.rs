@@ -84,6 +84,8 @@ pub struct Stage {
     /// Hit effects ([`crate::particles`]) and their runs of equal blend.
     pub effects: Vec<FxVertex>,
     pub effect_runs: Vec<(FxBlend, u32, u32)>,
+    /// Effect runs drawn before the guide lanes (the R-note hit).
+    pub behind_runs: Vec<(FxBlend, u32, u32)>,
     /// Played fraction of the song for the HUD rim's time gauge (`None`: no HUD rim), drawn by
     /// the composition (`style::GAUGE_RADIUS_PX`).
     pub progress: Option<f32>,
@@ -105,6 +107,7 @@ impl Stage {
         self.chevrons.clear();
         self.effects.clear();
         self.effect_runs.clear();
+        self.behind_runs.clear();
         self.movie = false;
         self.time = 0.0;
         self.pulse = 0.0;
@@ -286,7 +289,11 @@ pub fn build_stage_into(
     stage.pulse = (chart.sec_to_tick(now) / BEAT_TICKS).rem_euclid(1.0) as f32;
 
     if let Some(fx) = live.effects {
-        fx.build(&mut stage.effects, &mut stage.effect_runs);
+        fx.build(
+            &mut stage.effects,
+            &mut stage.behind_runs,
+            &mut stage.effect_runs,
+        );
     }
 
     let mask = mask_state(&chart.masks, now);
