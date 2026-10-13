@@ -1,14 +1,16 @@
 //! One-time converter: `assets/` -> `data/`.
 //!
-//! Usage: `wacca-convert --assets <dir> --out <dir> [--textures] [--fonts] [--meshes] [--export-ui <subdir>]...`.
+//! Usage: `wacca-convert --assets <dir> --out <dir> [--textures] [--fonts] [--meshes] [--effects] [--export-ui <subdir>]...`.
 //! Always writes `<out>/songs.json`; `--textures` writes `<out>/jackets/<JacketAssetName>.png` for every
 //! catalog song, `--fonts` copies `UI/Font/*.ufont` to `<out>/fonts/`, and each `--export-ui <subdir>`
 //! (relative to the assets dir, e.g. `UI/Textures/FONT` or `Vfx`) writes every Texture2D below it to
 //! `<out>/ui/<path relative to assets>.png`. `--meshes` writes the note meshes (`Vfx/Mesh/Notes`) as
-//! `<out>/meshes/<name>.obj`.
+//! `<out>/meshes/<name>.obj`; `--effects` writes the hit-effect particle systems, their materials and
+//! meshes (`effects.rs`).
 #![cfg_attr(test, allow(clippy::unwrap_used))] // tests may unwrap (CONTRIBUTING)
 
 mod catalog;
+mod effects;
 mod fonts;
 mod meshes;
 mod textures;
@@ -19,7 +21,7 @@ use std::time::Instant;
 
 use wacca_game::Difficulty;
 
-const USAGE: &str = "usage: wacca-convert --assets <dir> --out <dir> [--textures] [--fonts] [--meshes] [--export-ui <subdir under assets>]...";
+const USAGE: &str = "usage: wacca-convert --assets <dir> --out <dir> [--textures] [--fonts] [--meshes] [--effects] [--export-ui <subdir under assets>]...";
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
@@ -53,6 +55,7 @@ struct Args {
     textures: bool,
     fonts: bool,
     meshes: bool,
+    effects: bool,
     export_ui: Vec<PathBuf>,
 }
 
@@ -68,6 +71,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, Error> {
             "--textures" => parsed.textures = true,
             "--fonts" => parsed.fonts = true,
             "--meshes" => parsed.meshes = true,
+            "--effects" => parsed.effects = true,
             "--export-ui" => {
                 let dir = value()?;
                 if !textures::is_plain_relative(&dir) {
@@ -149,6 +153,10 @@ fn run(args: &Args) -> Result<(), Error> {
         let (written, failed) = meshes::export_notes(&args.assets, &args.out)?;
         log::info!("meshes: {written} written, {failed} failed");
     }
+    if args.effects {
+        let (systems, materials, meshes) = effects::export(&args.assets, &args.out)?;
+        log::info!("effects: {systems} systems, {materials} materials, {meshes} meshes");
+    }
     for subdir in &args.export_ui {
         let start = Instant::now();
         let jobs = textures::dir_jobs(&args.assets, subdir, &args.out)?;
@@ -208,9 +216,9 @@ mod tests {
     #[test]
     fn parses_texture_font_and_export_flags() {
         let a =
-            args("--textures --assets a --export-ui UI/Textures --fonts --meshes --out o --export-ui Vfx")
+            args("--textures --assets a --export-ui UI/Textures --fonts --meshes --effects --out o --export-ui Vfx")
                 .unwrap();
-        assert!(a.textures && a.fonts && a.meshes);
+        assert!(a.textures && a.fonts && a.meshes && a.effects);
         assert_eq!(a.export_ui, [PathBuf::from("UI/Textures"), "Vfx".into()]);
         assert!(matches!(
             args("--assets a --out o --export-ui ../x"),

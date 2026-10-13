@@ -2175,6 +2175,7 @@ name = "wacca-ue4"
 version = "0.1.0"
 dependencies = [
  "log",
+ "serde",
  "thiserror 2.0.21",
 ]
 

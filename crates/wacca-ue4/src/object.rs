@@ -110,7 +110,12 @@ mod tests {
         let emitter = fx.import("/Script/CoreUObject", "Class", "ParticleSpriteEmitter");
         let mesh = fx.import("/Script/CoreUObject", "Package", "/Game/Vfx/Mesh/vMsh_a");
         let mut a = Vec::new();
-        fx.array_tag(&mut a, "Emitters", "ObjectProperty", &[1, 0, 0, 0, 2, 0, 0, 0]);
+        fx.array_tag(
+            &mut a,
+            "Emitters",
+            "ObjectProperty",
+            &[1, 0, 0, 0, 2, 0, 0, 0],
+        );
         fx.none(&mut a);
         let mut b = Vec::new();
         fx.tag(&mut b, "Mesh", "ObjectProperty", &mesh.to_le_bytes());

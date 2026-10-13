@@ -1,20 +1,24 @@
-//! UE4 4.19 cooked package reader (DataTables, textures, static meshes). Spec: docs/research/02-data-tables.md, 06-visuals.md
+//! UE4 4.19 cooked package reader (DataTables, textures, static meshes, particle systems, material parameters). Spec: docs/research/02-data-tables.md, 06-visuals.md
 #![cfg_attr(test, allow(clippy::unwrap_used))] // tests may unwrap (CONTRIBUTING)
 
 mod bcn;
 mod datatable;
 #[cfg(test)]
 mod fixture;
+mod material;
 mod mesh;
 mod object;
 mod package;
+mod particle;
 mod property;
 mod reader;
 mod texture;
 
 pub use datatable::{DataTable, read_datatable};
+pub use material::{MaterialParams, read_material};
 pub use mesh::{MeshSection, StaticMesh, read_static_mesh};
 pub use object::{Object, Objects, read_objects};
+pub use particle::{Burst, Distribution, Emitter, Module, ParticleSystem, read_particle_system};
 pub use property::{Text, Value};
 pub use texture::{PixelFormat, Texture, read_texture2d};
 
@@ -58,6 +62,10 @@ pub enum Ue4Error {
     MissingBulkFile,
     #[error("no static mesh LOD0 buffers found")]
     NotAStaticMesh,
+    #[error("package has no ParticleSystem export")]
+    NotAParticleSystem,
+    #[error("package has no Material / MaterialInstanceConstant export")]
+    NotAMaterial,
     #[error("mip payload too small: need {need} bytes, have {len}")]
     MipTooSmall { need: usize, len: usize },
 }

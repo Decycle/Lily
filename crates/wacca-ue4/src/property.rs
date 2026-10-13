@@ -229,7 +229,16 @@ fn read_value(
         }
         "ObjectProperty" | "ClassProperty" | "InterfaceProperty" | "WeakObjectProperty"
         | "LazyObjectProperty" => Value::Object(r.i32()?),
-        "StructProperty" => read_struct(pkg, r, tag.struct_name.as_deref(), size)?,
+        "StructProperty" => match (tag.struct_name.as_deref(), size) {
+            // Material graph inputs are natively serialized (editor data); keep them raw.
+            (Some(n), Some(size)) if n.ends_with("MaterialInput") || n == "ExpressionInput" => {
+                Value::Unparsed {
+                    kind: n.to_owned(),
+                    bytes: r.bytes(size)?.to_vec(),
+                }
+            }
+            (name, _) => read_struct(pkg, r, name, size)?,
+        },
         "ArrayProperty" | "SetProperty" => {
             let inner = tag.inner.as_deref().ok_or_else(|| unsupported(tag))?;
             if tag.kind == "SetProperty" {
@@ -331,6 +340,11 @@ fn read_struct(
                     .map(|(n, v)| (n.to_owned(), Value::Byte(v)))
                     .to_vec(),
             )
+        }
+        Some("Box") => {
+            let v = floats(r, 6)?;
+            r.u8()?; // IsValid
+            v
         }
         Some("IntPoint") => Value::Array(vec![
             Value::Int(r.i32()?.into()),
