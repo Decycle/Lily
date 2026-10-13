@@ -1,9 +1,10 @@
-//! The core loop as a state machine: SongSelect → Difficulty → Options → Play → Results → SongSelect.
+//! The core loop as a state machine, following the original:
+//! Category (genre folder) → SongSelect (song + difficulty) → Options → Play → Results → SongSelect.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
+    Category,
     SongSelect,
-    Difficulty,
     Options,
     Play,
     Results,
@@ -30,12 +31,12 @@ pub fn next(screen: Screen, event: Event) -> Next {
     use Event::*;
     use Screen::*;
     match (screen, event) {
-        (SongSelect, Confirm) => Next::Go(Difficulty),
-        (SongSelect, Back) => Next::Quit,
-        (Difficulty, Confirm) => Next::Go(Options),
-        (Difficulty, Back) => Next::Go(SongSelect),
+        (Category, Confirm) => Next::Go(SongSelect),
+        (Category, Back) => Next::Quit,
+        (SongSelect, Confirm) => Next::Go(Options),
+        (SongSelect, Back) => Next::Go(Category),
         (Options, Confirm) => Next::Go(Play),
-        (Options, Back) => Next::Go(Difficulty),
+        (Options, Back) => Next::Go(SongSelect),
         (Play, PlayOver) => Next::Go(Results),
         (Results, Confirm | Back) => Next::Go(SongSelect),
         (Results, Retry) => Next::Go(Play),
@@ -49,7 +50,7 @@ mod tests {
 
     #[test]
     fn full_loop() {
-        let mut s = Screen::SongSelect;
+        let mut s = Screen::Category;
         for e in [
             Event::Confirm,
             Event::Confirm,
@@ -67,16 +68,16 @@ mod tests {
     }
 
     #[test]
-    fn back_walks_up_and_quits_from_song_select() {
+    fn back_walks_up_and_quits_from_the_category_screen() {
         assert_eq!(
             next(Screen::Options, Event::Back),
-            Next::Go(Screen::Difficulty)
-        );
-        assert_eq!(
-            next(Screen::Difficulty, Event::Back),
             Next::Go(Screen::SongSelect)
         );
-        assert_eq!(next(Screen::SongSelect, Event::Back), Next::Quit);
+        assert_eq!(
+            next(Screen::SongSelect, Event::Back),
+            Next::Go(Screen::Category)
+        );
+        assert_eq!(next(Screen::Category, Event::Back), Next::Quit);
     }
 
     #[test]

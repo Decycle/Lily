@@ -26,6 +26,10 @@ pub enum Action {
     Scroll(i32),
     NextSort,
     ToggleFilter,
+    /// The DIFFICULTY button: next existing difficulty, wrapping.
+    Difficulty,
+    /// Jump to the previous / next genre folder.
+    Genre(i32),
     Retry,
 }
 
@@ -44,10 +48,29 @@ pub enum Item {
         align: Align,
         max_width: Option<f32>,
     },
+    /// One line turned by `angle` radians (clockwise) about `at` (anchor x per `align`, top).
+    TurnedText {
+        text: String,
+        at: [f32; 2],
+        px: f32,
+        color: Rgba,
+        align: Align,
+        angle: f32,
+    },
     /// Song jacket by asset name (image if available, else a coloured square).
     Jacket {
         rect: Rect,
         key: String,
+    },
+    /// Exported game texture `data/ui/<key>.png` (e.g. `UI/Textures/uT_STmenu_obj008`): region
+    /// `uv` (ends swapped = mirrored) times `tint`, turned by `angle` radians (clockwise) about
+    /// the centre of `rect`. Missing textures draw nothing.
+    Image {
+        key: String,
+        rect: Rect,
+        uv: [f32; 4],
+        angle: f32,
+        tint: Rgba,
     },
 }
 
@@ -105,7 +128,7 @@ impl View {
         self.items
             .iter()
             .filter_map(|i| match i {
-                Item::Text { text, .. } => Some(text.as_str()),
+                Item::Text { text, .. } | Item::TurnedText { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect()

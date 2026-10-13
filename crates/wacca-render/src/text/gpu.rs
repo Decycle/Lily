@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use super::atlas::Shelves;
 use super::fonts::Fonts;
-use super::layout::{Align, align_x, fit, measure};
+use super::layout::{Align, align_x, corners, fit, measure};
 use crate::layout::Rect;
 use crate::style::Rgba;
 
@@ -270,11 +270,16 @@ impl TextRenderer {
     }
 
     fn quad(&mut self, image: Option<&str>, r: Rect, uv: [f32; 4], color: Rgba) {
+        self.quad_turned(image, r, 0.0, uv, color);
+    }
+
+    fn quad_turned(&mut self, image: Option<&str>, r: Rect, angle: f32, uv: [f32; 4], color: Rgba) {
+        let [a, b, c, d] = corners([r.x, r.y, r.w, r.h], angle);
         let corners = [
-            ([r.x, r.y], [uv[0], uv[1]]),
-            ([r.x + r.w, r.y], [uv[2], uv[1]]),
-            ([r.x + r.w, r.y + r.h], [uv[2], uv[3]]),
-            ([r.x, r.y + r.h], [uv[0], uv[3]]),
+            (a, [uv[0], uv[1]]),
+            (b, [uv[2], uv[1]]),
+            (c, [uv[2], uv[3]]),
+            (d, [uv[0], uv[3]]),
         ];
         let start = self.vertices.len() as u32;
         for i in [0, 1, 2, 0, 2, 3] {
@@ -316,10 +321,50 @@ impl TextRenderer {
         let fonts = &self.fonts;
         let advance = |c| fonts.advance(c, px);
         let line = match max_width {
-            Some(max) => fit(text, max, advance),
-            None => text.into(),
+            Some(max) => fit(text, max, advance).into_owned(),
+            None => text.to_string(),
         };
-        let mut x = align_x(at[0], measure(&line, advance), align);
+        for (r, uv) in self.glyph_quads(&line, at, px, align) {
+            self.quad(None, r, uv, color);
+        }
+    }
+
+    /// Like [`TextRenderer::text`] (without truncation), turned by `angle` radians (clockwise)
+    /// about `at`.
+    pub fn text_turned(
+        &mut self,
+        text: &str,
+        at: [f32; 2],
+        px: f32,
+        color: Rgba,
+        align: Align,
+        angle: f32,
+    ) {
+        let px = px.round().max(1.0);
+        let (sin, cos) = angle.sin_cos();
+        for (r, uv) in self.glyph_quads(text, at, px, align) {
+            let (dx, dy) = (r.x + r.w / 2.0 - at[0], r.y + r.h / 2.0 - at[1]);
+            let c = [at[0] + dx * cos - dy * sin, at[1] + dx * sin + dy * cos];
+            let turned = Rect {
+                x: c[0] - r.w / 2.0,
+                y: c[1] - r.h / 2.0,
+                ..r
+            };
+            self.quad_turned(None, turned, angle, uv, color);
+        }
+    }
+
+    /// Screen rectangle and atlas uv of each visible glyph of one line (`px` already rounded).
+    fn glyph_quads(
+        &mut self,
+        line: &str,
+        at: [f32; 2],
+        px: f32,
+        align: Align,
+    ) -> Vec<(Rect, [f32; 4])> {
+        let fonts = &self.fonts;
+        let advance = |c| fonts.advance(c, px);
+        let mut x = align_x(at[0], measure(line, advance), align);
         let baseline = (at[1] + fonts.ascent(px)).round();
         let glyphs: Vec<_> = line
             .chars()
@@ -330,17 +375,19 @@ impl TextRenderer {
                 ((face, id, px as u32), pen.round())
             })
             .collect();
-        for (key, pen) in glyphs {
-            if let Some(g) = self.glyph(key) {
+        glyphs
+            .into_iter()
+            .filter_map(|(key, pen)| {
+                let g = self.glyph(key)?;
                 let r = Rect {
                     x: pen + g.offset[0],
                     y: baseline + g.offset[1],
                     w: g.size[0],
                     h: g.size[1],
                 };
-                self.quad(None, r, g.uv, color);
-            }
-        }
+                Some((r, g.uv))
+            })
+            .collect()
     }
 
     /// Register (or replace) an RGBA8 image under `key`. `rgba.len()` must be `w * h * 4`.
@@ -372,6 +419,14 @@ impl TextRenderer {
     pub fn image(&mut self, key: &str, rect: Rect, tint: Rgba) {
         if self.has_image(key) {
             self.quad(Some(key), rect, [0.0, 0.0, 1.0, 1.0], tint);
+        }
+    }
+
+    /// Like [`TextRenderer::image`] for the texture region `uv` (`[u0, v0, u1, v1]`; swap the
+    /// ends to mirror), turned by `angle` radians (clockwise) about the centre of `rect`.
+    pub fn image_region(&mut self, key: &str, rect: Rect, uv: [f32; 4], angle: f32, tint: Rgba) {
+        if self.has_image(key) {
+            self.quad_turned(Some(key), rect, angle, uv, tint);
         }
     }
 

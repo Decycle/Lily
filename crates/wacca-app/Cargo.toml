@@ -1,6 +1,6 @@
 [package]
 name = "wacca-app"
-description = "WACCA_slim game binary. M5: song select, difficulty, options, play, results, save."
+description = "WACCA_slim game binary: category and song select (original layout), options, play, results, save."
 edition.workspace = true
 version.workspace = true
 publish.workspace = true
