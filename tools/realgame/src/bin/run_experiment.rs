@@ -2,7 +2,7 @@
 //! audio, play a tap script into the Waccon shared buffer, stop everything, write `runs/<ts>/`.
 //!
 //! `run_experiment --script <taps.json> [--nav <nav.json>] [--start-nav <nav.json>] [--sync-chart <mer>]
-//!  [--assets DIR] [--input-lead-ms N] [--sync-timeout-s 90] [--ffmpeg <path>] [--keep-game] [--no-video]
+//!  [--assets DIR] [--input-lead-ms N] [--predict-start-ms N] [--sync-timeout-s 90] [--ffmpeg <path>] [--keep-game] [--no-video]
 //!  [--settle-s 30] [--lead-ms 1000] [--tail-ms 2000] [--out-dir runs] [--game-dir C:\Games\WACCA\bin]`
 //!
 //! `--nav` runs a navigation script ([`wacca_realgame::nav`], e.g. `scripts/nav-input-test.nav.json`) before
@@ -15,6 +15,10 @@
 //! [`wacca_realgame::sync::Detector`]; once the song start is found, every edge is played at
 //! `bgm0 + (chart_t - #OFFSET) - input_lead`. The match, the packet capture times (`audio_packets.csv`) and the
 //! files the game changed under `<game-dir>\appdata` (`appdata-changes.txt`) are saved with the run.
+//!
+//! `--predict-start-ms N` skips the live detection for charts whose first notes come before it can be ready: BGM
+//! sample 0 is then assumed `N` ms after the start-nav's first input (the GO touch). `meta.json` records that input
+//! time in every song run, so `N` is calibrated from earlier synced runs (`sync.bgm0_ms - sync.start_press_ms`).
 //!
 //! Input is only written to the live buffer when `WACCA_INJECT_OK=1`; otherwise the script is a dry run (same
 //! timing, nothing written) so recording can be tested safely. `RUST_LOG=debug` shows FFmpeg's output.
@@ -64,7 +68,7 @@ mod imp {
     #[derive(Debug, Error)]
     pub enum Error {
         #[error(
-            "{0}\nusage: run_experiment --script <taps.json> [--nav <nav.json>] [--start-nav <nav.json>] [--sync-chart <mer>] [--assets DIR] [--input-lead-ms N] [--sync-timeout-s N] [--ffmpeg <path>] [--keep-game] [--no-video] [--settle-s N] [--lead-ms N] [--tail-ms N] [--out-dir DIR] [--game-dir DIR]"
+            "{0}\nusage: run_experiment --script <taps.json> [--nav <nav.json>] [--start-nav <nav.json>] [--sync-chart <mer>] [--assets DIR] [--input-lead-ms N] [--predict-start-ms N] [--sync-timeout-s N] [--ffmpeg <path>] [--keep-game] [--no-video] [--settle-s N] [--lead-ms N] [--tail-ms N] [--out-dir DIR] [--game-dir DIR]"
         )]
         Args(String),
         #[error("{}: {source}", path.display())]
@@ -99,6 +103,7 @@ mod imp {
         sync_chart: Option<PathBuf>,
         assets: Option<PathBuf>,
         input_lead_ms: f64,
+        predict_start_ms: Option<f64>,
         sync_timeout_s: f64,
         ffmpeg: Option<PathBuf>,
         keep_game: bool,
@@ -118,6 +123,7 @@ mod imp {
             sync_chart: None,
             assets: std::env::var_os("WACCA_ASSETS").map(PathBuf::from),
             input_lead_ms: 0.0,
+            predict_start_ms: None,
             sync_timeout_s: 90.0,
             ffmpeg: None,
             keep_game: false,
@@ -150,6 +156,7 @@ mod imp {
                 "--sync-chart" => a.sync_chart = Some(path(&flag, it.next())?),
                 "--assets" => a.assets = Some(path(&flag, it.next())?),
                 "--input-lead-ms" => a.input_lead_ms = signed(&flag, it.next())?,
+                "--predict-start-ms" => a.predict_start_ms = Some(nonneg(it.next())?),
                 "--sync-timeout-s" => a.sync_timeout_s = nonneg(it.next())?,
                 "--ffmpeg" => a.ffmpeg = Some(path(&flag, it.next())?),
                 "--keep-game" => a.keep_game = true,
@@ -164,6 +171,11 @@ mod imp {
         }
         if a.script.as_os_str().is_empty() {
             return Err(Error::Args("--script is required".into()));
+        }
+        if a.predict_start_ms.is_some() && (a.sync_chart.is_none() || a.start_nav.is_none()) {
+            return Err(Error::Args(
+                "--predict-start-ms needs --sync-chart and --start-nav".into(),
+            ));
         }
         if a.sync_chart.is_some() && a.assets.is_none() {
             return Err(Error::Args(
@@ -314,30 +326,49 @@ mod imp {
                 max_diff,
                 then,
                 max_steps,
+                back,
             } = step
             {
                 let path = Path::new(image);
                 let reference = Rgb::from_png(&std::fs::read(path).map_err(io_err(path))?)
                     .ok_or_else(|| Error::Nav(format!("{image}: not an 8-bit RGB(A) PNG")))?;
                 let png = dir.join(format!("{tag}-{i:02}-{name}.png"));
-                let (plan, wait_ms) = then.input().ok_or_else(|| {
-                    Error::Nav(format!("{name}: `then` must be a press or touch"))
-                })?;
-                for n in 0..=*max_steps {
-                    let frame = video::grab_frame(ffmpeg, grabber, window.rect, &png)?;
-                    let d = nav::region_diff(&frame, *region, &reference, 8);
-                    if d <= *max_diff {
-                        log::info!("{tag} {i}: {name} found after {n} touches (diff {d:.1})");
-                        break;
+                let moves = |s: &Step| {
+                    s.input().ok_or_else(|| {
+                        Error::Nav(format!("{name}: `then`/`back` must be a press or touch"))
+                    })
+                };
+                let mut passes = vec![(moves(then)?, *max_steps)];
+                if let Some(b) = back {
+                    passes.push((moves(b)?, 2 * max_steps));
+                }
+                let mut found = false;
+                let mut last = f64::NAN;
+                'search: for (pass, ((plan, wait_ms), steps)) in passes.iter().enumerate() {
+                    for n in 0..=*steps {
+                        // Every step's frame is kept for diagnosis; the last one also as `png`.
+                        let step_png = dir.join(format!("{tag}-{i:02}-{name}-{pass}-{n:02}.png"));
+                        let frame = video::grab_frame(ffmpeg, grabber, window.rect, &step_png)?;
+                        let _ = std::fs::copy(&step_png, &png);
+                        last = nav::region_diff(&frame, *region, &reference, 8);
+                        if last <= *max_diff {
+                            log::info!(
+                                "{tag} {i}: {name} found after {n} touches of pass {pass} (diff {last:.1})"
+                            );
+                            found = true;
+                            break 'search;
+                        }
+                        log::info!("{tag} {i}: {name} diff {last:.1}");
+                        if n < *steps {
+                            input(plan, *wait_ms)?;
+                        }
                     }
-                    if n == *max_steps {
-                        return Err(Error::Nav(format!(
-                            "{name:?} not found in {max_steps} touches (last diff {d:.1}, see {})",
-                            png.display()
-                        )));
-                    }
-                    log::info!("{tag} {i}: {name} diff {d:.1}");
-                    input(&plan, wait_ms)?;
+                }
+                if !found {
+                    return Err(Error::Nav(format!(
+                        "{name:?} not found (last diff {last:.1}, see {})",
+                        png.display()
+                    )));
                 }
             } else if let Step::Expect {
                 name,
@@ -550,12 +581,29 @@ mod imp {
             None => (None, None),
         };
         let audio = AudioRecorder::start(&dir.join("audio.wav"), tap)?;
+        let mut start_press_ms = None;
         if let Some(ns) = &start_nav {
             let (buf, ff) = nav_ctx()?;
+            start_press_ms = Some(epoch.ms(Instant::now()));
             navigate(ns, "start", buf, ff, &window, &dir)?;
         }
-        let synced = match (&song, &rx) {
-            (Some(s), Some(rx)) => {
+        let predicted = args
+            .predict_start_ms
+            .zip(start_press_ms)
+            .map(|(delay, press)| press + delay);
+        let synced = match (&song, &rx, predicted) {
+            (Some(_), _, Some(bgm0_ms)) => {
+                log::info!(
+                    "sync: predicted song start at epoch {bgm0_ms:.1} ms (no live detection)"
+                );
+                let m = sync::Match {
+                    bgm0: 0,
+                    coarse: 0.0,
+                    fine: 0.0,
+                };
+                Some((m, bgm0_ms, epoch.ms(Instant::now())))
+            }
+            (Some(s), Some(rx), None) => {
                 while rx.try_recv().is_ok() {}
                 let timeout = Duration::from_secs_f64(args.sync_timeout_s);
                 let channels = usize::from(audio.channels);
@@ -635,6 +683,8 @@ mod imp {
                     fine: m.fine,
                     detected_ms,
                     input_lead_ms: args.input_lead_ms,
+                    start_press_ms,
+                    predicted_start_ms: args.predict_start_ms,
                 }),
         };
         let meta_path = dir.join("meta.json");

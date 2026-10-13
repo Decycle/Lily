@@ -136,6 +136,16 @@ second attempt (`runs/e2/20261013-020813`, started after 60 s of idle) failed in
 within 60 left steps (other agents started compiling during the run; the seek may have skipped past it while
 the list scrolled). Next try: seek with a longer wait per step and both directions.
 
+**KING done (doc 10 §5): `runs/e2/20261013-043842/`** (main checkout). Navigation now seeks the category tile and then
+the jacket in both directions (KING: VOCALOID, 9 steps right). Result 192 Marvelous / 1 Miss (the first note, whose
+edges came before live sync could be ready — the Miss popup is in the set), MISSLESS, 995,283; visual timing flat
+(−60…−85 ms per 8 notes, no jump). `reference/` has 209 frames incl. `snap-in1`, `snap-out1`, `touch-bonus1/2`,
+`touch-r1/2`, slides, holds, combo 10/50/100/150/193, plus `frames.csv`; `result-*.png` show the R-note count
+(0019). The E2 reference sets listed above were lost with the E2 worktree; the E3 runs in `runs/e3/` (doc 10 §2)
+replace them (`20261013-034614`, Fragile, is the cleanest; E3 runs mistime notes on purpose, so they also contain
+Great/Good/Miss popups). Predicting the song start from the GO touch is not usable: the GO → BGM delay is bimodal
+(≈ 12 s or ≈ 42 s, ±0.5 s).
+
 ## 6. Recommended code changes
 
 1. `wacca-render/src/layout.rs`: `APPROACH_SECS = 3.28`, perspective `k = 0.750` (keep the form
@@ -150,11 +160,9 @@ the list scrolled). Next try: seek with a longer wait per step and both directio
 
 ## 7. Open items
 
-- Snap/bonus/R reference frames: one clean KING run (§5); for its first notes, start the injector from a predicted
-  song start (start press + calibrated loading delay) instead of waiting for audio sync.
+- ~~Snap/bonus/R reference frames~~: done, `runs/e2/20261013-043842/reference/` (§5).
 - `#OFFSET` sign (needs a chart with a non-zero offset).
-- Judgement window edges vs frame quantisation: a δ sweep run (doc 07 §5.2) now only needs per-note readout of the
-  debug panel or popups; the panel's FAST/LATE counters make a coarse sweep possible from totals alone.
+- ~~Judgement window edges vs frame quantisation~~: measured in doc 10 (E3).
 - Hold/chain/slide rules were all Marvelous with autoplay-shaped input (34 ms contacts, ring 0 taps, ring 3 hold
   finger) — consistent with our rules but not a test of their edges.
 

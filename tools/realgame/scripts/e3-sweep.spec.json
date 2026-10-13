@@ -1,0 +1,6 @@
+{"seed":1,"min_time":5.0,"isolation":0.35,"min_on":0.025,"probes":{
+"touch":[{"kind":"sweep","from":-8,"to":8,"step":0.5}],
+"hold":[{"kind":"sweep","from":-9,"to":9,"step":1}],
+"chain":[{"kind":"sweep","from":-7,"to":7,"step":1}],
+"slide":[{"kind":"sweep","from":-13,"to":13,"step":1}],
+"snap":[{"kind":"sweep","from":-13,"to":13,"step":1}]}}

@@ -1,5 +1,5 @@
 //! `analyze_e2 <run dir> [--chart <mer>] [--assets DIR] [--ffmpeg PATH] [--speed 1.5] [--video-latency-ms 0]
-//!  [--compare 10] [--ours-every 15] [--geometry cx,cy,r] [--ui data/ui] [--script taps.json] [--movie true]`: experiment E2 analysis of a song run (doc 09).
+//!  [--compare 10] [--timing-block 20] [--ours-every 15] [--geometry cx,cy,r] [--ui data/ui] [--script taps.json] [--movie true]`: experiment E2 analysis of a song run (doc 09).
 //!
 //! 1. Song time: aligns `audio.wav` with the chart's BGM ([`wacca_realgame::sync`]); the match, its correlation
 //!    and residuals at 25/50/75 % of the song give `bgm0_ms` and its confidence (compared with the live match).
@@ -30,7 +30,7 @@ use wacca_render::{SceneOptions, build_scene, layout};
 #[derive(Debug, thiserror::Error)]
 enum Error {
     #[error(
-        "usage: analyze_e2 <run dir> [--chart <mer>] [--assets DIR] [--ffmpeg PATH] [--speed 1.5] [--video-latency-ms 0] [--compare 10] [--ours-every 15] [--geometry cx,cy,r] [--ui data/ui] [--script taps.json] [--movie true]"
+        "usage: analyze_e2 <run dir> [--chart <mer>] [--assets DIR] [--ffmpeg PATH] [--speed 1.5] [--video-latency-ms 0] [--compare 10] [--timing-block 20] [--ours-every 15] [--geometry cx,cy,r] [--ui data/ui] [--script taps.json] [--movie true]"
     )]
     Usage,
     #[error("{}: {source}", path.display())]
@@ -62,6 +62,8 @@ struct Args {
     speed: f64,
     latency_ms: f64,
     compare: usize,
+    /// Notes per block of the visual timing check.
+    timing_block: usize,
     ours_every: usize,
     /// Overrides of the fitted rim: centre x, centre y, judgement radius (px).
     geometry: Option<[f64; 3]>,
@@ -83,6 +85,7 @@ fn parse_args(args: &[String]) -> Option<Args> {
         speed: 1.5,
         latency_ms: 0.0,
         compare: 10,
+        timing_block: 20,
         ours_every: 15,
         geometry: None,
         ui: PathBuf::from("data/ui"),
@@ -98,6 +101,7 @@ fn parse_args(args: &[String]) -> Option<Args> {
             "--speed" => a.speed = v.parse().ok()?,
             "--video-latency-ms" => a.latency_ms = v.parse().ok()?,
             "--compare" => a.compare = v.parse().ok()?,
+            "--timing-block" => a.timing_block = v.parse().ok().filter(|&n: &usize| n > 0)?,
             "--ours-every" => a.ours_every = v.parse().ok().filter(|&n| n > 0)?,
             "--ui" => a.ui = v.into(),
             "--script" => a.script = Some(v.into()),
@@ -642,8 +646,9 @@ fn run(a: &Args) -> Result<(), Error> {
     // Visual timing check: the offset per block of 20 notes must stay constant (doc 09 §2: it can jump).
     let deltas = playfield::grid(-0.4, 0.4, 0.005);
     let mut timing = Vec::new();
-    for block in 0..chart.notes.len().div_ceil(20) {
-        let notes = block * 20..(block * 20 + 20).min(chart.notes.len());
+    let size = a.timing_block;
+    for block in 0..chart.notes.len().div_ceil(size) {
+        let notes = block * size..(block * size + size).min(chart.notes.len());
         let samples: Vec<(f64, &[(f64, f64)])> = real
             .iter()
             .filter(|s| notes.contains(&s.note))
