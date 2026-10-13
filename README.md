@@ -15,7 +15,7 @@ textures, fonts and meshes are all read from your install. Personal use only.
 2. **FFmpeg** (optional, needed for background movies): `winget install Gyan.FFmpeg`.
 3. **Game files.** Copy the game's `WindowsNoEditor\Mercury\Content` folder to `assets\` in the repository root.
    `assets/` and `data/` are gitignored.
-4. **Convert, one time** (~minutes; writes `data\`):
+4. **Convert, one time** (writes `data\`):
    ```
    cargo run --release -p wacca-convert -- --assets assets --out data --textures --fonts --meshes --export-ui UI/Textures --export-ui Vfx/Textures
    ```
