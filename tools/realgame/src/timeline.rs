@@ -5,11 +5,11 @@
 //! `at_ms` is song time (chart time, ms) of the press, `dur_ms` how long the cells stay on, `lane`/`width` the
 //! first lane and lane count (counter-clockwise, wraps 59 -> 0), `depths` a bit mask (bit 0 = innermost ring).
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use wacca_chart::LANES;
 use wacca_game::input::{DEPTHS, InputFrame, SensorState};
 
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Tap {
     pub at_ms: f64,
     pub dur_ms: f64,
@@ -18,7 +18,7 @@ pub struct Tap {
     pub depths: u8,
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Script {
     pub taps: Vec<Tap>,
 }

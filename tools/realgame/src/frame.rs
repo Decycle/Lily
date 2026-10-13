@@ -23,6 +23,25 @@ impl Rgb {
         let i = (y * self.width + x) * 3;
         [self.data[i], self.data[i + 1], self.data[i + 2]]
     }
+
+    /// Decodes an 8-bit RGB or RGBA PNG (alpha dropped).
+    pub fn from_png(bytes: &[u8]) -> Option<Self> {
+        let mut reader = png::Decoder::new(std::io::Cursor::new(bytes))
+            .read_info()
+            .ok()?;
+        let mut buf = vec![0; reader.output_buffer_size()?];
+        let info = reader.next_frame(&mut buf).ok()?;
+        let step = match (info.color_type, info.bit_depth) {
+            (png::ColorType::Rgb, png::BitDepth::Eight) => 3,
+            (png::ColorType::Rgba, png::BitDepth::Eight) => 4,
+            _ => return None,
+        };
+        let data = buf[..info.buffer_size()]
+            .chunks_exact(step)
+            .flat_map(|p| [p[0], p[1], p[2]])
+            .collect();
+        Self::new(info.width as usize, info.height as usize, data)
+    }
 }
 
 /// 8-bit luma.

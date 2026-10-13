@@ -14,6 +14,26 @@ pub struct Meta {
     pub video: Option<VideoMeta>,
     pub audio: Option<AudioMeta>,
     pub inject: Option<InjectMeta>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sync: Option<SyncMeta>,
+}
+
+/// Live song-start detection ([`crate::sync`]) of a song run; the loopback packets' capture times are in
+/// `audio_packets.csv` (`frame,ms`).
+#[derive(Debug, PartialEq, Serialize)]
+pub struct SyncMeta {
+    pub chart: String,
+    pub cue: String,
+    /// Chart `#OFFSET` (s): chart time = BGM time + offset.
+    pub chart_offset_s: f64,
+    /// Epoch ms at which BGM sample 0 was captured.
+    pub bgm0_ms: f64,
+    pub coarse: f64,
+    pub fine: f64,
+    /// Epoch ms when the match was confirmed.
+    pub detected_ms: f64,
+    /// Every input edge is written this long before its chart time.
+    pub input_lead_ms: f64,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -113,6 +133,7 @@ mod tests {
             frames: 240_000,
             first_buffer: Some(e.instant + Duration::from_millis(20)),
             level,
+            packets: vec![],
         };
         let meta = Meta {
             git_commit: Some("abc".into()),
@@ -126,6 +147,7 @@ mod tests {
             video: Some(VideoMeta::new("video.mkv", &v, &e)),
             audio: Some(AudioMeta::new("audio.wav", "Speakers", &a, &e)),
             inject: None,
+            sync: None,
         };
         let j = serde_json::to_value(&meta).unwrap();
         let mut keys: Vec<&str> = j.as_object().unwrap().keys().map(String::as_str).collect();

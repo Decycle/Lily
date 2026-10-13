@@ -8,6 +8,8 @@ publish.workspace = true
 [dependencies]
 wacca-chart.workspace = true
 wacca-game.workspace = true
+wacca-audio.workspace = true
+wacca-render.workspace = true
 wacca-video.workspace = true
 thiserror.workspace = true
 serde.workspace = true
@@ -16,6 +18,8 @@ log.workspace = true
 # Same versions/features as wacca-audio / wacca-app (CONTRIBUTING "Pinned dependencies").
 cpal = "0.16.0"
 env_logger = { version = "0.11", default-features = false }
+# Same version as wacca-convert.
+png = "0.18.1"
 
 [lints]
 workspace = true
