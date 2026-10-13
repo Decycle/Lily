@@ -6,7 +6,7 @@
 //! are not aura) are left out (ported separately).
 //!
 //! R notes (`Bonus::R`) use the `…NoteS` meshes: the same body sections plus one wider section
-//! per lane (r 158.6–181.1, UV0 u −1…0) drawn with `vMX_2_NoteAura_AUS_m_00` (additive,
+//! per lane (r 158.6–181.1, UV0 u −1…0) drawn with `vMX_2_NoteAura_AUS_m_00` (translucent,
 //! `vT_SNote00_00_m`, NewNoteColor (2.5, 2.31, 1.04)) — the only material sampling that texture;
 //! the KING reference frames show the yellow-white glow around R notes. Simultaneous notes get
 //! `SyncNote` = 1 (cyan outline: the band sections at UV0 v < 0.4, KING frames).
@@ -122,7 +122,7 @@ pub enum MaterialId {
     BarLine,
     /// `vMX_2_Hold_003` (hold end cap).
     HoldEnd,
-    /// `vMX_2_NoteAura_AUS_m_00` (R-note glow, additive).
+    /// `vMX_2_NoteAura_AUS_m_00` (R-note glow, translucent).
     Aura,
     /// `vMX_2_Sync_000` (sync connector, opaque).
     Sync,
@@ -394,8 +394,8 @@ pub fn push_mesh(
 }
 
 /// Note, hold end and (with [`SceneOptions::bar_lines`]) bar line triangles of the chart at
-/// `now`, like the notes of [`build_scene`](crate::build_scene): first all aura triangles (drawn
-/// additively, then covered by the opaque bodies as the depth test does in the game), then the
+/// `now`, like the notes of [`build_scene`](crate::build_scene): first all aura triangles (blended
+/// translucently, then covered by the opaque bodies as the depth test does in the game), then the
 /// opaque ones, far first.
 pub fn build_mesh_notes(
     out: &mut Vec<MeshVertex>,

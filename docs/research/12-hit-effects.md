@@ -37,7 +37,7 @@ has its required module flagged off, yet the Miss sprites draw (RenderDoc frame 
 | Miss | `vo_miss000_00` |
 | hold held / re-held / input | `vo_hold000_00_lp` / `_01_lp` / `_02_lp` |
 | key beam (`KeyBeamEffectTable` ON) | `vo_ftap000_00` (captured `vMX_2_Tap_000_TUS_m_00`) |
-| R note (`SNoteEffectTable` ON) | `vb_SnoteHit_00` (UNVERIFIED; not drawn yet, §4) |
+| R note (`SNoteEffectTable` ON) | `vb_SnoteHit_00`, one per hit at the screen centre behind the lanes (doc 13 §3) |
 
 Shoots are on with `TouchEffectShootTable` ON (guest default). Slides and snaps use the same tap effects (KING
 frames). 312002 replaces the pops with `tap_1/vo_tap001_03/05`.
@@ -82,13 +82,9 @@ opaque elements), into the linear HDR stage target.
 `runs/shots.py` (real crop | `playfield` `WACCA_SHOT` render, movie planes from `runs/movieplanes.py`).
 Marvelous, Great, Good, Miss, bonus, snap and slide hits match in shape, size, colour and life to about a frame;
 the real onset is ~2.5 frames after the tap (game latency), ours at the judgement.
-Measured, not from data (UNVERIFIED mechanism): a released key beam fades out over 0.3 s (its particle lives
-100 s); the rim over a touched sensor shows a white edge and grey band (2D, held 0.2 s after release).
+Measured (doc 13 §2): a key beam and the rim highlight over a touched sensor go out together, at once,
+0.17 s after the release (its particle lives 100 s; no fade). The beam has a gap over the judgement ring
+(`LineLength_Change`, DXBC `round_pi`), so the ring stays magenta under it.
 
-Remaining differences:
-* the real judgement ring line stays magenta over the effects (something draws it after the translucency); ours
-  whitens under the key beam;
-* `vb_SnoteHit_00` (R notes: large tile pattern `vMX_3_RankUp_000`, ParameterDynamic) is not drawn: placement
-  not captured, material not ported;
-* hold ribbon colour when held (stage) is yellow in the real game, orange in ours (not an effect);
-* hold sparks are slightly longer than the real ones; bonus triangle shards spread a little further inwards.
+Fixed since (doc 13): the key-beam gap, the R-note effect, the held ribbon (`vMX_2_Hold_004`), the hold glow
+flicker, camera-facing sprite orientation (UE's sprite up is the view's down). Remaining: see doc 13 §4.

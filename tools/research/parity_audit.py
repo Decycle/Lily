@@ -10,8 +10,8 @@ moved by the run's measured visual lead (`visual_timing`, interpolated), with
 * the play replayed: the injected touches (inject.jsonl edges) and, for E3 runs, the real per-note judgements
   (e3.json `real`, hit at note time + probe shift, judgement shown at note time + `shown`); notes without an
   outcome are perfect (`WACCA_SHOT_REPLAY`). Touches are moved by the game's input latency on the picture
-  clock (--latency, default 0.058 s: a touch's rim highlight shows 0.058 s after its script time); hit effects
-  by --hit-latency (default 0.033 s, best fit on the E3 Fragile hit frames),
+  clock (--latency, default 0.025 s: a touch's rim highlight shows 0.025 s after its script time); hit effects
+  by --hit-latency (default 0),
 * the song's background movie frame behind (`WACCA_SHOT_MOVIE`, planes cut from assets/Movie/mv_<id>.usm),
 and compares with `stagecmp compare` (view square 0,228,675,675). Writes <out>/sheets/NNNN-<label>.png
 (real | ours | |diff|x4), <out>/audit.csv (mean |diff| per region and per 25 px band) and prints a summary.
@@ -46,6 +46,11 @@ def lanes_of_cells(hexcells):
                 lane = 15 + sector if side == 1 else (74 - sector) % 60
                 mask |= 1 << lane
     return mask
+
+
+# `visual_timing` (analyze_e2's 2D note-edge fit) overestimates the picture lead: our 3D notes line up with the
+# reference frames 33 ms earlier (best offset of the note annulus, KING −40/−30 ms, Fragile −20…−50 ms, mean −33).
+LEAD_BIAS = 0.033
 
 
 def visual_lead(timing):
@@ -161,7 +166,7 @@ def regions(bands):
 def main():
     args = sys.argv[1:]
     run, out = args[0], args[1]
-    every, match, title, level, movie_on, latency, hit_latency = 1, None, "", "NORMAL/Lv.1", True, 0.058, 0.033
+    every, match, title, level, movie_on, latency, hit_latency = 1, None, "", "NORMAL/Lv.1", True, 0.025, 0.0
     env = dict(os.environ)
     i = 2
     while i < len(args):
@@ -193,7 +198,7 @@ def main():
     json.dump(replay(run, latency, hit_latency), open(rp, "w"))
     refs = list(csv.DictReader(open(os.path.join(run, "reference", "frames.csv"))))
     refs = [r for k, r in enumerate(refs) if (match.search(r["label"]) if match else k % every == 0)]
-    times = {r["file"]: float(r["chart_t"]) + lead(float(r["chart_t"])) for r in refs}
+    times = {r["file"]: float(r["chart_t"]) + lead(float(r["chart_t"])) - LEAD_BIAS for r in refs}
     planes = {}
     if usm and movie_on:
         frames = {f: max(round((t - movie_offset) * 60), 0) for f, t in times.items()}
