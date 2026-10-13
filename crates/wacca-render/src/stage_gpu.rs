@@ -44,6 +44,16 @@ pub(crate) fn depth_state(write: bool) -> wgpu::DepthStencilState {
     }
 }
 
+/// Rasterizer state of the stage's meshes as captured (doc 11 §2.4–2.5: notes, chevrons, guide
+/// lanes and hold ribbons): back faces culled, front = counter-clockwise on screen.
+pub(crate) fn primitive() -> wgpu::PrimitiveState {
+    wgpu::PrimitiveState {
+        front_face: wgpu::FrontFace::Ccw,
+        cull_mode: Some(wgpu::Face::Back),
+        ..Default::default()
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct ViewUniform {
@@ -146,7 +156,7 @@ impl StageLayer {
                         attributes: &attributes,
                     }],
                 },
-                primitive: wgpu::PrimitiveState::default(),
+                primitive: crate::stage_gpu::primitive(),
                 depth_stencil: Some(depth_state(write)),
                 multisample: wgpu::MultisampleState {
                     count: samples,

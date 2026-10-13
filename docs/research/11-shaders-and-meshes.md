@@ -244,7 +244,7 @@ Then separate translucency is composited (`FPostProcessBokehDOFRecombinePS`: sce
   `L_line_pos` 0, `R_line_pos` 0.51, `Line_LorR` 0.5, `LineONOFF` 1, `Combo_ONOFF` 0, insideglow 0.25..0.3,
   SmoothStep 0.6..1. Second MPC scalar (`cb4[0].y`) = 0.6249 in that frame (animated pulse; UNVERIFIED source).
   `View.GameTime` (`cb1[132].z`) drives the scrolls.
-* Hold body: `HoldColorNumber` 2 (picks tile 2 of the 13-tile `vT_HoldNote01_00_m` strip), `U_Tiling` 13.
+* Hold body: `HoldColorNumber` 2 (picks tile 2 of the 13-tile `vT_HoldGrd00_00_m` strip, the material's `TilingTexture`; `vT_HoldNote01` is unused), `U_Tiling` 13.
 
 Annotated disassembly (every constant operand followed by its captured value, plus SRV/sampler list) for each of
 these draws: `runs/renderdoc/cap3/d12365/annot/<eid>_{vs,ps}.asm` — 2493 bar line, 2635 hold-start note, 2680 hold
@@ -335,7 +335,7 @@ of 337.5; E2 measured the band at 292–315 px).
 
 ### 3.4 Holds
 Body: one dynamic triangle mesh per frame in world space (identity transform), material `vMX_2_Hold_001`: colour =
-tile `floor(HoldColorNumber)` (lerp to the next tile by `frac`) of the 13-tile strip `vT_HoldNote01_00_m` (512²)
+tile `floor(HoldColorNumber)` (lerp to the next tile by `frac`) of the 13-tile strip `vT_HoldGrd00_00_m` (512²; also the hold end cap `vMX_2_Hold_003` colour)
 sampled at `((rot180(uv − (0.45, 0.5)) + 0.5 + (tileX, tileY))·(1/13, 1))`, constant opacity, alpha blend.
 Strip geometry (CONFIRMED, frame 12365, `cap3/d12365b`, hold at lanes 40–49): rows of **16 vertices** at fixed world
 Y, rows every **ΔY = 4.5 cm (Δs = 0.0075)** from the hold head (here s = 0.6737, Y = −195.77) back to the tail (or to
@@ -404,3 +404,6 @@ Corrections (CONFIRMED unless marked):
   uses the table's 600 / 3 (UNVERIFIED, no capture).
 * Output: linear scene colour in Rgba16F composed with `pow(x, 1/2.2)` (re-linearised with the sRGB curve on sRGB
   targets so the stored value equals the game's UNORM output); the 2D HUD is drawn on top.
+* Stage order: movie, note bodies / hold ends / bar lines (opaque, depth written), chevrons, guide lanes, hold
+  ribbons, R-note aura (additive, depth-tested). Back faces culled (front CCW) as captured; the captured frames
+  render pixel-identical with and without culling (every drawn triangle faces the camera).

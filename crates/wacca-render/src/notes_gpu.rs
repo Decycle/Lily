@@ -117,7 +117,7 @@ impl NoteLayer {
                         attributes: &attributes,
                     }],
                 },
-                primitive: wgpu::PrimitiveState::default(),
+                primitive: crate::stage_gpu::primitive(),
                 depth_stencil: Some(crate::stage_gpu::depth_state(depth_write)),
                 multisample: wgpu::MultisampleState {
                     count: samples,
