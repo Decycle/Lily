@@ -7,7 +7,7 @@ visible difference either fixed or listed. The play area is audited separately (
 
 - **Ours:** `tools/research/menu_capture.ps1 -Screen <title|mode|category|select|options|results>`
   starts the release build fullscreen (1920 × 1200) on that screen and grabs its window with
-  `PrintWindow` (no synthetic input). It takes the window titled `WACCA_slim` *of the process it
+  `PrintWindow` (no synthetic input). It takes the window titled `Lily` *of the process it
   started* (round 1 matched the title only and could grab another running instance). Results
   need `-Wait 13` since round 2 (GO appears 11 s in). Temp save `runs/parity-save.json`, set up like the real guest:
   `{"version":1,"settings":{"noteSpeed":1.5,"menuTimers":true,"playerName":"GUEST","playerTitle":"ゲスト"}}`.

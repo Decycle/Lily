@@ -1,7 +1,7 @@
-//! The game files WACCA_slim reads, relative to the game's `Content` directory.
+//! The game files Lily reads, relative to the game's `Content` directory.
 //!
 //! Verified against the code (Oct 2026):
-//! - **Runtime** (`wacca-app` reads these from `--assets`, so they are kept in `<dest>/assets`):
+//! - **Runtime** (the game (`lily`) reads these from `--assets`, so they are kept in `<dest>/assets`):
 //!   `MusicData/<song>/*.mer` (charts, `shell.rs`/`play.rs`), `Sound/Bgm/MER_BGM.uexp` + the
 //!   `Sound/Bgm/*.awb` it streams from (`BgmBank`), `Sound/Se/MER_SE.uexp` (`SeBank`, optional),
 //!   `Movie/<name>.usm` (background movies, optional). `Table/MusicParameterTable.*` is kept too

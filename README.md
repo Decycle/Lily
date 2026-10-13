@@ -67,14 +67,14 @@ The full walkthrough, how each note type is judged and troubleshooting are in th
 
 ```
 rustup default stable-x86_64-pc-windows-gnu      # Windows; see CONTRIBUTING.md#toolchain
-cargo build --release -p wacca-app
+cargo build --release -p wacca-app --bin lily     # target/release/lily.exe
 ```
 
 With the game's `WindowsNoEditor\Mercury\Content` folder copied to `assets/` (gitignored), convert once and play:
 
 ```
 cargo run --release -p wacca-convert -- --assets assets --out data --textures --fonts --meshes --export-ui UI/Textures --export-ui Vfx/Textures
-cargo run --release -p wacca-app -- --assets assets --data data
+cargo run --release -p wacca-app --bin lily -- --assets assets --data data
 ```
 
 | `wacca-convert` flag | Writes |
@@ -143,7 +143,7 @@ Save-file-only settings, the save format and environment variables are described
 
 | Path | What |
 |---|---|
-| `crates/wacca-app` | The game: window, touch, screens, play, save IO |
+| `crates/wacca-app` | The game (`lily.exe`): window, touch, screens, play, save IO |
 | `crates/wacca-game` | Rules: judgement, score, gauge, grades, rating, Reverse Points, save format |
 | `crates/wacca-chart` | `.mer` chart parser and timing |
 | `crates/wacca-render` | wgpu renderer: playfield, notes, effects, text, WGSL shader ports (examples: `playfield`, `stagecmp`) |

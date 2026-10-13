@@ -2,7 +2,7 @@
 
 Scope: how to drive the real WACCA build on this PC (segatools + Waccon-IO) from code with exact, scripted
 touch input, record it at 60 fps with audio, align it with our timeline, read its judgements, and compare it frame
-by frame with WACCA_slim fed the same input. Ends with a harness design (`tools/realgame`) and a first joint
+by frame with Lily fed the same input. Ends with a harness design (`tools/realgame`) and a first joint
 experiment.
 
 Nothing here was run against the live game. All statements about the running game are from source code, config
@@ -197,7 +197,7 @@ continuous-time.
 - Free play: `segatools.ini [system] freeplay=1` removes coins. "SONGS FOR 1-PLAY" (`CanPlayMusicNumber` 1–3,
   test menu) set to 1 makes every credit one song → result → title. Both are optional and reversible.
 - Guest play uses default options (speed, mirror, judge offset, effects). Record which options the game shows and
-  configure WACCA_slim identically; options navigation can be added once the defaults are known.
+  configure Lily identically; options navigation can be added once the defaults are known.
 - `bValidCulture_Offline` exists per song in MusicParameterTable: in offline mode only some songs may be listed —
   pick experiment songs from those (UNVERIFIED filter semantics).
 

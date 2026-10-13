@@ -185,19 +185,57 @@ impl SaveData {
     }
 }
 
-/// `<appdata>\wacca-slim\save.json`.
+/// Folder name under the data directory (`%APPDATA%\lily`).
+pub const APP_DIR: &str = "lily";
+/// Folder used before the rename to Lily; its save is migrated once (see [`migrate_legacy`]).
+pub const LEGACY_APP_DIR: &str = "wacca-slim";
+
+/// `<appdata>\lily\save.json`.
 pub fn save_path_in(appdata: &Path) -> PathBuf {
-    appdata.join("wacca-slim").join("save.json")
+    appdata.join(APP_DIR).join("save.json")
 }
 
-/// Default save path: `%APPDATA%` on Windows; elsewhere `$XDG_DATA_HOME`, else `~/.local/share`.
-pub fn default_path() -> Option<PathBuf> {
+/// `<appdata>\wacca-slim\save.json` (the location before the rename).
+pub fn legacy_save_path_in(appdata: &Path) -> PathBuf {
+    appdata.join(LEGACY_APP_DIR).join("save.json")
+}
+
+/// Per-user data directory: `%APPDATA%` on Windows; elsewhere `$XDG_DATA_HOME`, else
+/// `~/.local/share`.
+pub fn data_base() -> Option<PathBuf> {
     let var = |name| std::env::var_os(name).filter(|v| !v.is_empty());
-    let base = var("APPDATA")
+    var("APPDATA")
         .map(PathBuf::from)
         .or_else(|| var("XDG_DATA_HOME").map(PathBuf::from))
-        .or_else(|| var("HOME").map(|h| Path::new(&h).join(".local").join("share")))?;
-    Some(save_path_in(&base))
+        .or_else(|| var("HOME").map(|h| Path::new(&h).join(".local").join("share")))
+}
+
+/// Default save path: [`save_path_in`] of [`data_base`].
+pub fn default_path() -> Option<PathBuf> {
+    data_base().map(|b| save_path_in(&b))
+}
+
+/// One-time migration after the rename: when `<appdata>\lily\save.json` does not exist but
+/// `<appdata>\wacca-slim\save.json` does, copy it (and its `.bak`, if any) to the new folder.
+/// The old files are left untouched. Returns the old save's path when something was copied.
+pub fn migrate_legacy(appdata: &Path) -> io::Result<Option<PathBuf>> {
+    let new = save_path_in(appdata);
+    let old = legacy_save_path_in(appdata);
+    if new.exists() || !old.is_file() {
+        return Ok(None);
+    }
+    if let Some(dir) = new.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let (old_bak, new_bak) = (bak_path(&old), bak_path(&new));
+    if old_bak.is_file() && !new_bak.exists() {
+        fs::copy(&old_bak, &new_bak)?;
+    }
+    // Copy under a temporary name first so an interrupted copy never looks like a real save.
+    let tmp = sibling(&new, ".migrating");
+    fs::copy(&old, &tmp)?;
+    fs::rename(&tmp, &new)?;
+    Ok(Some(old))
 }
 
 /// `path` with `suffix` appended to the file name (`save.json` → `save.json.bak`).
@@ -361,11 +399,50 @@ mod tests {
         assert_eq!(chart_key(3023, Difficulty::Expert), "3023:expert");
         assert_eq!(chart_key(1, Difficulty::Inferno), "1:inferno");
         let p = save_path_in(Path::new("C:/AppData"));
+        assert_eq!(p, Path::new("C:/AppData").join("lily").join("save.json"));
         assert_eq!(
-            p,
+            legacy_save_path_in(Path::new("C:/AppData")),
             Path::new("C:/AppData").join("wacca-slim").join("save.json")
         );
         assert_eq!(bak_path(&p).file_name().unwrap(), "save.json.bak");
+    }
+
+    #[test]
+    fn migrates_the_legacy_save_once() {
+        let base = temp_dir("migrate");
+        // Nothing to migrate.
+        assert!(migrate_legacy(&base).unwrap().is_none());
+        assert!(!base.join(APP_DIR).exists());
+        let old = legacy_save_path_in(&base);
+        fs::create_dir_all(old.parent().unwrap()).unwrap();
+        fs::write(&old, b"{\"v\":1}").unwrap();
+        fs::write(bak_path(&old), b"{\"v\":0}").unwrap();
+        assert_eq!(migrate_legacy(&base).unwrap(), Some(old.clone()));
+        let new = save_path_in(&base);
+        assert_eq!(fs::read(&new).unwrap(), b"{\"v\":1}");
+        assert_eq!(fs::read(bak_path(&new)).unwrap(), b"{\"v\":0}");
+        assert!(!sibling(&new, ".migrating").exists());
+        // The old files stay.
+        assert_eq!(fs::read(&old).unwrap(), b"{\"v\":1}");
+        assert_eq!(fs::read(bak_path(&old)).unwrap(), b"{\"v\":0}");
+        // Only once: an existing new save is never overwritten.
+        fs::write(&new, b"{\"v\":2}").unwrap();
+        assert!(migrate_legacy(&base).unwrap().is_none());
+        assert_eq!(fs::read(&new).unwrap(), b"{\"v\":2}");
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn migrates_without_a_bak() {
+        let base = temp_dir("migrate-nobak");
+        let old = legacy_save_path_in(&base);
+        fs::create_dir_all(old.parent().unwrap()).unwrap();
+        fs::write(&old, b"{}").unwrap();
+        assert!(migrate_legacy(&base).unwrap().is_some());
+        let new = save_path_in(&base);
+        assert!(new.is_file());
+        assert!(!bak_path(&new).exists());
+        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]

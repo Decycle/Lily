@@ -6,7 +6,7 @@ use wacca_chart::Difficulty;
 
 use crate::screen::Screen;
 
-pub const USAGE: &str = "usage: wacca-app [--assets <dir>] [--data <dir>] [--save <file>] [--portable] \
+pub const USAGE: &str = "usage: lily [--assets <dir>] [--data <dir>] [--save <file>] [--portable] \
 [--windowed] [--autoplay] [--speed 1.0..6.0] [--offset-ms N] \
 [--screen title|mode|category|select|options|calibrate|results|setup] \
 [--setup-source <dir> [--setup-start]] \
@@ -43,7 +43,7 @@ pub struct Args {
     pub offset: Option<f64>,
     /// Directory with `songs.json`, `jackets/`, `fonts/` (from `wacca-convert`).
     pub data: Option<PathBuf>,
-    /// Save file (default `%APPDATA%/wacca-slim/save.json`, or `save/save.json` next to the
+    /// Save file (default `%APPDATA%/lily/save.json`, or `save/save.json` next to the
     /// executable when portable).
     pub save: Option<PathBuf>,
     /// Keep the save next to the executable (also on with a `portable.txt` there).

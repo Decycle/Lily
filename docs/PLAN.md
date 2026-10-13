@@ -65,7 +65,7 @@ windows are bit-for-bit the table values. Rendering interpolates from audio time
 playfield, reproducing the cabinet's sensor layout so the input rules (slide/snap detection, hold) operate on the same
 data the real game sees. Mouse/keyboard fallback for testing. Window is portrait 9:16 scaled to screen height.
 
-**Save:** `%APPDATA%\wacca-slim\save.json`, versioned; per chart best score / best combo / min miss / counters
+**Save:** `%APPDATA%\lily\save.json`, versioned; per chart best score / best combo / min miss / counters
 (play, clear, missless, FC, AM, per grade); options; atomic write (temp → flush → `.bak` → rename); rating recomputed on load.
 
 ## 4. Milestones
