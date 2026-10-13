@@ -53,13 +53,15 @@ frame 9800 (R-note hit), 9103 (held hold), 9574 / 11389 (normal background), 132
 | Hold-held glow brightness | flicker mean 0.4 | 0.6 | fixed (CONFIRMED frame 9103 eid 4008): flicker = Max + (Min − Max)·sin; side-mask uniforms confirmed (U_pos 0.46, axis (1, 0)). |
 | Clear gauge | translucent mauve bar, diamonds | opaque bar | fixed (MEASURED per pixel): 5 px, border rows, track (42,45,57), fill (255,149,218), 2 px norma mark + 18 px fade, slanted caps, 1.3 px lower. |
 | Combo digits | dark outline | none | fixed: the game's digits have no outline. Fragile 0036 centre 4.5 → 2.6. |
+| Bonus shard spread | scaled offsets: shards reach the centre | 180–290 px | fixed (MEASURED, KING bonus frames): world-space sprite emitters (`vo_btap000_*`, Bhitpt, Miss) place particles without the component scale (UNVERIFIED in UE terms); bonus frames outer 10.6 → 10.3. |
 | R-note aura blend | additive | SrcAlpha/InvSrcAlpha | fixed (CONFIRMED frame 10405 eid 3835): colour × red, opacity sat(red); no longer brightens the ring under it. |
 
 ## 3. Checked, no change
 
 * Mask sweep speed and direction: 1 lane per 1/120 s, first lanes change ≤ 1 game frame after the event (MEASURED,
   Fragile 22.68 s remove). The earlier "sweep state at capture times" difference was the song-start case.
-* Hold sparks: lengths match the KING hold body frame within a pixel or two once the glow is right.
+* Hold sparks: lengths match the KING hold body frame within a pixel or two once the glow is right (local-space
+  emitters keep the 1.7 scale, validated on frame 9009 in doc 12).
 * Judgement art and COMBO word position/size: within 1 px (Fragile 0036/0017).
 * Sync connector: no darker centre visible at 675 px after the TAA filter (KING 39.04 s R pair).
 

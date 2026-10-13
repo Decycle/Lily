@@ -533,6 +533,15 @@ impl Frame {
         let d = self.dir(v);
         [0, 1, 2].map(|k| self.origin[k] + d[k])
     }
+
+    /// [`Frame::point`] without the component scale: where world-space (not `bUseLocalSpace`)
+    /// sprite emitters put their particles. MEASURED on the KING bonus hits: the shards
+    /// (`vo_btap000_*`, spawn 15–65 cm inwards) stay at 180–290 px as the unscaled offsets give;
+    /// scaled by 1.7 they reached the screen centre. UNVERIFIED in UE's source terms.
+    fn point_unscaled(&self, v: [f32; 3]) -> [f32; 3] {
+        let d = self.dir(v);
+        [0, 1, 2].map(|k| self.origin[k] + d[k] / self.scale)
+    }
 }
 
 /// One particle (component-local space).
@@ -1075,7 +1084,11 @@ fn push_sprite(
     pivot: [f32; 2],
     material: u32,
 ) {
-    let centre = frame.point(p.pos);
+    let centre = if def.local_space {
+        frame.point(p.pos)
+    } else {
+        frame.point_unscaled(p.pos)
+    };
     let to_cam = norm([-centre[0], CAMERA_Y - centre[1], -centre[2]]);
     let (right, up) = if def.alignment == "PSA_Velocity" {
         let v = frame.dir(p.vel);
