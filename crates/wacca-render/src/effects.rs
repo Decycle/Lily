@@ -1,23 +1,243 @@
-//! Hit effects: a small deterministic CPU particle system approximating the Cascade systems of
-//! the default touch effect (`TouchEffectTable` 312001: `vo_tap000_03/04` Marvelous pop/shoot,
-//! `_05/06` Great, `_00` Good, `vo_hold000_*_lp` hold sustain; 06 §3), plus the key beams.
+//! Hit effects, key beams and hold-held glows.
 //!
-//! Matched to the 120 fps E2 recordings (`runs/e2/*/video.mkv`, doc 09): on a judgement the
-//! note's arc lights up as a sector from the line inwards (white at the line, then the
-//! judgement's colour ramp `vT_Hit{Marv,Grate,Good}A00`), a narrower "shoot" wedge flies to the
-//! centre, small sparks drift inwards and the rim over the arc flashes white; all gone after
-//! ~0.25 s. Pressed sensors light their lanes (key beam) and fade over ~0.25 s after release.
+//! With the effect data loaded ([`Effects::set_library`]) they are the game's Cascade systems
+//! (doc 12, [`crate::particles`]): per lane of a judged note the `TouchEffectTable` row 312001
+//! pop (`vo_tap000_03` Marvelous, `_05` Great, `_00` Good, `vo_miss000_00` Miss; bonus notes
+//! `vo_btap000_03/05`) and shoot (`vo_tap000_04`, `_06`); per held lane `vo_hold000_00_lp`; per
+//! touched lane the key beam `vo_ftap000_00`. They are drawn in 3D by the stage pass
+//! ([`Effects::build`]). Without the data, [`Fallback`] — a hand-tuned 2D approximation matched
+//! to the E2 recordings — draws instead ([`Effects::draw`]).
 //!
-//! [`Effects`] is pure: spawn with [`Effects::hit`], advance with [`Effects::update`], draw with
-//! [`Effects::draw`]. Randomness comes from a seeded xorshift, so runs are reproducible.
+//! Everything here is pure; randomness comes from seeded xorshifts, so runs are reproducible.
 
-use wacca_chart::{HoldNode, LANES};
+use std::collections::HashSet;
+use std::sync::Arc;
+
+use wacca_chart::{Bonus, HoldNode, LANES};
+
+use crate::particles::{
+    EFFECT_RADIUS, EffectLibrary, FxBlend, FxVertex, KEY_BEAM, ParticleWorld, Placement,
+};
 
 use crate::layout::{
     Paint, Vertex, paint_sector, polar, push_oriented_rect, push_sector, push_strip,
 };
 use crate::sprites::{JudgeSprite, Sprite, SpriteSheet};
 use crate::style::Rgba;
+
+/// Key of a persistent instance: key beams and held-hold glows.
+const KEY_BEAM_KEY: u64 = 1 << 32;
+const HOLD_KEY: u64 = 2 << 32;
+/// A released key beam fades out over this long. Measured on the E3 recordings (a 34 ms tap's
+/// beam is gone ~0.3 s later); UNVERIFIED how the game fades it (the particle lives 100 s).
+pub const KEY_BEAM_FADE_SECS: f32 = 0.3;
+
+/// Live hit effects: the game's particle systems when the library is attached, else the 2D
+/// [`Fallback`].
+#[derive(Clone, Debug)]
+pub struct Effects {
+    lib: Option<Arc<EffectLibrary>>,
+    world: ParticleWorld,
+    fallback: Fallback,
+    /// Sensors pressed now (bit per lane).
+    touched: u64,
+    /// Arcs `(start lane, width)` of the holds being held.
+    holds: Vec<(f32, f32)>,
+    /// Seconds each lane's rim highlight still shows.
+    rim: [f32; LANES as usize],
+}
+
+/// The rim over a touched sensor (2D HUD, not a particle effect): a white edge and a grey band
+/// outside the judgement ring, shown while touched and [`RIM_HOLD_SECS`] after release, no fade
+/// (E3 recordings, `runs/e3/20261013-023731` 9.36–9.62 s: edge (244, 243, 245) at 314–317 px,
+/// band (125, 125, 125) at 320–328 px of the 291.8 px ring radius).
+pub const RIM_HOLD_SECS: f32 = 0.2;
+const RIM_EDGE: (f32, f32, Rgba) = (1.076, 1.09, [0.957, 0.953, 0.961, 1.0]);
+const RIM_BAND: (f32, f32, Rgba) = (1.09, 1.126, [0.49, 0.49, 0.49, 1.0]);
+
+impl PartialEq for Effects {
+    fn eq(&self, other: &Self) -> bool {
+        let same_lib = match (&self.lib, &other.lib) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (a, b) => a.is_none() && b.is_none(),
+        };
+        same_lib
+            && self.world == other.world
+            && self.fallback == other.fallback
+            && self.touched == other.touched
+            && self.holds == other.holds
+            && self.rim == other.rim
+    }
+}
+
+impl Default for Effects {
+    fn default() -> Self {
+        Self {
+            lib: None,
+            world: ParticleWorld::default(),
+            fallback: Fallback::default(),
+            touched: 0,
+            holds: Vec::new(),
+            rim: [0.0; LANES as usize],
+        }
+    }
+}
+
+impl Effects {
+    /// Uses the game's effects from `lib` (`None`: the 2D fallback).
+    pub fn set_library(&mut self, lib: Option<Arc<EffectLibrary>>) {
+        self.lib = lib;
+        self.world = ParticleWorld::default();
+    }
+
+    /// Whether the game's effects are used.
+    pub fn is_3d(&self) -> bool {
+        self.lib.is_some()
+    }
+
+    /// Live particles (3D) or shapes (fallback).
+    pub fn len(&self) -> usize {
+        if self.lib.is_some() {
+            self.world.len()
+        } else {
+            self.fallback.len()
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// A judgement of a plain note over the arc `lane .. lane + width`.
+    pub fn hit(&mut self, lane: u8, width: u8, kind: JudgeSprite) {
+        self.hit_note(lane, width, kind, Bonus::None);
+    }
+
+    /// A judgement over the arc `lane .. lane + width` of a note with `bonus`.
+    pub fn hit_note(&mut self, lane: u8, width: u8, kind: JudgeSprite, bonus: Bonus) {
+        let Some(lib) = self.lib.clone() else {
+            self.fallback.hit(lane, width, kind);
+            return;
+        };
+        let t = &lib.touch;
+        let bonus_note = bonus == Bonus::Bonus;
+        let names = match kind {
+            JudgeSprite::Marvelous => [
+                if bonus_note {
+                    &t.bonus_marvelous_pop
+                } else {
+                    &t.marvelous_pop
+                },
+                &t.marvelous_shoot,
+            ],
+            JudgeSprite::Great => [
+                if bonus_note {
+                    &t.bonus_great_pop
+                } else {
+                    &t.great_pop
+                },
+                &t.great_shoot,
+            ],
+            JudgeSprite::Good => [&t.good, &None],
+            JudgeSprite::Miss => [&t.miss, &None],
+        };
+        for sys in names.into_iter().flatten().filter_map(|n| lib.system(n)) {
+            for i in 0..width.max(1) {
+                let l = (lane + i) % LANES;
+                self.world.spawn(sys, Placement::hit(f32::from(l)), None);
+            }
+        }
+        // Not drawn: the R-note effect (`vb_SnoteHit_00`, SNoteEffectTable ON): its placement
+        // is not captured and its tile material (`vMX_3_RankUp_000`) is not ported.
+    }
+
+    /// Sensors pressed now (`lanes` bit per lane, any depth): their key beams light up.
+    pub fn touch(&mut self, lanes: u64) {
+        self.touched = lanes;
+        self.fallback.touch(lanes);
+    }
+
+    /// Arcs `(start lane, width)` of the holds currently held (replaces the previous set).
+    pub fn set_holds(&mut self, arcs: Vec<(f32, f32)>) {
+        self.holds.clone_from(&arcs);
+        self.fallback.set_holds(arcs);
+    }
+
+    /// Advance by `dt` seconds.
+    pub fn update(&mut self, dt: f32) {
+        let Some(lib) = self.lib.clone() else {
+            self.fallback.update(dt);
+            return;
+        };
+        for (l, r) in self.rim.iter_mut().enumerate() {
+            *r = if self.touched >> l & 1 == 1 {
+                RIM_HOLD_SECS
+            } else {
+                (*r - dt.max(0.0)).max(0.0)
+            };
+        }
+        let mut wanted: HashSet<u64> = HashSet::new();
+        if let Some(beam) = lib.system(KEY_BEAM) {
+            for lane in (0..LANES).filter(|l| self.touched >> l & 1 == 1) {
+                let key = KEY_BEAM_KEY + u64::from(lane);
+                wanted.insert(key);
+                if !self.world.has(key) {
+                    let place = Placement {
+                        lane: f32::from(lane),
+                        radius: EFFECT_RADIUS,
+                        scale: 1.0,
+                    };
+                    self.world.spawn(beam, place, Some(key));
+                }
+            }
+        }
+        if let Some(glow) = lib.touch.hold.as_deref().and_then(|n| lib.system(n)) {
+            for (h, &(start, width)) in self.holds.iter().enumerate() {
+                for j in 0..width.round().max(1.0) as u64 {
+                    let key = HOLD_KEY + ((h as u64) << 8) + j;
+                    wanted.insert(key);
+                    let place = Placement::hit(start + j as f32);
+                    if self.world.has(key) {
+                        self.world.place(key, place);
+                    } else {
+                        self.world.spawn(glow, place, Some(key));
+                    }
+                }
+            }
+        }
+        let gone: Vec<u64> = self.world.keys().filter(|k| !wanted.contains(k)).collect();
+        for key in gone {
+            if key < HOLD_KEY {
+                self.world.fade_out(key, KEY_BEAM_FADE_SECS);
+            } else {
+                // Hold glows let their particles finish.
+                self.world.stop(key, false);
+            }
+        }
+        self.world.update(dt);
+    }
+
+    /// The 3D effects (view-space triangles and their blend runs); nothing without the library.
+    pub fn build(&self, out: &mut Vec<FxVertex>, runs: &mut Vec<(FxBlend, u32, u32)>) {
+        if let Some(lib) = &self.lib {
+            self.world.build(lib, out, runs);
+        }
+    }
+
+    /// The 2D part: the rim highlights over touched sensors, or with no effect data the whole
+    /// 2D fallback.
+    pub fn draw(&self, out: &mut Vec<Vertex>, sheet: &SpriteSheet) {
+        if self.lib.is_none() {
+            self.fallback.draw(out, sheet);
+            return;
+        }
+        for (lane, _) in self.rim.iter().enumerate().filter(|(_, r)| **r > 0.0) {
+            for (r0, r1, c) in [RIM_EDGE, RIM_BAND] {
+                push_sector(out, r0, r1, lane as f32, 1.0, c);
+            }
+        }
+    }
+}
 
 /// Life of the pop sector (s); `vo_tap000_03` emitter lifetimes are 0.1–0.35 s.
 pub const POP_SECS: f32 = 0.3;
@@ -154,9 +374,10 @@ impl Particle {
     }
 }
 
-/// Live hit effects, key beams and hold sustain glows.
+/// The 2D approximation used when the effect data is missing: live hit effects, key beams and
+/// hold sustain glows.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Effects {
+pub struct Fallback {
     particles: Vec<Particle>,
     /// Key-beam intensity per lane (1 = pressed, fading to 0).
     beams: [f32; LANES as usize],
@@ -167,7 +388,7 @@ pub struct Effects {
     seed: u32,
 }
 
-impl Default for Effects {
+impl Default for Fallback {
     fn default() -> Self {
         Self {
             particles: Vec::new(),
@@ -179,7 +400,7 @@ impl Default for Effects {
     }
 }
 
-impl Effects {
+impl Fallback {
     /// Uniform in `lo..hi` (xorshift32).
     fn rand(&mut self, lo: f32, hi: f32) -> f32 {
         let mut x = self.seed;
@@ -365,11 +586,94 @@ pub fn hold_arc_at(nodes: &[HoldNode], t: f64) -> Option<(f32, f32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::particles::TouchEffect;
     use wacca_chart::{Arc, BeatPos};
+    use wacca_ue4::{Burst, Distribution, Emitter, MaterialParams, Module, ParticleSystem};
+
+    /// A library whose Marvelous pop and key beam are one-particle systems (life 0.3 s / 100 s).
+    fn library() -> std::sync::Arc<EffectLibrary> {
+        let system = |name: &str, life: f32| ParticleSystem {
+            name: name.into(),
+            emitters: vec![Emitter {
+                name: String::new(),
+                material: "M".into(),
+                mesh: None,
+                mesh_orientation: None,
+                gpu: None,
+                alignment: "PSA_Square".into(),
+                local_space: true,
+                duration: 1.0,
+                delay: 0.0,
+                loops: 1,
+                sub_images: [1, 1],
+                sub_uv_method: String::new(),
+                rate: Distribution::constant(&[0.0]),
+                rate_scale: Distribution::constant(&[1.0]),
+                bursts: vec![Burst {
+                    count: 1,
+                    count_low: -1,
+                    time: 0.0,
+                }],
+                burst_scale: Distribution::constant(&[1.0]),
+                modules: vec![Module::Lifetime(Distribution::constant(&[life]))],
+            }],
+        };
+        let touch = TouchEffect {
+            marvelous_pop: Some("pop".into()),
+            ..TouchEffect::default()
+        };
+        let m = MaterialParams {
+            name: "M".into(),
+            ..MaterialParams::default()
+        };
+        std::sync::Arc::new(EffectLibrary::new(
+            touch,
+            vec![
+                ("pop".into(), system("pop", 0.3)),
+                (KEY_BEAM.into(), system("beam", 100.0)),
+            ],
+            vec![(m, "vM_1_Base_004".into())],
+            vec![],
+            &Default::default(),
+        ))
+    }
+
+    #[test]
+    fn game_effects_per_lane_and_key_beam_fade() {
+        let mut fx = Effects::default();
+        fx.set_library(Some(library()));
+        assert!(fx.is_3d());
+        fx.hit_note(58, 4, JudgeSprite::Marvelous, Bonus::None);
+        fx.hit(0, 2, JudgeSprite::Good); // no Good effect in this library
+        fx.update(0.01);
+        assert_eq!(fx.len(), 4, "one system per lane");
+        let (mut v, mut runs) = (Vec::new(), Vec::new());
+        fx.build(&mut v, &mut runs);
+        assert_eq!(v.len(), 4 * 6);
+        let mut flat = Vec::new();
+        fx.draw(&mut flat, &SpriteSheet::default());
+        assert!(flat.is_empty(), "no 2D fallback with the library");
+        fx.update(0.3);
+        assert!(fx.is_empty());
+        // Key beam: lit while touched, fading for KEY_BEAM_FADE_SECS after release.
+        fx.touch(1 << 3);
+        fx.update(0.01);
+        assert_eq!(fx.len(), 1);
+        fx.draw(&mut flat, &SpriteSheet::default());
+        assert_eq!(flat.len(), 2 * 6, "rim edge and band");
+        fx.touch(0);
+        fx.update(KEY_BEAM_FADE_SECS / 2.0);
+        assert_eq!(fx.len(), 1);
+        let (mut v, mut runs) = (Vec::new(), Vec::new());
+        fx.build(&mut v, &mut runs);
+        assert!(v.iter().all(|q| (q.color[3] - 0.5).abs() < 0.05));
+        fx.update(KEY_BEAM_FADE_SECS);
+        assert!(fx.is_empty());
+    }
 
     #[test]
     fn hits_spawn_age_and_expire() {
-        let mut fx = Effects::default();
+        let mut fx = Fallback::default();
         fx.hit(10, 4, JudgeSprite::Miss);
         assert!(fx.is_empty(), "misses show nothing");
         fx.hit(10, 4, JudgeSprite::Marvelous);
@@ -400,7 +704,7 @@ mod tests {
     #[test]
     fn deterministic_and_inside_the_arc() {
         let run = || {
-            let mut fx = Effects::default();
+            let mut fx = Fallback::default();
             fx.hit(58, 4, JudgeSprite::Great);
             fx.update(0.05);
             fx
@@ -418,7 +722,7 @@ mod tests {
 
     #[test]
     fn beams_fade_after_release() {
-        let mut fx = Effects::default();
+        let mut fx = Fallback::default();
         fx.touch(1 << 3 | 1 << 59);
         fx.update(BEAM_FADE_SECS / 2.0);
         assert!((fx.beams[3] - 0.5).abs() < 1e-5 && fx.beams[59] > 0.0 && fx.beams[4] == 0.0);
@@ -433,7 +737,7 @@ mod tests {
 
     #[test]
     fn holds_emit_sparks_at_their_rate() {
-        let mut fx = Effects::default();
+        let mut fx = Fallback::default();
         fx.set_holds(vec![(5.0, 3.0), (30.0, 2.0)]);
         fx.update(0.1);
         assert_eq!(fx.len(), (HOLD_SPARK_RATE * 0.1 * 2.0) as usize);
@@ -444,7 +748,7 @@ mod tests {
 
     #[test]
     fn draws_every_shape() {
-        let mut fx = Effects::default();
+        let mut fx = Fallback::default();
         fx.hit(0, 6, JudgeSprite::Good);
         let mut v = Vec::new();
         fx.draw(&mut v, &SpriteSheet::default());

@@ -2164,8 +2164,11 @@ dependencies = [
  "image",
  "log",
  "pollster",
+ "serde",
+ "serde_json",
  "thiserror 2.0.21",
  "wacca-chart",
+ "wacca-ue4",
  "wgpu",
  "winit",
 ]
@@ -2175,6 +2178,7 @@ name = "wacca-ue4"
 version = "0.1.0"
 dependencies = [
  "log",
+ "serde",
  "thiserror 2.0.21",
 ]
 

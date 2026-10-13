@@ -16,6 +16,7 @@ use wacca_game::input::{DEPTHS, InputFrame};
 use wacca_game::rules::{JudgeClass, JudgeEvent, Judgement};
 use wacca_render::effects::hold_arc_at;
 use wacca_render::layout::Rect;
+use wacca_render::particles::EffectLibrary;
 use wacca_render::{
     Effects, JudgeSprite, LiveState, MeshVertex, NoteMeshes, RimState, SceneOptions, SpriteSheet,
     Stage, Vertex, build_mesh_notes, build_scene_into, build_stage_into,
@@ -263,7 +264,8 @@ impl PlayState {
             self.hold_voices.insert(note, voices);
             // The hold head pops like a tap; its body glows until the hold is judged.
             let arc = self.chart.notes[note].arc;
-            self.effects.hit(arc.lane, arc.width, judge_sprite(j));
+            self.effects
+                .hit_note(arc.lane, arc.width, judge_sprite(j), bonus);
             self.holding.push(note);
         }
         let combo = self.session.combo();
@@ -278,10 +280,15 @@ impl PlayState {
             self.holding.retain(|&n| n != e.note);
             if let Some(arc) = hit_arc(&self.chart, e) {
                 self.effects
-                    .hit(arc.lane, arc.width, judge_sprite(e.judgement));
+                    .hit_note(arc.lane, arc.width, judge_sprite(e.judgement), e.bonus);
             }
         }
         self.sound(&events);
+    }
+
+    /// Draw the game's hit effects from `lib` (`None`: the 2D fallback).
+    pub fn set_effect_library(&mut self, lib: Option<Arc<EffectLibrary>>) {
+        self.effects.set_library(lib);
     }
 
     /// Advance the effects to chart time `now` (at most 0.1 s per frame, never backwards).

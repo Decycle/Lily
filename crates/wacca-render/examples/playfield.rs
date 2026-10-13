@@ -319,16 +319,29 @@ fn snapshot(
     let kind = match std::env::var("WACCA_SHOT_JUDGE").as_deref() {
         Ok("great") => JudgeSprite::Great,
         Ok("good") => JudgeSprite::Good,
+        Ok("miss") => JudgeSprite::Miss,
         _ => JudgeSprite::Marvelous,
     };
     let done: Vec<&Note> = chart.notes.iter().filter(|n| n.time <= at).collect();
     let mut fx = Effects::default();
+    fx.set_library(renderer.effect_library());
     let dt = 1.0 / 120.0;
     let mut t = at - 0.5;
     while t < at {
         for n in done.iter().filter(|n| n.time > t - dt && n.time <= t) {
-            fx.hit(n.arc.lane, n.arc.width, kind);
+            fx.hit_note(n.arc.lane, n.arc.width, kind, n.bonus);
         }
+        // Each note's sensors are pressed for a 34 ms tap (or the hold), as the E3 taps.
+        let pressed = chart.notes.iter().filter(|n| {
+            let end = match &n.body {
+                NoteBody::Hold { nodes } => nodes.last().map_or(n.time, |e| e.time),
+                _ => n.time + 0.034,
+            };
+            n.time <= t && t < end
+        });
+        fx.touch(pressed.fold(0, |m, n| {
+            (0..n.arc.width).fold(m, |m, i| m | 1u64 << ((n.arc.lane + i) % 60))
+        }));
         let holds = chart.notes.iter().filter_map(|n| match &n.body {
             NoteBody::Hold { nodes } if n.time <= t && nodes.last()?.time > t => {
                 wacca_render::effects::hold_arc_at(nodes, t)

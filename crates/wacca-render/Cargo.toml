@@ -9,6 +9,9 @@ publish.workspace = true
 # depend on `windows-link` 0.2 (raw-dylib), which needs a full MinGW `dlltool` + `as` on windows-gnu.
 [dependencies]
 wacca-chart.workspace = true
+wacca-ue4.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 log.workspace = true
 thiserror.workspace = true
 bytemuck = { version = "1", features = ["derive"] }
