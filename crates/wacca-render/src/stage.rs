@@ -10,6 +10,7 @@ use wacca_chart::{Chart, HoldNode, LANES, NoteBody, SlideDir, SnapDir};
 use crate::camera::{APPEAR_DISTANCE, HOLD_RADIUS_CM, note_scale, note_to_world, world_to_view};
 use crate::layout::{last_drawable_time, mask_state, raw_depth};
 use crate::notes3d::{MeshKind, MeshVertex, NoteMesh, NoteMeshes};
+use crate::particles::{FxBlend, FxVertex};
 use crate::scene::{LiveState, SceneOptions};
 
 /// Guide-lane cone (`vMX_2_GuideLane_000`, one dynamic mesh per lane, frame 12365): rim radius
@@ -68,11 +69,17 @@ pub struct Stage {
     pub time: f32,
     /// `MPC_BpmSignal` second scalar: the judgement ring's glow pulse.
     pub pulse: f32,
+    /// Hit effects ([`crate::particles`]) and their runs of equal blend.
+    pub effects: Vec<FxVertex>,
+    pub effect_runs: Vec<(FxBlend, u32, u32)>,
 }
 
 impl Stage {
     pub fn is_empty(&self) -> bool {
-        self.lanes.is_empty() && self.holds.is_empty() && self.chevrons.is_empty()
+        self.lanes.is_empty()
+            && self.holds.is_empty()
+            && self.chevrons.is_empty()
+            && self.effects.is_empty()
     }
 
     /// Empties the stage, keeping the buffers.
@@ -80,6 +87,8 @@ impl Stage {
         self.lanes.clear();
         self.holds.clear();
         self.chevrons.clear();
+        self.effects.clear();
+        self.effect_runs.clear();
         self.movie = false;
         self.time = 0.0;
         self.pulse = 0.0;
@@ -255,6 +264,10 @@ pub fn build_stage_into(
     stage.time = now as f32;
     // UNVERIFIED: the MPC_BpmSignal pulse taken as the beat phase.
     stage.pulse = (chart.sec_to_tick(now) / BEAT_TICKS).rem_euclid(1.0) as f32;
+
+    if let Some(fx) = live.effects {
+        fx.build(&mut stage.effects, &mut stage.effect_runs);
+    }
 
     let mask = mask_state(&chart.masks, now);
     for lane in (0..LANES).filter(|&l| mask[usize::from(l)]) {

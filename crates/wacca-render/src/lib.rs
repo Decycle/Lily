@@ -5,9 +5,11 @@
 
 pub mod camera;
 pub mod effects;
+mod fx_gpu;
 pub mod layout;
 pub mod notes3d;
 mod notes_gpu;
+pub mod particles;
 mod renderer;
 pub mod scene;
 pub mod sprites;

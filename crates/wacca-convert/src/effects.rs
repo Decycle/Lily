@@ -238,7 +238,7 @@ mod tests {
             material: m.into(),
             mesh: mesh.map(Into::into),
             mesh_orientation: None,
-            gpu: false,
+            gpu: None,
             alignment: String::new(),
             local_space: true,
             duration: 1.0,

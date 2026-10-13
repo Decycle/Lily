@@ -2164,8 +2164,11 @@ dependencies = [
  "image",
  "log",
  "pollster",
+ "serde",
+ "serde_json",
  "thiserror 2.0.21",
  "wacca-chart",
+ "wacca-ue4",
  "wgpu",
  "winit",
 ]

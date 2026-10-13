@@ -5,6 +5,7 @@
 
 use std::path::Path;
 
+use crate::fx_gpu::FxLayer;
 use crate::layout::{ATLAS_SIZE, Vertex, playfield_viewport};
 use crate::notes_gpu::NoteLayer;
 use crate::notes3d::{MeshVertex, NoteMeshes};
@@ -39,6 +40,8 @@ pub struct Renderer {
     notes: NoteLayer,
     /// Guide lanes, hold ribbons, chevrons; the HDR pass and its composition.
     stage: StageLayer,
+    /// Hit effects (off until the effect library loads).
+    fx: FxLayer,
 }
 
 impl Renderer {
@@ -164,6 +167,7 @@ impl Renderer {
             video: VideoLayer::new(device, SAMPLE_COUNT),
             notes: NoteLayer::new(device, SAMPLE_COUNT),
             stage: StageLayer::new(device, queue, format, SAMPLE_COUNT),
+            fx: FxLayer::new(device, SAMPLE_COUNT),
         };
         // The white block alone: flat colours work without any sprites.
         me.upload(sprites::pack(Vec::new()).1);
@@ -178,6 +182,9 @@ impl Renderer {
     /// without them notes stay 2D.
     pub fn load_sprites(&mut self, ui_dir: &Path) {
         self.stage.load(&self.device, &self.queue, ui_dir);
+        if let Some(data) = ui_dir.parent() {
+            self.fx.load(&self.device, &self.queue, data, ui_dir);
+        }
         self.notes.load(
             &self.device,
             &self.queue,
@@ -224,6 +231,11 @@ impl Renderer {
     /// [`Renderer::render_with_notes`]).
     pub fn note_meshes(&self) -> Option<&NoteMeshes> {
         self.notes.meshes()
+    }
+
+    /// The hit-effect library, when loaded (give it to [`crate::Effects::set_library`]).
+    pub fn effect_library(&self) -> Option<std::sync::Arc<crate::particles::EffectLibrary>> {
+        self.fx.library()
     }
 
     /// Sprites available to [`build_scene`](crate::build_scene).
@@ -302,12 +314,15 @@ impl Renderer {
         if staged {
             self.notes.prepare(&self.device, &self.queue, notes);
             self.stage.prepare(&self.device, &self.queue, stage, vp);
+            self.fx.prepare(&self.device, &self.queue, stage);
             let mut pass = self.stage.begin(&self.device, encoder, target_size, vp);
             self.video.draw(&mut pass);
             self.notes.draw_opaque(&mut pass, notes);
             self.stage.draw_opaque(&mut pass);
+            self.fx.draw_masked(&mut pass);
             self.stage.draw_translucent(&mut pass);
             self.notes.draw_aura(&mut pass, notes);
+            self.fx.draw_translucent(&mut pass);
         }
         let bytes: &[u8] = bytemuck::cast_slice(scene);
         if bytes.len() as u64 > self.vertices.size() {

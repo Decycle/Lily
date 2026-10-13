@@ -118,6 +118,77 @@ pub struct Burst {
     pub time: f32,
 }
 
+/// Baked curves of a GPU emitter (`FGPUSpriteResourceData`), sampled uniformly over relative
+/// time 0..1: colour (`QuantizedColorSamples · ColorScale + ColorBias`) and the size factor
+/// applied to the initial size (`(QuantizedMiscSamples.rg · MiscScale + MiscBias) · InvMaxSize`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct GpuCurves {
+    pub color: Vec<[f32; 4]>,
+    pub size: Vec<[f32; 2]>,
+}
+
+impl GpuCurves {
+    fn sample<const N: usize>(v: &[[f32; N]], t: f32) -> Option<[f32; N]> {
+        let n = v.len();
+        let x = t.clamp(0.0, 1.0) * (n.checked_sub(1)?) as f32;
+        let i = (x.floor() as usize).min(n - 1);
+        let j = (i + 1).min(n - 1);
+        let f = x - i as f32;
+        Some(std::array::from_fn(|k| v[i][k] + (v[j][k] - v[i][k]) * f))
+    }
+
+    /// Colour at relative time `t`.
+    pub fn color_at(&self, t: f32) -> Option<[f32; 4]> {
+        Self::sample(&self.color, t)
+    }
+
+    /// Size factor at relative time `t`.
+    pub fn size_at(&self, t: f32) -> Option<[f32; 2]> {
+        Self::sample(&self.size, t)
+    }
+}
+
+fn gpu_curves(t: &Object) -> GpuCurves {
+    let data = t.get("ResourceData");
+    let vec4 = |name: &str| -> [f32; 4] {
+        let mut out = [0.0; 4];
+        if let Some(Value::Array(v)) = data.and_then(|d| d.field(name)) {
+            for (o, x) in out.iter_mut().zip(v) {
+                *o = x.as_f32().unwrap_or(0.0);
+            }
+        }
+        out
+    };
+    let samples = |name: &str| -> Vec<[f32; 4]> {
+        match data.and_then(|d| d.field(name)) {
+            Some(Value::Array(v)) => v
+                .iter()
+                .map(|c| {
+                    ["R", "G", "B", "A"]
+                        .map(|k| c.field(k).and_then(Value::as_i64).unwrap_or(0) as f32 / 255.0)
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    };
+    let inv_max = match t.get("EmitterInfo").and_then(|e| e.field("InvMaxSize")) {
+        Some(Value::Array(v)) => [0, 1].map(|i| v.get(i).and_then(Value::as_f32).unwrap_or(1.0)),
+        _ => [1.0; 2],
+    };
+    let (cs, cb) = (vec4("ColorScale"), vec4("ColorBias"));
+    let (ms, mb) = (vec4("MiscScale"), vec4("MiscBias"));
+    GpuCurves {
+        color: samples("QuantizedColorSamples")
+            .into_iter()
+            .map(|c| std::array::from_fn(|k| c[k] * cs[k] + cb[k]))
+            .collect(),
+        size: samples("QuantizedMiscSamples")
+            .into_iter()
+            .map(|m| [0, 1].map(|k| (m[k] * ms[k] + mb[k]) * inv_max[k]))
+            .collect(),
+    }
+}
+
 /// The particle modules the hit effects use, in LOD-0 module order.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Module {
@@ -188,8 +259,9 @@ pub struct Emitter {
     /// Mesh particles: the static mesh (object name) and its initial roll/pitch/yaw (degrees).
     pub mesh: Option<String>,
     pub mesh_orientation: Option<Distribution>,
-    /// GPU sprites (`ParticleModuleTypeDataGpu`; simulated like CPU sprites here).
-    pub gpu: bool,
+    /// GPU sprites (`ParticleModuleTypeDataGpu`): their baked colour and size curves, which the
+    /// GPU simulation uses instead of the colour/size-over-life modules.
+    pub gpu: Option<GpuCurves>,
     /// `EParticleScreenAlignment` name (`PSA_Square`, `PSA_Velocity`, `PSA_Rectangle`, ...).
     pub alignment: String,
     pub local_space: bool,
@@ -429,7 +501,9 @@ fn bake_curve(curve: Option<&Value>) -> Option<Distribution> {
 fn emitter(objs: &Objects, e: &Object) -> Option<Emitter> {
     let lod = objects(objs, e.get("LODLevels")).next()?;
     let required = object(objs, lod.get("RequiredModule"))?;
-    if !flag(lod, "bEnabled", true) || !flag(required, "bEnabled", true) {
+    // Only the LOD level decides: `vo_miss000_00` has its required module flagged off yet draws
+    // (RenderDoc frame 11184).
+    if !flag(lod, "bEnabled", true) {
         return None;
     }
     let spawn = object(objs, lod.get("SpawnModule"));
@@ -465,7 +539,9 @@ fn emitter(objs: &Objects, e: &Object) -> Option<Emitter> {
         mesh_orientation: type_data
             .filter(|_| is_mesh)
             .map(|t| distribution(objs, t, "RollPitchYawRange", &[0.0; 3])),
-        gpu: type_data.is_some_and(|t| t.class == "ParticleModuleTypeDataGpu"),
+        gpu: type_data
+            .filter(|t| t.class == "ParticleModuleTypeDataGpu")
+            .map(gpu_curves),
         alignment: enum_name(required, "ScreenAlignment", "PSA_Square"),
         local_space: flag(required, "bUseLocalSpace", false),
         duration: float(required, "EmitterDuration", 1.0),
@@ -598,6 +674,18 @@ mod tests {
     }
 
     #[test]
+    fn gpu_curves_sample_uniformly() {
+        let g = GpuCurves {
+            color: vec![[0.0; 4], [2.0, 4.0, 6.0, 1.0]],
+            size: vec![[1.0, 1.0], [1.0, 3.0], [1.0, 5.0]],
+        };
+        assert_eq!(g.color_at(0.5), Some([1.0, 2.0, 3.0, 0.5]));
+        assert_eq!(g.size_at(0.75), Some([1.0, 4.0]));
+        assert_eq!(g.size_at(2.0), Some([1.0, 5.0]));
+        assert_eq!(GpuCurves::default().color_at(0.3), None);
+    }
+
+    #[test]
     fn unbaked_curves_are_sampled() {
         let key = |t: f32, v: f32, mode: &str| {
             Value::Struct(vec![
@@ -707,7 +795,7 @@ mod tests {
         assert_eq!((e.name.as_str(), e.material.as_str()), ("Flare", "vM_Test"));
         assert!(e.local_space && (e.duration - 0.35).abs() < 1e-6 && e.loops == 0);
         assert_eq!(e.alignment, "PSA_Square");
-        assert_eq!(e.mesh, None);
+        assert_eq!((e.mesh.as_ref(), e.gpu.as_ref()), (None, None));
         let Module::Lifetime(l) = &e.modules[0] else {
             panic!("{:?}", e.modules)
         };

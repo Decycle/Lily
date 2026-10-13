@@ -714,8 +714,9 @@ impl App {
             p.start()?;
             Ok(p)
         }) {
-            Ok(p) => {
+            Ok(mut p) => {
                 log::info!("song loaded in {:.0} ms", ms(t.elapsed()));
+                p.set_effect_library(self.gfx.as_ref().and_then(|g| g.renderer.effect_library()));
                 self.play = Some(p);
                 self.screen = Screen::Play;
             }
