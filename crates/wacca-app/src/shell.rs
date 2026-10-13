@@ -1292,7 +1292,7 @@ impl App {
 
     fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<(), ShellError> {
         let mut attrs = Window::default_attributes()
-            .with_title("WACCA_slim")
+            .with_title("Lily")
             .with_inner_size(LogicalSize::new(450.0, 800.0));
         if !self.s.windowed {
             attrs = attrs.with_fullscreen(Some(Fullscreen::Borderless(None)));

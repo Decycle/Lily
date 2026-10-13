@@ -5,7 +5,7 @@ Source: `<game>\WindowsNoEditor\Mercury\Content` (read-only). Engine: **UE 4.19*
 unversioned packages (FileVersionUE4 = 0, legacy version -7). Fixed 60 fps (`DefaultEngine.ini`
 `FixedFrameRate=60`), forward shading, UI scale curve keyed on the shortest side = 1080 px.
 
-Helper scripts (stdlib-only, run with `python -I`), all in `WACCA_slim/tools/research/`:
+Helper scripts (stdlib-only, run with `python -I`), all in `tools/research/`:
 
 | script | what it does |
 |---|---|

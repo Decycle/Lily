@@ -147,7 +147,7 @@ Environment variables:
 | `WACCA_PRESENT=immediate` | Disable vsync (uncapped frame rate, tearing) |
 | `WACCA_PACE=0` | Turn off vsync frame pacing (Lily normally waits until shortly before the next refresh to cut input latency) |
 | `WGPU_BACKEND`, `WGPU_POWER_PREF` | wgpu's GPU selection (`vulkan`/`dx12`, `high`/`low`) |
-| `RUST_LOG` | Log level (default `info`). `RUST_LOG=wacca_app=debug` logs every judgement |
+| `RUST_LOG` | Log level (default `info`). `RUST_LOG=lily=debug` logs every judgement |
 
 ## 8. Troubleshooting
 
@@ -174,7 +174,7 @@ Environment variables:
    ```
 4. Play:
    ```
-   cargo run --release -p wacca-app -- --assets assets --data data
+   cargo run --release -p wacca-app --bin lily -- --assets assets --data data
    ```
 
 Command-line flags are listed in the [README](../README.md#command-line-flags).

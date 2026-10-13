@@ -1,4 +1,4 @@
-//! Frame and latency instrumentation: the F3 overlay and the `wacca_app::perf` debug log.
+//! Frame and latency instrumentation: the F3 overlay and the `lily::perf` debug log.
 //!
 //! Pure bookkeeping: the shell measures durations with `Instant` and feeds them in; nothing here
 //! touches a clock, so every number is unit-testable. Storage is fixed (one ring per stage), so
@@ -194,7 +194,7 @@ impl Perf {
         lines
     }
 
-    /// The overlay's lines at debug level (`RUST_LOG=wacca_app::perf=debug`).
+    /// The overlay's lines at debug level (`RUST_LOG=lily::perf=debug`).
     pub fn log(&self) {
         if log::log_enabled!(log::Level::Debug) {
             log::debug!("\n{}", self.lines().join("\n"));

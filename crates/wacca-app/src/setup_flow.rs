@@ -476,7 +476,7 @@ pub fn failure(e: &SetupError) -> Failure {
             "7-ZIP NOT FOUND",
             vec![
                 "Unpacking the .7z archives needs 7-Zip.".into(),
-                "Install 7-Zip, or put 7z.exe and 7z.dll next to wacca-app.exe".into(),
+                "Install 7-Zip, or put 7z.exe and 7z.dll next to lily.exe".into(),
                 "(or in a tools folder there),".into(),
                 "then try again.".into(),
             ],

@@ -32,23 +32,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force release-out | Out-Null
-          if (Test-Path tools/make-portable.ps1) {
-            # The packaging script builds the release binaries and writes the portable zip.
-            & ./tools/make-portable.ps1
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-            Get-ChildItem -Recurse -Filter *.zip |
-              Where-Object { $_.FullName -notmatch '[\\/](target|release-out|\.git)[\\/]' } |
-              Copy-Item -Destination release-out
-          } else {
-            # Without the packaging script: the game binary plus the license files.
-            cargo build --locked --release -p wacca-app
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-            $dir = 'release-out/Lily'
-            New-Item -ItemType Directory -Force $dir | Out-Null
-            Copy-Item target/release/*.exe, LICENSE, NOTICE.md, README.md -Destination $dir
-            Compress-Archive -Path $dir -DestinationPath release-out/Lily-windows-x64.zip
-            Remove-Item -Recurse $dir
-          }
+          # Builds lily.exe and writes dist/Lily/ and dist/Lily-windows-x64.zip (7-Zip is
+          # preinstalled on the windows-latest runner).
+          & ./tools/make-portable.ps1
+          Copy-Item dist/Lily-windows-x64.zip -Destination release-out
           $zips = @(Get-ChildItem release-out -Filter *.zip)
           if ($zips.Count -eq 0) { throw 'no zip was produced' }
           $zips | ForEach-Object { "{0}  {1:N1} MB" -f $_.Name, ($_.Length / 1MB) }

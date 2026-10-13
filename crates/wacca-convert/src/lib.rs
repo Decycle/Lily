@@ -60,7 +60,7 @@ pub struct Options {
 }
 
 impl Options {
-    /// Everything `wacca-app` reads from `data/`.
+    /// Everything the game (`lily`) reads from `data/`.
     pub fn full() -> Self {
         Options {
             textures: true,

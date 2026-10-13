@@ -61,4 +61,5 @@ and `cargo clippy --workspace --all-targets --target <triple> -- -D warnings` (o
 `cargo test --workspace` (non-ignored tests) on `windows-latest`, `ubuntu-latest` and `macos-latest`. Windows CI uses
 the same `stable-x86_64-pc-windows-gnu` toolchain as local development and fails if `windows-link` enters the
 dependency tree: the rustup GNU toolchain has `dlltool` but no assembler, so the pins above are what keeps it
-building without a full MinGW-w64. `.github/workflows/release.yml` (manual) builds the Windows portable zip.
+building without a full MinGW-w64. `.github/workflows/release.yml` (manual) builds the Windows portable zip with
+`tools/make-portable.ps1` (`dist/Lily/` with `lily.exe`, and `dist/Lily-windows-x64.zip`).

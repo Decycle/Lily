@@ -1,15 +1,15 @@
-//! WACCA_slim: category → song select (with difficulty) → options → play → results, with save data.
+//! Lily: category → song select (with difficulty) → options → play → results, with save data.
 //!
-//! `wacca-app [--assets <dir>] [--data data] [--autoplay] [--windowed] [--chart <mer>]` (see
+//! `lily [--assets <dir>] [--data data] [--autoplay] [--windowed] [--chart <mer>]` (see
 //! [`args::USAGE`]). Without `--assets` the game files are `assets/` and `data/` next to the
 //! executable ([`paths`]); when they are missing, first-run setup opens ([`setup_flow`]).
 //! Menus: Left/Right wheel, Up/Down or D difficulty, PageUp/PageDown genre, Enter / Esc, tap, drag
 //! or mouse wheel to scroll, S sort, F filter.
 //! Play: Esc give up, Space pause, Up/Down note speed. F11 / Alt+Enter toggles fullscreen.
-//! `RUST_LOG=wacca_app=debug` logs every judgement.
+//! `RUST_LOG=lily=debug` logs every judgement.
 //!
 //! Performance: F3 shows frame/latency stats (`perf`), also logged every 2 s with
-//! `RUST_LOG=wacca_app::perf=debug`. wgpu's `WGPU_BACKEND` / `WGPU_POWER_PREF` choose the GPU;
+//! `RUST_LOG=lily::perf=debug`. wgpu's `WGPU_BACKEND` / `WGPU_POWER_PREF` choose the GPU;
 //! `WACCA_PRESENT=immediate` presents without vsync (tearing, uncapped frame rate);
 //! `WACCA_PACE=0` turns off vsync frame pacing (`pacer`).
 #![cfg_attr(test, allow(clippy::unwrap_used))] // tests may unwrap (CONTRIBUTING)
@@ -263,7 +263,8 @@ pub fn missing_parts(assets: &Path, data: &Path, game: &Game) -> Vec<String> {
 
 fn resolve_paths(args: &Args) -> Paths {
     let exe = paths::exe_dir();
-    let appdata = std::env::var_os("APPDATA").map(PathBuf::from);
+    // `%APPDATA%`, or the XDG data folder elsewhere.
+    let appdata = save::data_base();
     paths::resolve(&paths::Inputs {
         assets: args.assets.as_deref(),
         data: args.data.as_deref(),
@@ -273,6 +274,27 @@ fn resolve_paths(args: &Args) -> Paths {
         marker: exe.as_ref().is_some_and(|(_, m)| *m),
         appdata: appdata.as_deref(),
     })
+}
+
+/// When the save is the default one (`%APPDATA%\lily\save.json`), copy a save from the old
+/// `wacca-slim` folder there once ([`save::migrate_legacy`]). Portable and `--save` saves are
+/// never touched.
+fn migrate_legacy_save(save_path: Option<&Path>) {
+    let Some(base) = save::data_base() else {
+        return;
+    };
+    if save_path != Some(save::save_path_in(&base).as_path()) {
+        return;
+    }
+    match save::migrate_legacy(&base) {
+        Ok(Some(old)) => log::info!(
+            "copied the save from {} to {} (the old file is kept)",
+            old.display(),
+            save::save_path_in(&base).display()
+        ),
+        Ok(None) => {}
+        Err(e) => log::warn!("could not copy the old save to the Lily folder: {e}"),
+    }
 }
 
 // cpal's output stream is not `Send` on macOS; the player is only used on the main (event loop) thread.
@@ -310,6 +332,7 @@ fn run(args: &Args, started: std::time::Instant) -> Result<(), Error> {
         .map(|c| start_spec(args, &paths.assets, c, &game.songs))
         .transpose()?;
 
+    migrate_legacy_save(paths.save.as_deref());
     let mut save_path = paths.save.clone();
     let save = match &save_path {
         Some(p) => save::load(p).unwrap_or_else(|e| {

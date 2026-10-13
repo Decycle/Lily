@@ -38,21 +38,21 @@ public class MenuCap {
 "@
 [MenuCap]::SetProcessDPIAware() | Out-Null
 $root = (Resolve-Path "$PSScriptRoot\..\..").Path
-$exe = "$root\target\release\wacca-app.exe"
+$exe = "$root\target\release\lily.exe"
 $a = "--assets `"$Assets`" --data `"$root\$Data`" --save `"$root\$Save`" --screen $Screen"
 $p = Start-Process -FilePath $exe -ArgumentList $a -WorkingDirectory $root -PassThru
 # The window of the process started here (never another running instance, e.g. the user's).
 $h = [IntPtr]::Zero
 for ($i = 0; $i -lt 100 -and $h -eq [IntPtr]::Zero -and -not $p.HasExited; $i++) {
   Start-Sleep -Milliseconds 200
-  $h = [MenuCap]::Find([uint32]$p.Id, "WACCA_slim")
+  $h = [MenuCap]::Find([uint32]$p.Id, "Lily")
 }
 if ($h -eq [IntPtr]::Zero) {
   if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
-  throw "no window from wacca-app (pid $($p.Id))"
+  throw "no window from lily (pid $($p.Id))"
 }
 Start-Sleep -Milliseconds ([int]($Wait * 1000))
-if ($p.HasExited) { throw "wacca-app (pid $($p.Id)) exited before the capture" }
+if ($p.HasExited) { throw "lily (pid $($p.Id)) exited before the capture" }
 $r = New-Object MenuCap+RECT
 [MenuCap]::GetClientRect($h, [ref]$r) | Out-Null
 $bmp = New-Object System.Drawing.Bitmap ($r.R - $r.L), ($r.B - $r.T)
