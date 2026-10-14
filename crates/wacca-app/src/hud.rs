@@ -1,11 +1,13 @@
-//! In-play HUD: score, combo and a fading judgement popup at the centre of the playfield.
+//! In-play HUD: score, combo and a fading judgement popup at the centre of the playfield, plus a
+//! pause button in the window's top-right corner and, while paused, RESUME / RETRY / QUIT. The
+//! arcade has no pause (only automatic GIVE UP settings); this is for touch screens without Esc.
 
 use wacca_game::rules::{JudgeEvent, Judgement};
 use wacca_render::layout::Rect;
 use wacca_render::style::Rgba;
 use wacca_render::text::Align;
 
-use crate::ui::{GREY, View, WHITE};
+use crate::ui::{Action, GREY, View, WHITE};
 
 /// How long the judgement popup stays visible (chart seconds).
 pub const POPUP_SECS: f64 = 0.4;
@@ -116,7 +118,88 @@ pub fn view(h: &Hud, title: &str, window: Rect, playfield: Rect) -> View {
     }
     let bottom = window.y + window.h - 5.0 * u;
     v.text(status, [x, bottom], 3.0 * u, GREY);
+    if h.paused {
+        pause_menu(&mut v, window, u);
+    } else {
+        pause_button(&mut v, window, u);
+    }
     v
+}
+
+const PANEL: Rgba = [1.0, 1.0, 1.0, 0.10];
+const PINK: Rgba = [1.0, 0.31, 0.72, 1.0];
+
+/// Side of the pause button (playfield units of 1/100).
+const PAUSE_SIDE: f32 = 9.0;
+
+/// "II" in the window's top-right corner, outside the round screen. [`Action::Back`] pauses.
+fn pause_button(v: &mut View, window: Rect, u: f32) {
+    let side = PAUSE_SIDE * u;
+    let r = Rect {
+        x: window.x + window.w - side - 1.5 * u,
+        y: window.y + 1.5 * u,
+        w: side,
+        h: side,
+    };
+    v.fill(r, PANEL);
+    let (bar_w, bar_h) = (1.3 * u, 4.4 * u);
+    let top = r.y + (side - bar_h) / 2.0;
+    for dx in [-1.4 * u, 1.4 * u] {
+        let cx = r.x + side / 2.0 + dx;
+        v.fill(
+            Rect {
+                x: cx - bar_w / 2.0,
+                y: top,
+                w: bar_w,
+                h: bar_h,
+            },
+            [1.0, 1.0, 1.0, 0.7],
+        );
+    }
+    v.button(r, Action::Back);
+}
+
+/// Dimmed screen with RESUME ([`Action::Confirm`]), RETRY ([`Action::Retry`]) and QUIT
+/// ([`Action::Back`]) stacked in the middle.
+fn pause_menu(v: &mut View, window: Rect, u: f32) {
+    v.fill(window, [0.0, 0.0, 0.0, 0.6]);
+    let cx = window.x + window.w / 2.0;
+    let mid = window.y + window.h / 2.0;
+    v.text_in(
+        "PAUSED",
+        [cx, mid - 30.0 * u],
+        5.0 * u,
+        WHITE,
+        Align::Center,
+        None,
+    );
+    let (w, h, gap) = (36.0 * u, 10.0 * u, 3.0 * u);
+    for (i, (label, action, color)) in [
+        ("RESUME", Action::Confirm, PINK),
+        ("RETRY", Action::Retry, PANEL),
+        ("QUIT", Action::Back, PANEL),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let r = Rect {
+            x: cx - w / 2.0,
+            y: mid - 18.0 * u + i as f32 * (h + gap),
+            w,
+            h,
+        };
+        v.fill(r, color);
+        let px = 4.0 * u;
+        v.text_in(
+            label,
+            [cx, r.y + (h - px) / 2.0],
+            px,
+            WHITE,
+            Align::Center,
+            None,
+        );
+        v.button(r, action);
+    }
 }
 
 #[cfg(test)]
@@ -192,5 +275,47 @@ mod tests {
         assert_eq!(idle.texts(), ["Song", "123,456", "x4.0  AUTO"]);
         let art = view(&Hud { art: true, ..h }, "Song", r, r);
         assert_eq!(art.texts(), ["x4.0  AUTO"]);
+    }
+
+    #[test]
+    fn pause_button_then_pause_menu() {
+        // Landscape window with the square playfield in the middle.
+        let window = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 1600.0,
+            h: 1000.0,
+        };
+        let field = Rect {
+            x: 300.0,
+            y: 0.0,
+            w: 1000.0,
+            h: 1000.0,
+        };
+        let h = Hud {
+            score: 0,
+            combo: 0,
+            last: None,
+            now: 0.0,
+            note_speed: 3.0,
+            paused: false,
+            autoplay: false,
+            art: true,
+        };
+        let v = view(&h, "Song", window, field);
+        // Top-right corner: pause. The playfield itself has no buttons.
+        assert_eq!(v.hit([1550.0, 60.0]), Some(Action::Back));
+        assert_eq!(v.hit([800.0, 500.0]), None);
+        assert_eq!(v.hit([800.0, 950.0]), None);
+        let p = view(&Hud { paused: true, ..h }, "Song", window, field);
+        let texts = p.texts();
+        for t in ["PAUSED", "RESUME", "RETRY", "QUIT"] {
+            assert!(texts.contains(&t), "{t}");
+        }
+        // Stacked from 18 u above the middle, 10 u tall with 3 u gaps (u = 10 px).
+        assert_eq!(p.hit([800.0, 370.0]), Some(Action::Confirm));
+        assert_eq!(p.hit([800.0, 500.0]), Some(Action::Retry));
+        assert_eq!(p.hit([800.0, 630.0]), Some(Action::Back));
+        assert_eq!(p.hit([1550.0, 60.0]), None);
     }
 }

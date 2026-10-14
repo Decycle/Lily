@@ -93,7 +93,8 @@ impl Default for Settings {
             bonus_effect: true,
             background_video: true,
             bar_lines: true,
-            touch_guide: false,
+            // On by default on iPad, where nothing else shows where the touch area is.
+            touch_guide: cfg!(target_os = "ios"),
             player_name: "PLAYER".to_string(),
             player_title: String::new(),
             menu_timers: false,
@@ -483,7 +484,7 @@ mod tests {
     #[test]
     fn bar_lines_default_on_touch_guide_default_off_and_persist() {
         let old: Settings = serde_json::from_str(r#"{"noteSpeed": 3.0}"#).unwrap();
-        assert!(old.bar_lines && !old.touch_guide);
+        assert!(old.bar_lines && old.touch_guide == cfg!(target_os = "ios"));
         let on = Settings {
             bar_lines: false,
             touch_guide: true,

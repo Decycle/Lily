@@ -26,6 +26,8 @@ pub enum Event {
     Back,
     /// The song ended (played out or given up).
     PlayOver,
+    /// QUIT from the pause menu: back to song select without results.
+    Abandon,
     Retry,
     /// Open the timing check.
     Calibrate,
@@ -59,6 +61,7 @@ pub fn next(screen: Screen, event: Event) -> Next {
         (Options, Event::Calibrate) => Next::Go(Screen::Calibrate),
         (Screen::Calibrate, Confirm | Back) => Next::Go(Options),
         (Play, PlayOver) => Next::Go(Results),
+        (Play, Abandon) => Next::Go(SongSelect),
         (Results, Confirm | Back) => Next::Go(SongSelect),
         (Results, Retry) => Next::Go(Play),
         (Title, Event::Setup) => Next::Go(Screen::Setup),
@@ -182,5 +185,9 @@ mod tests {
         assert_eq!(next(Screen::Play, Event::Confirm), Next::Stay);
         assert_eq!(next(Screen::SongSelect, Event::PlayOver), Next::Stay);
         assert_eq!(next(Screen::Options, Event::Retry), Next::Stay);
+        assert_eq!(
+            next(Screen::Play, Event::Abandon),
+            Next::Go(Screen::SongSelect)
+        );
     }
 }

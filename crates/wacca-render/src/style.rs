@@ -66,9 +66,17 @@ pub const GAUGE_NORMA_FADE: (Rgba, f32) = ([0.835, 0.216, 0.553, 1.0], 18.0 / 29
 pub const GAUGE_CAP: (Rgba, f32) = ([0.514, 0.0, 0.627, 1.0], 5.0 / 291.8);
 
 /// Touch guide (option, off by default): faint depth-ring circles and pressed sensors.
-pub const TOUCH_GUIDE_RING: Rgba = [0.80, 0.85, 1.0, 0.18];
-pub const TOUCH_GUIDE_RING_HALF_WIDTH: f32 = 0.002;
-pub const TOUCH_GUIDE_PRESSED: Rgba = [0.80, 0.90, 1.0, 0.22];
+/// Touch guide: a faint tint over the whole sensor band, a bright inner border (touches nearer the
+/// centre do nothing), thinner circles between the depth rings and a faint line between lanes.
+pub const TOUCH_GUIDE_BAND: Rgba = [0.55, 0.75, 1.0, 0.07];
+pub const TOUCH_GUIDE_EDGE: Rgba = [0.80, 0.90, 1.0, 0.65];
+pub const TOUCH_GUIDE_EDGE_HALF_WIDTH: f32 = 0.006;
+pub const TOUCH_GUIDE_RING: Rgba = [0.80, 0.85, 1.0, 0.24];
+pub const TOUCH_GUIDE_RING_HALF_WIDTH: f32 = 0.0025;
+pub const TOUCH_GUIDE_LANE: Rgba = [0.80, 0.85, 1.0, 0.09];
+/// Half width of a lane divider, in lanes.
+pub const TOUCH_GUIDE_LANE_HALF_WIDTH: f32 = 0.025;
+pub const TOUCH_GUIDE_PRESSED: Rgba = [0.80, 0.90, 1.0, 0.30];
 /// Measure lines: thin white circles moving with the notes.
 pub const BAR_LINE: Rgba = [1.0, 1.0, 1.0, 0.55];
 pub const BAR_LINE_HALF_WIDTH: f32 = 0.0025;

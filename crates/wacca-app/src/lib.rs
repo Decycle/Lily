@@ -29,6 +29,7 @@ mod ios;
 mod jacket;
 mod labels;
 mod menu;
+mod menu_audio;
 mod mode;
 mod options;
 mod pacer;
