@@ -73,6 +73,8 @@ pub struct SetupStart {
     pub reason: Reason,
     /// Inspect this folder right away (`--setup-source`).
     pub source: Option<PathBuf>,
+    /// Download this pack right away (`--setup-url`).
+    pub url: Option<String>,
     /// And start (`--setup-start`).
     pub start: bool,
 }
@@ -98,6 +100,8 @@ pub struct Setup {
     pub setup: Option<SetupStart>,
     /// Where setup writes `assets/` and `data/`.
     pub setup_root: PathBuf,
+    /// Setup asks for a Lily pack's address instead of a folder (iPad, `--setup-url`).
+    pub setup_by_url: bool,
     pub backend: Arc<dyn Backend>,
     pub windowed: bool,
     /// External decoder for background movies (`None` = no movies).
@@ -947,12 +951,13 @@ impl App {
     /// Shows setup with a fresh flow.
     fn open_setup(&mut self, reason: Reason) {
         self.preview.stop(&self.s.player);
-        let owner = self.gfx.as_ref().map_or(0, |g| hwnd(&g.window));
+        let owner = self.gfx.as_ref().map_or(0, |g| native_handle(&g.window));
         self.setup = Some(SetupRun::new(
             reason,
             Arc::clone(&self.s.backend),
             self.s.setup_root.clone(),
             owner,
+            self.s.setup_by_url,
         ));
         self.screen = Screen::Setup;
         self.entered = Instant::now();
@@ -1291,11 +1296,22 @@ impl App {
     }
 
     fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<(), ShellError> {
-        let mut attrs = Window::default_attributes()
-            .with_title("Lily")
-            .with_inner_size(LogicalSize::new(450.0, 800.0));
-        if !self.s.windowed {
-            attrs = attrs.with_fullscreen(Some(Fullscreen::Borderless(None)));
+        let mut attrs = Window::default_attributes().with_title("Lily");
+        // iOS: the window is the whole screen (a size here would shrink it to 450 × 800 points).
+        if cfg!(not(target_os = "ios")) {
+            attrs = attrs.with_inner_size(LogicalSize::new(450.0, 800.0));
+            if !self.s.windowed {
+                attrs = attrs.with_fullscreen(Some(Fullscreen::Borderless(None)));
+            }
+        }
+        #[cfg(target_os = "ios")]
+        {
+            use winit::platform::ios::{ScreenEdge, WindowAttributesExtIOS};
+            // Touches near the edges are notes, not system swipes; no status bar or home bar.
+            attrs = attrs
+                .with_preferred_screen_edges_deferring_system_gestures(ScreenEdge::ALL)
+                .with_prefers_home_indicator_hidden(true)
+                .with_prefers_status_bar_hidden(true);
         }
         let window = event_loop.create_window(attrs).map_err(gfx_err)?;
         let fonts = self
@@ -1320,12 +1336,15 @@ impl App {
         );
         if let Some(start) = self.s.setup.take() {
             self.open_setup(start.reason);
-            if let Some(dir) = start.source
-                && let Some(exit) = self
-                    .setup
-                    .as_mut()
-                    .and_then(|r| r.preselect(dir, start.start))
-            {
+            let exit = self
+                .setup
+                .as_mut()
+                .and_then(|r| match (start.url, start.source) {
+                    (Some(url), _) => r.preselect_url(url, start.start),
+                    (None, Some(dir)) => r.preselect(dir, start.start),
+                    (None, None) => None,
+                });
+            if let Some(exit) = exit {
                 self.setup_exit(event_loop, exit);
             }
             return Ok(());
@@ -1356,11 +1375,13 @@ impl App {
     }
 }
 
-/// The window's `HWND` (0 if unavailable), to own the folder dialog.
-fn hwnd(window: &Window) -> isize {
+/// The window's `HWND` (to own the folder dialog) or `UIView` (to show the address prompt over);
+/// 0 if unavailable.
+fn native_handle(window: &Window) -> isize {
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
     match window.window_handle().map(|h| h.as_raw()) {
         Ok(RawWindowHandle::Win32(h)) => h.hwnd.get(),
+        Ok(RawWindowHandle::UiKit(h)) => h.ui_view.as_ptr() as isize,
         _ => 0,
     }
 }

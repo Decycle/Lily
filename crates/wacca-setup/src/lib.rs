@@ -16,6 +16,8 @@
 
 pub mod archives;
 mod detect;
+#[cfg(feature = "download")]
+mod download;
 pub mod readset;
 pub mod sevenzip;
 pub mod space;
@@ -25,6 +27,20 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 pub use archives::verify;
+#[cfg(feature = "download")]
+pub use download::download;
+
+/// Setup from a URL needs the `download` feature (not built on Windows).
+#[cfg(not(feature = "download"))]
+pub fn download(
+    _url: &str,
+    _dest: &Path,
+    _progress: &mut dyn FnMut(Progress) -> bool,
+) -> Result<Summary, SetupError> {
+    Err(SetupError::Download(
+        "this build cannot download (built without the `download` feature)".into(),
+    ))
+}
 
 use readset::{ARCHIVE_CONTENT, Use};
 
@@ -103,6 +119,8 @@ pub enum Phase {
     Convert,
     /// Parsing every chart; songs.
     Validate,
+    /// Downloading and unpacking a pack ([`download()`]); bytes.
+    Download,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,6 +203,8 @@ pub enum SetupError {
     UnsupportedVersion(String),
     #[error("conversion failed: {0}")]
     Convert(wacca_convert::Error),
+    #[error("download failed: {0}")]
+    Download(String),
 }
 
 impl From<wacca_convert::Error> for SetupError {
@@ -329,18 +349,25 @@ fn run_in(
     }
     let mut summary = validate::validate(&work.assets, &work.data, plan.include_movies)?;
     lap(Phase::Validate, &mut timings);
+    summary.timings = timings;
+    install(work, &plan.dest, &mut summary)?;
+    Ok(summary)
+}
+
+/// Replaces `<dest>/assets` and `<dest>/data` with the finished ones in `work` (the old ones go
+/// to `work`, removed with it) and fills in the sizes.
+fn install(work: &Work, dest: &Path, summary: &mut Summary) -> Result<(), SetupError> {
     for name in ["assets", "data"] {
-        let (new, dst) = (work.root.join(name), plan.dest.join(name));
+        let (new, dst) = (work.root.join(name), dest.join(name));
         let old = work.root.join(format!("{name}.old"));
         if dst.exists() {
             std::fs::rename(&dst, &old).map_err(io_err(&dst))?;
         }
         std::fs::rename(&new, &dst).map_err(io_err(&dst))?;
     }
-    summary.assets_bytes = dir_bytes(&plan.dest.join("assets"));
-    summary.data_bytes = dir_bytes(&plan.dest.join("data"));
-    summary.timings = timings;
-    Ok(summary)
+    summary.assets_bytes = dir_bytes(&dest.join("assets"));
+    summary.data_bytes = dir_bytes(&dest.join("data"));
+    Ok(())
 }
 
 fn check_space(dest: &Path, needed: u64) -> Result<(), SetupError> {

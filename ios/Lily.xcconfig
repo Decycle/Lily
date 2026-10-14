@@ -1,0 +1,7 @@
+// Signing defaults. Put your own values in Local.xcconfig next to this file (git-ignored):
+//   DEVELOPMENT_TEAM = <your 10-character Team ID>
+//   PRODUCT_BUNDLE_IDENTIFIER = com.<you>.lily
+DEVELOPMENT_TEAM =
+PRODUCT_BUNDLE_IDENTIFIER = com.example.lily
+
+#include? "Local.xcconfig"

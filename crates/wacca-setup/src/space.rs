@@ -68,7 +68,24 @@ fn free_bytes_at(path: &Path) -> Option<u64> {
     (ok != 0).then_some(free)
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
+fn free_bytes_at(path: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut st = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: `c` is NUL-terminated and outlives the call; `st` is a valid out pointer, read only
+    // after success.
+    let st = unsafe {
+        if libc::statvfs(c.as_ptr(), st.as_mut_ptr()) != 0 {
+            return None;
+        }
+        st.assume_init()
+    };
+    // Blocks available to unprivileged users, in fragment-size units.
+    Some(st.f_bavail as u64 * st.f_frsize as u64)
+}
+
+#[cfg(not(any(windows, unix)))]
 fn free_bytes_at(_path: &Path) -> Option<u64> {
     None
 }
@@ -122,7 +139,7 @@ mod tests {
         let p = std::env::temp_dir()
             .join("wacca-setup-no-such-dir")
             .join("x");
-        if cfg!(windows) {
+        if cfg!(any(windows, unix)) {
             assert!(free_bytes(&p).is_some_and(|b| b > 0));
         }
     }

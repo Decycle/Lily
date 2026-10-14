@@ -10,7 +10,11 @@ use std::time::Duration;
 use crate::SetupError;
 
 /// Executable names, in preference order (`7zr.exe` only handles `.7z`, which is all we need).
+#[cfg(windows)]
 const NAMES: [&str; 4] = ["7z.exe", "7za.exe", "7zz.exe", "7zr.exe"];
+/// Elsewhere without `.exe` (Homebrew's `sevenzip` installs `7zz`).
+#[cfg(not(windows))]
+const NAMES: [&str; 4] = ["7z", "7za", "7zz", "7zr"];
 
 /// Where to look for 7-Zip, in order: `WACCA_7Z`, next to the running exe (`tools\` first), the
 /// standard install folders, then `PATH`.
@@ -76,7 +80,8 @@ pub fn parse_listing(text: &str) -> Vec<ListEntry> {
         if let Some(p) = line.strip_prefix("Path = ") {
             out.extend(cur.take());
             cur = Some(ListEntry {
-                path: p.to_owned(),
+                // 7-Zip outside Windows lists `/`; the read set is written with `\`.
+                path: p.replace('/', "\\"),
                 size: 0,
                 dir: false,
             });
@@ -154,10 +159,16 @@ pub fn extract(
 ) -> Result<(), SetupError> {
     let mut out_arg = std::ffi::OsString::from("-o");
     out_arg.push(out_dir);
+    // Outside Windows 7-Zip's wildcards need `/` (`\` is an ordinary character there).
+    let includes: Vec<String> = if cfg!(windows) {
+        includes.to_vec()
+    } else {
+        includes.iter().map(|i| i.replace('\\', "/")).collect()
+    };
     let mut child = command(exe)
         .args(["x", "-aoa", "-y", "-bso0", "-bsp1", "-bse2", "-sccUTF-8"])
         .arg(out_arg)
-        .args(includes)
+        .args(&includes)
         .arg("--")
         .arg(archive)
         .stdout(Stdio::piped())
@@ -265,12 +276,13 @@ mod tests {
             .iter()
             .map(|p| p.to_str().unwrap().replace('\\', "/"))
             .collect();
+        let exe = if cfg!(windows) { ".exe" } else { "" };
         assert_eq!(s[0], "env/7z.exe");
-        assert_eq!(s[1], "app/tools/7z.exe");
-        assert_eq!(s[4], "app/tools/7zr.exe");
-        assert_eq!(s[5], "app/7z.exe");
+        assert_eq!(s[1], format!("app/tools/7z{exe}"));
+        assert_eq!(s[4], format!("app/tools/7zr{exe}"));
+        assert_eq!(s[5], format!("app/7z{exe}"));
         assert_eq!(s[9], "pf/7-Zip/7z.exe");
-        assert_eq!(s[10], "bin/7z.exe");
+        assert_eq!(s[10], format!("bin/7z{exe}"));
         assert_eq!(s.len(), 14);
     }
 
