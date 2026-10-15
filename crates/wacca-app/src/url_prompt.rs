@@ -5,9 +5,12 @@
 /// Called once with the entered address (`None`: cancelled).
 pub type Answer = Box<dyn FnOnce(Option<String>) + Send>;
 
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 const TITLE: &str = "Lily pack address";
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 const MESSAGE: &str = "The web address of a Lily pack (lily-pack.tar), for example one shared \
                        from your computer with tools/serve-pack.sh.";
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 const EXAMPLE: &str = "http://192.168.1.20:8000/lily-pack.tar";
 
 /// Shows the prompt; `owner` is the game's `UIView` on iOS (ignored elsewhere). Call on the UI

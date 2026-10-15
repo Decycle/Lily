@@ -69,6 +69,9 @@ fn free_bytes_at(path: &Path) -> Option<u64> {
 }
 
 #[cfg(unix)]
+// `statvfs` field types differ (u32 / u64 on macOS, u64 on Linux), so a conversion that some
+// platform needs is a no-op on another.
+#[allow(clippy::useless_conversion)]
 fn free_bytes_at(path: &Path) -> Option<u64> {
     use std::os::unix::ffi::OsStrExt;
     let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
@@ -82,7 +85,7 @@ fn free_bytes_at(path: &Path) -> Option<u64> {
         st.assume_init()
     };
     // Blocks available to unprivileged users, in fragment-size units.
-    Some(st.f_bavail as u64 * st.f_frsize as u64)
+    Some(u64::from(st.f_bavail) * u64::from(st.f_frsize))
 }
 
 #[cfg(not(any(windows, unix)))]
