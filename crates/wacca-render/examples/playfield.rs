@@ -6,7 +6,7 @@
 //!
 //! `WACCA_SHOT=<out.png>@<seconds>` renders that one moment (1024x1024, as after a perfect play
 //! up to it: hit effects, judgement, combo, score row) to a PNG without opening a window.
-//! `WACCA_SHOT_BARS=1` adds bar lines, `WACCA_SHOT_TITLE` the song title on the rim. Notes are the
+//! `WACCA_SHOT_BARS=1` adds bar lines, `WACCA_SHOT_GUIDE=1` the touch guide, `WACCA_SHOT_TITLE` the song title on the rim. Notes are the
 //! game's 3D meshes when `data/meshes` exists (`wacca-convert --meshes`); `WACCA_SHOT_2D=1` forces
 //! the 2D notes. `WACCA_SHOT_SIZE` sets the side (px), `WACCA_SHOT_MOVIE=<dir>` shows a movie
 //! frame from `<dir>/{y,u,v}.png` (8-bit grey planes), `WACCA_SHOT_3D=1` leaves out the 2D layer
@@ -423,7 +423,7 @@ fn snapshot(
             .unwrap_or(2.0),
         movie: movie.is_some(),
         bar_lines: flag("WACCA_SHOT_BARS"),
-        touch_guide: false,
+        touch_guide: flag("WACCA_SHOT_GUIDE"),
         mesh_notes: renderer.note_meshes().is_some() && !flag("WACCA_SHOT_2D"),
     };
     let mut notes = Vec::new();

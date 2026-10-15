@@ -23,6 +23,13 @@ pub trait Backend: Send + Sync + std::fmt::Debug {
         plan: &Plan,
         progress: &mut dyn FnMut(Progress) -> bool,
     ) -> Result<Summary, SetupError>;
+    /// Downloads the Lily pack at `url` and installs it into `dest`.
+    fn download(
+        &self,
+        url: &str,
+        dest: &Path,
+        progress: &mut dyn FnMut(Progress) -> bool,
+    ) -> Result<Summary, SetupError>;
 }
 
 /// [`wacca_setup`] itself.
@@ -49,5 +56,14 @@ impl Backend for Real {
         progress: &mut dyn FnMut(Progress) -> bool,
     ) -> Result<Summary, SetupError> {
         wacca_setup::run(source, plan, progress)
+    }
+
+    fn download(
+        &self,
+        url: &str,
+        dest: &Path,
+        progress: &mut dyn FnMut(Progress) -> bool,
+    ) -> Result<Summary, SetupError> {
+        wacca_setup::download(url, dest, progress)
     }
 }

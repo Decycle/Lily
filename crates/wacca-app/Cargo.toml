@@ -27,5 +27,17 @@ pollster = "0.4"
 env_logger = { version = "0.11", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
 
+# Setup from a URL (the iPad's only way in). Not on Windows, which keeps its pinned dependency
+# set (CONTRIBUTING "Pinned dependencies") and has the archives flow.
+[target.'cfg(not(windows))'.dependencies]
+wacca-setup = { path = "../wacca-setup", features = ["download"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSArray"] }
+objc2-ui-kit = { version = "0.3", default-features = false, features = ["std", "block2", "UIAlertController", "UIApplication", "UIControl", "UIResponder", "UITextField", "UITextInputTraits", "UIView", "UIViewController", "UIWindow"] }
+objc2-avf-audio = { version = "0.3", default-features = false, features = ["std", "AVAudioSession", "AVAudioSessionTypes"] }
+block2 = "0.6"
+
 [lints]
 workspace = true

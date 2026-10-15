@@ -1,6 +1,7 @@
 //! First-run setup as a pure state machine: welcome → folder picker → detection report (with the
 //! background-video and checksum choices) → optional md5 check → running (progress, cancel) → summary → title. Errors end on a
-//! failure step that explains what to do. The shell performs the [`Effect`]s (dialog, worker
+//! failure step that explains what to do. With [`Flow::by_url`] (iPad) the picker and the report
+//! are replaced by asking for the address of a Lily pack, which is downloaded and installed. The shell performs the [`Effect`]s (dialog, worker
 //! threads) and feeds their results back as [`Input`]s.
 
 use std::path::PathBuf;
@@ -28,7 +29,7 @@ pub struct Failure {
 #[derive(Debug)]
 pub enum Step {
     Welcome,
-    /// The folder dialog is open.
+    /// The folder dialog (or, by URL, the address prompt) is open.
     Picking,
     Detecting(PathBuf),
     Found {
@@ -67,6 +68,8 @@ pub enum Input {
     ToggleVerify,
     /// The dialog closed: the chosen folder, if any.
     Picked(Option<PathBuf>),
+    /// The address prompt closed: the entered address, if any.
+    Url(Option<String>),
     Detected(Result<Detected, Failure>),
     /// Checksums checked: the archives that did not match.
     Verified(Result<Vec<String>, Failure>),
@@ -79,6 +82,10 @@ pub enum Input {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Effect {
     OpenPicker,
+    /// Ask for a pack's address, pre-filled with the last one.
+    AskUrl(Option<String>),
+    /// Download and install the pack at this address.
+    Download(String),
     Detect(PathBuf),
     /// Check these archives' md5.
     Verify(Vec<ArchiveFile>),
@@ -98,6 +105,10 @@ pub enum Effect {
 pub struct Flow {
     pub step: Step,
     pub reason: Reason,
+    /// Set up from a downloaded pack instead of the user's archives or game folder.
+    pub by_url: bool,
+    /// The last address entered.
+    pub url: Option<String>,
 }
 
 /// The archives of an archive source.
@@ -133,7 +144,27 @@ impl Flow {
         Self {
             step: Step::Welcome,
             reason,
+            by_url: false,
+            url: None,
         }
+    }
+
+    /// Setup from a Lily pack's address (see the module docs).
+    pub fn by_url(reason: Reason) -> Self {
+        Self {
+            by_url: true,
+            ..Self::new(reason)
+        }
+    }
+
+    /// Opens the folder dialog or the address prompt.
+    fn pick(&self) -> (Step, Option<Effect>) {
+        let effect = if self.by_url {
+            Effect::AskUrl(self.url.clone())
+        } else {
+            Effect::OpenPicker
+        };
+        (Step::Picking, Some(effect))
     }
 
     pub fn input(&mut self, input: Input) -> Option<Effect> {
@@ -143,10 +174,10 @@ impl Flow {
         effect
     }
 
-    fn next(&self, step: Step, input: Input) -> (Step, Option<Effect>) {
+    fn next(&mut self, step: Step, input: Input) -> (Step, Option<Effect>) {
         use Input::*;
         match (step, input) {
-            (Step::Welcome, Confirm) => (Step::Picking, Some(Effect::OpenPicker)),
+            (Step::Welcome, Confirm) => self.pick(),
             (Step::Welcome, Back) => (
                 Step::Welcome,
                 Some(match self.reason {
@@ -156,6 +187,15 @@ impl Flow {
             ),
             (Step::Picking, Picked(None)) => (Step::Welcome, None),
             (Step::Picking, Picked(Some(dir))) => detect(dir),
+            (Step::Picking, Url(None)) => (Step::Welcome, None),
+            (Step::Picking, Url(Some(url))) => {
+                let url = url.trim().to_string();
+                if url.is_empty() {
+                    return (Step::Welcome, None);
+                }
+                self.url = Some(url.clone());
+                (running(PathBuf::new(), None), Some(Effect::Download(url)))
+            }
             (Step::Detecting(_), Back) => (Step::Welcome, None),
             (Step::Detecting(dir), Detected(r)) => match r {
                 Ok(detected) => (found(dir, detected, false, Vec::new()), None),
@@ -295,14 +335,15 @@ impl Flow {
                 Err(failure) => (
                     Step::Failed {
                         failure,
-                        dir: Some(dir),
+                        // By URL, "try again" asks for the address again (pre-filled).
+                        dir: (!self.by_url).then_some(dir),
                     },
                     None,
                 ),
             },
             (Step::Done(_), Confirm | Back) => (Step::Welcome, Some(Effect::Finish)),
             (Step::Failed { dir: Some(dir), .. }, Confirm) => detect(dir),
-            (Step::Failed { dir: None, .. }, Confirm) => (Step::Picking, Some(Effect::OpenPicker)),
+            (Step::Failed { dir: None, .. }, Confirm) => self.pick(),
             (Step::Failed { .. }, Back) => (Step::Welcome, None),
             // Anything else (a late result, a key during the dialog) changes nothing.
             (step, _) => (step, None),
@@ -377,6 +418,7 @@ pub fn phase_name(phase: Phase) -> (&'static str, bool) {
         Phase::Copy => ("Copying game files", true),
         Phase::Convert => ("Converting", false),
         Phase::Validate => ("Checking charts", false),
+        Phase::Download => ("Downloading", true),
     }
 }
 
@@ -515,6 +557,14 @@ pub fn failure(e: &SetupError) -> Failure {
                 format!("Nothing usable in {}.", shown(dir)),
                 "Choose the folder with the update archives (.7z)".into(),
                 "or the game folder (the one containing WindowsNoEditor).".into(),
+            ],
+        ),
+        SetupError::Download(why) => (
+            "DOWNLOAD FAILED",
+            vec![
+                why.clone(),
+                "Check the address, and that the computer sharing the pack".into(),
+                "is on and on the same network as this device.".into(),
             ],
         ),
         SetupError::Cancelled => (
@@ -822,6 +872,37 @@ mod tests {
             Severity::Bad
         );
         assert!(movies_available(&detected()));
+    }
+
+    #[test]
+    fn by_url_asks_for_an_address_downloads_and_retries_with_it() {
+        let mut f = Flow::by_url(Reason::Missing(vec!["x".into()]));
+        assert_eq!(f.input(Input::Confirm), Some(Effect::AskUrl(None)));
+        // Cancelled or empty: back to the welcome.
+        assert_eq!(f.input(Input::Url(None)), None);
+        assert!(matches!(f.step, Step::Welcome));
+        f.input(Input::Confirm);
+        assert_eq!(f.input(Input::Url(Some("  ".into()))), None);
+        assert!(matches!(f.step, Step::Welcome));
+        f.input(Input::Confirm);
+        let url = "http://mac.local:8000/lily-pack.tar";
+        assert_eq!(
+            f.input(Input::Url(Some(format!(" {url} ")))),
+            Some(Effect::Download(url.into()))
+        );
+        assert!(matches!(f.step, Step::Running { .. }));
+        f.input(Input::Progress(progress(Phase::Download, 10), 1.0));
+        let failure = failure(&SetupError::Download("HTTP 404".into()));
+        assert_eq!(f.input(Input::Finished(Err(failure))), None);
+        assert!(matches!(f.step, Step::Failed { dir: None, .. }));
+        // Try again: the prompt comes back with the last address.
+        assert_eq!(
+            f.input(Input::Confirm),
+            Some(Effect::AskUrl(Some(url.into())))
+        );
+        f.input(Input::Url(Some(url.into())));
+        assert_eq!(f.input(Input::Finished(Ok(Summary::default()))), None);
+        assert_eq!(f.input(Input::Confirm), Some(Effect::Finish));
     }
 
     #[test]

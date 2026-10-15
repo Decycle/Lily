@@ -265,31 +265,54 @@ fn push_rim_row(out: &mut Vec<Vertex>, sheet: &SpriteSheet, rim: &RimState) {
     }
 }
 
-/// Faint circles at the sensor depth-ring edges and the pressed sensors filled.
+/// The touch area: the sensor band tinted, its inner border bright, the depth rings and lane
+/// dividers faint, and the pressed sensors filled.
 fn push_touch_guide(out: &mut Vec<Vertex>, pressed: &[u64; style::SENSOR_DEPTHS]) {
+    let lanes = LANES as f32;
+    let (inner, _) = sensor_ring(0);
+    let (_, outer) = sensor_ring(style::SENSOR_DEPTHS - 1);
+    push_sector(out, inner, outer, 0.0, lanes, style::TOUCH_GUIDE_BAND);
+    let lw = style::TOUCH_GUIDE_LANE_HALF_WIDTH;
+    for lane in 0..LANES {
+        let at = f32::from(lane);
+        push_sector(
+            out,
+            inner,
+            outer,
+            at - lw,
+            2.0 * lw,
+            style::TOUCH_GUIDE_LANE,
+        );
+    }
     let w = style::TOUCH_GUIDE_RING_HALF_WIDTH;
     for (depth, &bits) in pressed.iter().enumerate() {
-        let (r_in, r_out) = sensor_ring(depth);
+        let (r_in, _) = sensor_ring(depth);
         for lane in (0..LANES).filter(|&l| bits >> l & 1 == 1) {
+            let (r_in, r_out) = sensor_ring(depth);
             let c = style::TOUCH_GUIDE_PRESSED;
             push_sector(out, r_in, r_out, f32::from(lane), 1.0, c);
         }
-        let edges = if depth + 1 == style::SENSOR_DEPTHS {
-            vec![r_in, r_out]
-        } else {
-            vec![r_in]
-        };
-        for r in edges {
-            push_sector(
-                out,
-                r - w,
-                r + w,
-                0.0,
-                LANES as f32,
-                style::TOUCH_GUIDE_RING,
-            );
+        if depth > 0 {
+            push_sector(out, r_in - w, r_in + w, 0.0, lanes, style::TOUCH_GUIDE_RING);
         }
     }
+    let e = style::TOUCH_GUIDE_EDGE_HALF_WIDTH;
+    push_sector(
+        out,
+        inner - e,
+        inner + e,
+        0.0,
+        lanes,
+        style::TOUCH_GUIDE_EDGE,
+    );
+    push_sector(
+        out,
+        outer - e,
+        outer + e,
+        0.0,
+        lanes,
+        style::TOUCH_GUIDE_EDGE,
+    );
 }
 
 /// Clear gauge bar above the combo: dark track, pink fill from the left with a light core,
@@ -783,13 +806,25 @@ mod tests {
         let none = SpriteSheet::default();
         let v = build_scene(&chart(vec![]), 0.0, &on, &live, &none);
         assert_eq!(count(&v, style::TOUCH_GUIDE_PRESSED), 2 * 6);
+        // The band, its inner and outer border, the circles between the depth rings, and a
+        // divider at every lane.
+        assert_eq!(count(&v, style::TOUCH_GUIDE_BAND), 60 * 6);
+        assert_eq!(count(&v, style::TOUCH_GUIDE_EDGE), 2 * 60 * 6);
         assert_eq!(
             count(&v, style::TOUCH_GUIDE_RING),
-            (style::SENSOR_DEPTHS + 1) * 60 * 6
+            (style::SENSOR_DEPTHS - 1) * 60 * 6
         );
+        assert!(count(&v, style::TOUCH_GUIDE_LANE) >= 60 * 6);
         let off = build_scene(&chart(vec![]), 0.0, &SceneOptions::default(), &live, &none);
-        assert_eq!(count(&off, style::TOUCH_GUIDE_PRESSED), 0);
-        assert_eq!(count(&off, style::TOUCH_GUIDE_RING), 0);
+        for c in [
+            style::TOUCH_GUIDE_PRESSED,
+            style::TOUCH_GUIDE_RING,
+            style::TOUCH_GUIDE_EDGE,
+            style::TOUCH_GUIDE_BAND,
+            style::TOUCH_GUIDE_LANE,
+        ] {
+            assert_eq!(count(&off, c), 0);
+        }
     }
 
     #[test]

@@ -9,7 +9,7 @@ use crate::screen::Screen;
 pub const USAGE: &str = "usage: lily [--assets <dir>] [--data <dir>] [--save <file>] [--portable] \
 [--windowed] [--autoplay] [--speed 1.0..6.0] [--offset-ms N] \
 [--screen title|mode|category|select|options|calibrate|results|setup] \
-[--setup-source <dir> [--setup-start]] \
+[--setup-source <dir> | --setup-url <address> [--setup-start]] \
 [--chart <MusicData/<song>/<song>_NN.mer | MusicData/<song>> [--difficulty normal|hard|expert|inferno]]";
 
 pub const SPEED_RANGE: std::ops::RangeInclusive<f64> = 1.0..=6.0;
@@ -50,6 +50,8 @@ pub struct Args {
     pub portable: bool,
     /// Setup: inspect this folder right away instead of asking for one (debugging).
     pub setup_source: Option<PathBuf>,
+    /// Setup: download the Lily pack at this address right away (setup by URL, as on iPad).
+    pub setup_url: Option<String>,
     /// With `setup_source`: also start the setup (without videos) and continue to the title.
     pub setup_start: bool,
     pub windowed: bool,
@@ -100,6 +102,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, ArgsError> 
         save: None,
         portable: false,
         setup_source: None,
+        setup_url: None,
         setup_start: false,
         windowed: false,
         screen: None,
@@ -109,6 +112,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, ArgsError> 
             "--assets" => out.assets = Some(value::<PathBuf>("--assets", args.next())?),
             "--portable" => out.portable = true,
             "--setup-source" => out.setup_source = Some(value("--setup-source", args.next())?),
+            "--setup-url" => out.setup_url = Some(value("--setup-url", args.next())?),
             "--setup-start" => out.setup_start = true,
             "--chart" => out.chart = Some(value::<PathBuf>("--chart", args.next())?),
             "--save" => out.save = Some(value::<PathBuf>("--save", args.next())?),

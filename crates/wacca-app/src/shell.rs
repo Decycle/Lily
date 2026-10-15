@@ -30,6 +30,7 @@ use crate::canvas::{Canvas, ease};
 use crate::chrome::{self, Player as Plate};
 use crate::gesture::{Gesture, Pointer, Scroller};
 use crate::menu::Menu;
+use crate::menu_audio::{self, MenuMusic, MenuSounds};
 use crate::pacer::Pacer;
 use crate::perf::{Drift, Perf};
 use crate::play::{PlayOptions, PlaySpec, PlayState, VideoSetup, load_chart, movie_path};
@@ -73,6 +74,8 @@ pub struct SetupStart {
     pub reason: Reason,
     /// Inspect this folder right away (`--setup-source`).
     pub source: Option<PathBuf>,
+    /// Download this pack right away (`--setup-url`).
+    pub url: Option<String>,
     /// And start (`--setup-start`).
     pub start: bool,
 }
@@ -98,6 +101,8 @@ pub struct Setup {
     pub setup: Option<SetupStart>,
     /// Where setup writes `assets/` and `data/`.
     pub setup_root: PathBuf,
+    /// Setup asks for a Lily pack's address instead of a folder (iPad, `--setup-url`).
+    pub setup_by_url: bool,
     pub backend: Arc<dyn Backend>,
     pub windowed: bool,
     /// External decoder for background movies (`None` = no movies).
@@ -123,6 +128,9 @@ pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
         hits: None,
         preview: PreviewPlayer::default(),
         pointers: HashMap::new(),
+        hud_touches: HashSet::new(),
+        menu_music: MenuMusic::default(),
+        menu_sounds: MenuSounds::default(),
         scroller: Scroller::default(),
         cursor: None,
         mouse_down: false,
@@ -561,6 +569,10 @@ struct App {
     preview: PreviewPlayer,
     /// Menu gestures per contact.
     pointers: HashMap<u64, Pointer>,
+    /// Touches that pressed a HUD button during play: they never reach the sensors.
+    hud_touches: HashSet<u64>,
+    menu_music: MenuMusic,
+    menu_sounds: MenuSounds,
     scroller: Scroller,
     /// Last cursor position in window pixels.
     cursor: Option<[f32; 2]>,
@@ -781,6 +793,7 @@ impl App {
 
     fn start_play(&mut self, spec: PlaySpec) {
         self.preview.stop(&self.s.player);
+        self.menu_music.forget();
         let m = &self.s.menu;
         let opts = PlayOptions {
             note_speed: f64::from(m.settings.note_speed),
@@ -895,6 +908,7 @@ impl App {
     /// Replace the preview with the timing check's click track.
     fn start_calibration(&mut self) {
         self.preview.stop(&self.s.player);
+        self.menu_music.forget();
         let rate = self.s.player.sample_rate();
         let click = hit_sounds(&mut self.hits, &mut self.s.se, rate)
             .and_then(|h| h.marvelous.first().cloned())
@@ -947,12 +961,13 @@ impl App {
     /// Shows setup with a fresh flow.
     fn open_setup(&mut self, reason: Reason) {
         self.preview.stop(&self.s.player);
-        let owner = self.gfx.as_ref().map_or(0, |g| hwnd(&g.window));
+        let owner = self.gfx.as_ref().map_or(0, |g| native_handle(&g.window));
         self.setup = Some(SetupRun::new(
             reason,
             Arc::clone(&self.s.backend),
             self.s.setup_root.clone(),
             owner,
+            self.s.setup_by_url,
         ));
         self.screen = Screen::Setup;
         self.entered = Instant::now();
@@ -1031,6 +1046,10 @@ impl App {
     fn action(&mut self, event_loop: &ActiveEventLoop, a: Action) {
         if self.wipe.is_some() {
             return;
+        }
+        if let Some(sound) = menu_audio::sound_for(a) {
+            let s = &self.s;
+            self.menu_sounds.play(sound, &s.player, s.se.as_ref());
         }
         if self.screen == Screen::Setup {
             self.setup_action(event_loop, a);
@@ -1111,6 +1130,19 @@ impl App {
     /// Pointer `id` pressed (`Some(true)`), moved (`None`) or released (`Some(false)`) at `p`.
     fn pointer(&mut self, event_loop: &ActiveEventLoop, id: u64, p: [f32; 2], down: Option<bool>) {
         if self.screen == Screen::Play {
+            if down == Some(true)
+                && let Some(a) = self.view().hit(p)
+            {
+                self.hud_touches.insert(id);
+                self.play_action(event_loop, a);
+                return;
+            }
+            if self.hud_touches.contains(&id) {
+                if down == Some(false) {
+                    self.hud_touches.remove(&id);
+                }
+                return;
+            }
             let [w, h] = self.size();
             let at = (down != Some(false)).then_some(p);
             self.input_at.get_or_insert_with(Instant::now);
@@ -1144,6 +1176,32 @@ impl App {
                 if n != 0 {
                     self.action(event_loop, Action::Scroll(n));
                 }
+            }
+            _ => {}
+        }
+    }
+
+    /// The pause button and the pause menu ([`hud`]): Back pauses, then RESUME (Confirm), RETRY
+    /// (Retry) or QUIT (Back). Retry and quit give up the song (nothing is saved).
+    fn play_action(&mut self, event_loop: &ActiveEventLoop, a: Action) {
+        let paused = self.play.as_ref().is_some_and(|p| p.paused);
+        if paused && let Some(sound) = menu_audio::sound_for(a) {
+            self.menu_sounds
+                .play(sound, &self.s.player, self.s.se.as_ref());
+        }
+        let Some(p) = &mut self.play else { return };
+        match (p.paused, a) {
+            (false, Action::Back) | (true, Action::Confirm) => p.toggle_pause(),
+            (true, Action::Retry) => {
+                let spec = p.spec.clone();
+                p.give_up();
+                self.play = None;
+                self.start_play(spec);
+            }
+            (true, Action::Back) => {
+                p.give_up();
+                self.play = None;
+                self.event(event_loop, Event::Abandon);
             }
             _ => {}
         }
@@ -1211,9 +1269,17 @@ impl App {
                     }
                 }
             }
-            Screen::SongSelect | Screen::Options => self.preview.update(&self.s),
+            Screen::SongSelect | Screen::Options => {
+                let s = &self.s;
+                self.menu_music
+                    .update(self.screen, &s.player, s.bgm.as_ref());
+                self.preview.update(s);
+            }
             Screen::Title | Screen::ModeSelect | Screen::Category => {
-                self.preview.stop(&self.s.player)
+                self.preview.stop(&self.s.player);
+                let s = &self.s;
+                self.menu_music
+                    .update(self.screen, &s.player, s.bgm.as_ref());
             }
             Screen::Results | Screen::Calibrate | Screen::Setup => {}
         }
@@ -1291,11 +1357,22 @@ impl App {
     }
 
     fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<(), ShellError> {
-        let mut attrs = Window::default_attributes()
-            .with_title("Lily")
-            .with_inner_size(LogicalSize::new(450.0, 800.0));
-        if !self.s.windowed {
-            attrs = attrs.with_fullscreen(Some(Fullscreen::Borderless(None)));
+        let mut attrs = Window::default_attributes().with_title("Lily");
+        // iOS: the window is the whole screen (a size here would shrink it to 450 × 800 points).
+        if cfg!(not(target_os = "ios")) {
+            attrs = attrs.with_inner_size(LogicalSize::new(450.0, 800.0));
+            if !self.s.windowed {
+                attrs = attrs.with_fullscreen(Some(Fullscreen::Borderless(None)));
+            }
+        }
+        #[cfg(target_os = "ios")]
+        {
+            use winit::platform::ios::{ScreenEdge, WindowAttributesExtIOS};
+            // Touches near the edges are notes, not system swipes; no status bar or home bar.
+            attrs = attrs
+                .with_preferred_screen_edges_deferring_system_gestures(ScreenEdge::ALL)
+                .with_prefers_home_indicator_hidden(true)
+                .with_prefers_status_bar_hidden(true);
         }
         let window = event_loop.create_window(attrs).map_err(gfx_err)?;
         let fonts = self
@@ -1320,12 +1397,15 @@ impl App {
         );
         if let Some(start) = self.s.setup.take() {
             self.open_setup(start.reason);
-            if let Some(dir) = start.source
-                && let Some(exit) = self
-                    .setup
-                    .as_mut()
-                    .and_then(|r| r.preselect(dir, start.start))
-            {
+            let exit = self
+                .setup
+                .as_mut()
+                .and_then(|r| match (start.url, start.source) {
+                    (Some(url), _) => r.preselect_url(url, start.start),
+                    (None, Some(dir)) => r.preselect(dir, start.start),
+                    (None, None) => None,
+                });
+            if let Some(exit) = exit {
                 self.setup_exit(event_loop, exit);
             }
             return Ok(());
@@ -1356,11 +1436,13 @@ impl App {
     }
 }
 
-/// The window's `HWND` (0 if unavailable), to own the folder dialog.
-fn hwnd(window: &Window) -> isize {
+/// The window's `HWND` (to own the folder dialog) or `UIView` (to show the address prompt over);
+/// 0 if unavailable.
+fn native_handle(window: &Window) -> isize {
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
     match window.window_handle().map(|h| h.as_raw()) {
         Ok(RawWindowHandle::Win32(h)) => h.hwnd.get(),
+        Ok(RawWindowHandle::UiKit(h)) => h.ui_view.as_ptr() as isize,
         _ => 0,
     }
 }

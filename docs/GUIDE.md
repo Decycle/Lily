@@ -196,8 +196,9 @@ on.
 - **Windows-only pieces:** the folder-picker dialog (Win32 FFI), the 7-Zip binary in the portable build, and the
   real-game harness in `tools/realgame` (raw kernel32/user32 FFI, shared memory, WASAPI loopback recording). The
   harness compiles elsewhere but reports "needs Windows" for live use.
-- **Android / iPad:** wgpu (Vulkan / Metal) and winit support both, and the touch model maps directly. Open points:
-  a phone or tablet screen is much smaller than the cabinet ring, so the ring would need to fill the short side;
-  audio latency is higher (use AAudio / low-latency paths in cpal); the game files and the conversion must happen on a
-  desktop and be copied over (about 7 GB without movies); and `ffmpeg` cannot be spawned as a process, so movies
-  would need an in-process MPEG-1 decoder.
+- **iPad:** an Xcode app around the same game, in [`ios/`](../ios/README.md). Setup there downloads a *Lily pack*
+  (`assets/` + `data/` made on a desktop with `tools/make-pack.sh`, shared with `tools/serve-pack.sh`) from an
+  address you enter; `--setup-url <address>` does the same on desktops (not Windows). No background movies (no
+  `ffmpeg` process on iOS; they would need an in-process MPEG-1 decoder).
+- **Android:** wgpu (Vulkan) and winit support it and the touch model maps directly. Open points: audio latency
+  (AAudio paths in cpal), packaging, and the same pack download as iPad.

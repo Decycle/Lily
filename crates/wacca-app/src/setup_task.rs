@@ -1,5 +1,6 @@
-//! Runs the setup flow's effects off the UI thread: the folder dialog, detection and the setup
-//! itself each on a worker thread, reporting back over a channel polled every frame.
+//! Runs the setup flow's effects off the UI thread: the folder dialog, detection, the setup
+//! itself and a pack download each on a worker thread (the address prompt on the UI thread, as
+//! UIKit wants), reporting back over a channel polled every frame.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,6 +11,7 @@ use std::time::Instant;
 use crate::folder_dialog;
 use crate::setup_backend::{Backend, Plan, Progress};
 use crate::setup_flow::{Effect, Failure, Flow, Input, Reason, Step, failure};
+use crate::url_prompt;
 
 /// What the shell does when setup ends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,7 +29,8 @@ pub struct SetupRun {
     backend: Arc<dyn Backend>,
     /// `<root>/assets` and `<root>/data` are written.
     root: PathBuf,
-    /// Window that owns the folder dialog (`HWND`).
+    /// Window that owns the folder dialog (`HWND`), or the view the address prompt shows over
+    /// (`UIView`).
     owner: isize,
     tx: Sender<Input>,
     rx: Receiver<Input>,
@@ -38,10 +41,21 @@ pub struct SetupRun {
 }
 
 impl SetupRun {
-    pub fn new(reason: Reason, backend: Arc<dyn Backend>, root: PathBuf, owner: isize) -> Self {
+    /// `by_url`: set up from a downloaded pack ([`Flow::by_url`]).
+    pub fn new(
+        reason: Reason,
+        backend: Arc<dyn Backend>,
+        root: PathBuf,
+        owner: isize,
+        by_url: bool,
+    ) -> Self {
         let (tx, rx) = channel();
         Self {
-            flow: Flow::new(reason),
+            flow: if by_url {
+                Flow::by_url(reason)
+            } else {
+                Flow::new(reason)
+            },
             backend,
             root,
             owner,
@@ -59,6 +73,14 @@ impl SetupRun {
         self.auto_start = start;
         self.flow.step = Step::Picking;
         self.input(Input::Picked(Some(dir)))
+    }
+
+    /// Download the pack at `url` right away (skipping the prompt); `start`: continue to the
+    /// title when it is installed.
+    pub fn preselect_url(&mut self, url: String, start: bool) -> Option<Exit> {
+        self.auto_start = start;
+        self.flow.step = Step::Picking;
+        self.input(Input::Url(Some(url)))
     }
 
     /// Shell clock for progress timing (s).
@@ -121,6 +143,32 @@ impl SetupRun {
                         }
                     };
                     let _ = tx.send(input);
+                });
+            }
+            Effect::AskUrl(prefill) => {
+                url_prompt::ask(
+                    self.owner,
+                    prefill.as_deref(),
+                    Box::new(move |url| {
+                        let _ = tx.send(Input::Url(url));
+                    }),
+                );
+            }
+            Effect::Download(url) => {
+                let backend = Arc::clone(&self.backend);
+                let root = self.root.clone();
+                let mut progress = self.progress_sender();
+                log::info!("setup: download {url} → {}", root.display());
+                spawn("setup-download", move || {
+                    let _awake = url_prompt::KeepAwake::new();
+                    let r = backend.download(&url, &root, &mut progress).map_err(|e| {
+                        log::error!("setup: {e}");
+                        failure(&e)
+                    });
+                    if let Ok(s) = &r {
+                        log::info!("setup done: {s:?}");
+                    }
+                    let _ = tx.send(Input::Finished(r));
                 });
             }
             Effect::Detect(dir) => {
@@ -245,6 +293,21 @@ mod tests {
             Ok(true)
         }
 
+        fn download(
+            &self,
+            url: &str,
+            _: &Path,
+            _: &mut dyn FnMut(Progress) -> bool,
+        ) -> Result<Summary, SetupError> {
+            match url {
+                "http://ok/pack.tar" => Ok(Summary {
+                    songs_playable: 9,
+                    ..Summary::default()
+                }),
+                _ => Err(SetupError::Download("HTTP 404".into())),
+            }
+        }
+
         fn run(
             &self,
             _: &Source,
@@ -273,7 +336,20 @@ mod tests {
     }
 
     fn run() -> SetupRun {
-        SetupRun::new(Reason::Requested, Arc::new(Fake), "dest".into(), 0)
+        SetupRun::new(Reason::Requested, Arc::new(Fake), "dest".into(), 0, false)
+    }
+
+    #[test]
+    fn a_url_downloads_and_continues_to_the_title() {
+        let mut r = SetupRun::new(Reason::Requested, Arc::new(Fake), "d".into(), 0, true);
+        assert_eq!(r.preselect_url("http://ok/pack.tar".into(), true), None);
+        assert_eq!(wait(&mut r, |_| false), Some(Exit::Finished));
+        let mut r = SetupRun::new(Reason::Requested, Arc::new(Fake), "d".into(), 0, true);
+        r.preselect_url("http://bad/pack.tar".into(), false);
+        wait(
+            &mut r,
+            |s| matches!(s, Step::Failed { failure, dir: None } if failure.title == "DOWNLOAD FAILED"),
+        );
     }
 
     /// Polls until `done` holds for the step or setup exits (max 5 s).
