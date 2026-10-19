@@ -45,12 +45,12 @@ No game images are committed to this repository. To see Lily, run it with your o
 
 ## Requirements
 
-- **Your own copy of WACCA Reverse 3.07.01**: the Reverse update archives (3.00.00 base plus 3.01.00 … 3.07.01), or
-  an installed or unpacked game.
+- **Your own copy of WACCA Reverse**, 3.00.00 or newer: the Reverse archives (the 3.00.00 base plus any updates up to
+  3.07.01; each update adds songs), or an installed or unpacked game. The base alone gives 331 songs, all updates 395.
 - Windows 10 or 11, 64-bit, with a GPU that supports DirectX 12 or Vulkan. A touchscreen is recommended.
   Linux and macOS build from source but are untested ([GUIDE § Porting notes](docs/GUIDE.md#porting-notes)).
 - An audio output device that can play 48 kHz.
-- About 7 GB of free disk space for the game files Lily uses, plus about 20 GB if you include the background movies.
+- About 4 GB of free disk space for the game files Lily uses, plus about 20 GB if you include the background movies.
 - Optional: [FFmpeg](https://ffmpeg.org/) on `PATH` for background movies.
 
 ## Quick start (players)
@@ -58,7 +58,7 @@ No game images are committed to this repository. To see Lily, run it with your o
 1. Download the portable Windows build from the Releases page and unzip it anywhere. You get a `Lily/` folder.
 2. Run `lily.exe`. On the first start, setup asks for your game files:
    1. **Pick a folder** that contains either the Reverse `.7z` update archives or an existing game folder.
-   2. Lily **verifies** that the files are the expected 3.07.01 data.
+   2. Lily **verifies** that the files are WACCA Reverse data and reports which updates it found.
    3. It **unpacks only the files it needs** (charts, audio, textures, fonts, meshes; movies are optional).
    4. It **converts** them into its own `data` folder.
    5. **Play.** Setup runs once; afterwards Lily starts straight at the title screen.

@@ -464,7 +464,10 @@ pub fn finding_text(f: &Finding) -> (String, Severity) {
     };
     match f {
         Finding::MissingUpdates(v) => (
-            format!("Missing updates: {} (older version)", v.join(", ")),
+            format!(
+                "Updates not found: {} (fewer songs; that's fine)",
+                v.join(", ")
+            ),
             Severity::Warning,
         ),
         Finding::ChecksumNotVerified => ("Archive checksums not verified".into(), Severity::Info),
@@ -540,8 +543,8 @@ pub fn failure(e: &SetupError) -> Failure {
             "UNSUPPORTED VERSION",
             vec![
                 format!("These game files cannot be used: {v}."),
-                "Lily needs WACCA Reverse 3.07.01: the Reverse update".into(),
-                "archives (3.00.00 base + 3.01.00 … 3.07.01) or a game folder.".into(),
+                "Lily needs WACCA Reverse (3.00.00 or newer): the base archive".into(),
+                "3.00.00 plus any updates, or a game folder.".into(),
             ],
         ),
         SetupError::BaseArchiveMissing => (

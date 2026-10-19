@@ -44,8 +44,8 @@ A native reimplementation of the WACCA rhythm game for Windows touchscreen PCs.
 Lily is unofficial and not affiliated with SEGA or Marvelous.
 This folder contains NO game files.
 
-You need your own copy of WACCA Reverse 3.07.01: either the Reverse update archives
-(3.00.00 base + 3.01.00 ... 3.07.01, as .7z files) or an installed/unpacked game folder.
+You need your own copy of WACCA Reverse (3.00.00 or newer): the 3.00.00 base archive
+plus any updates you have (.7z files; updates add songs) or an installed/unpacked game folder.
 
 First run
 ---------

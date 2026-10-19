@@ -12,7 +12,7 @@ no connection to it beyond the name.
 **This repository contains no game assets.** It contains only original source code, documentation written for this
 project, and WGSL shaders written to reproduce the look of the original game's materials. All charts, audio,
 textures, fonts, movies and meshes are read at run time from a copy of the game that you supply. You must use your
-own, legally obtained copy of WACCA Reverse 3.07.01. Do not redistribute game files, converted game data
+own, legally obtained copy of WACCA Reverse. Do not redistribute game files, converted game data
 (`data/`), or screenshots and recordings that would substitute for the game.
 
 Lily's own code is released under the MIT license ([LICENSE](LICENSE)). That license covers this project's code

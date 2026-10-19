@@ -198,11 +198,11 @@ fn welcome(p: &mut Painter, reason: &Reason) {
         -140.0,
         &[
             (
-                "You need your own copy of WACCA Reverse 3.07.01: either the",
+                "You need your own copy of WACCA Reverse: the 3.00.00 base",
                 GREY,
             ),
             (
-                "Reverse update archives (3.00.00 base + 3.01.00 … 3.07.01)",
+                "archive plus any updates you have (up to 3.07.01: more songs),",
                 GREY,
             ),
             ("or an installed/unpacked game folder.", GREY),
@@ -246,7 +246,7 @@ fn welcome_by_url(p: &mut Painter, reason: &Reason) {
         -180.0,
         &[
             (
-                "Make the pack on a computer from your own WACCA Reverse 3.07.01:",
+                "Make the pack on a computer from your own WACCA Reverse:",
                 GREY,
             ),
             ("run Lily's setup there, then tools/make-pack.sh and", GREY),
@@ -445,7 +445,7 @@ mod tests {
         let texts = v.texts();
         for s in [
             "Version: 3.07.01",
-            "Missing updates: 3.05.00 (older version)",
+            "Updates not found: 3.05.00 (fewer songs; that's fine)",
             "◀ YES ▶",
             "21.4 GB more; playing them needs FFmpeg.",
             "START",

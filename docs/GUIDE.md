@@ -5,8 +5,9 @@ overview of the project, see the [README](../README.md).
 
 ## 1. Requirements
 
-- **Your own copy of WACCA Reverse 3.07.01**, in one of these forms:
-  - the Reverse update archives: the 3.00.00 base plus every update from 3.01.00 up to 3.07.01 (`.7z` files), or
+- **Your own copy of WACCA Reverse**, 3.00.00 or newer, in one of these forms:
+  - the Reverse archives (`.7z` files): the 3.00.00 base, which is required, plus any updates from 3.01.00 up to
+    3.07.01. Updates are optional; each adds songs (base only: 331 songs, all updates: 395), or
   - an installed or unpacked game (a folder containing `WindowsNoEditor\Mercury\Content`).
 
   Lily contains no game files and cannot play without them. Use a copy you obtained legally.
@@ -26,8 +27,8 @@ folder to remove Lily. Your save stays in `%APPDATA%\lily\save.json`.
 
 The first time you start Lily, it shows a setup screen instead of the title:
 
-1. **Pick a folder.** Choose the folder that contains your Reverse `.7z` archives (3.00.00 and the updates up to
-   3.07.01), or the folder of an installed or unpacked game.
+1. **Pick a folder.** Choose the folder that contains your Reverse `.7z` archives (3.00.00 and any updates), or the
+   folder of an installed or unpacked game.
 2. **Verify.** Lily checks that it found the expected files and version. If something is missing, for example an
    update archive, it tells you which one.
 3. **Unpack.** From archives, Lily unpacks only the files it needs (charts, music, sound effects, textures, fonts,
@@ -159,7 +160,7 @@ Environment variables:
 
 | Symptom | Cause / fix |
 |---|---|
-| Setup says files are missing | Make sure the folder holds every archive from 3.00.00 to 3.07.01, or a complete game folder with `WindowsNoEditor\Mercury\Content` |
+| Setup says files are missing | Make sure the folder holds the base archive 3.00.00 (updates are optional), or a complete game folder with `WindowsNoEditor\Mercury\Content` |
 | `error: audio: ...` at start | No default output device, or it can't play 48 kHz (there is no resampler). Enable a device, or set it to 48 kHz in Windows Sound settings |
 | No background movies (log: `ffmpeg not found`) | Install FFmpeg (`winget install Gyan.FFmpeg`) or set `WACCA_FFMPEG` to `ffmpeg.exe`. Movies also need the movie files from setup |
 | Song select is empty | The converted song list is missing. Run setup again, or, from source, run `wacca-convert` and pass `--data` |

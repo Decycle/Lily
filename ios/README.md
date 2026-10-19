@@ -2,7 +2,7 @@
 
 The iPad app is the same Rust game, linked into a small Xcode app. It contains no game data. On
 first start it asks for the web address of a **Lily pack**: one file holding the `assets/` and
-`data/` folders that Lily's setup made on a computer from your own WACCA Reverse 3.07.01. The app
+`data/` folders that Lily's setup made on a computer from your own WACCA Reverse (3.00.00 or newer). The app
 downloads the pack over your network into its Documents folder. The pack is about 4 GB. It
 resumes if the Wi-Fi drops and keeps the screen on while it runs. Background movies are not
 supported on iPad.
