@@ -36,7 +36,10 @@ No game images are committed to this repository. To see Lily, run it with your o
 
 - All 395 songs and 1,247 charts of 3.07.01, with genre and song select, sort and filter, preview audio, and jackets.
 - Real note meshes, shaders, hit effects, background movies (optional) and the no-movie background scene.
-- Touch input on a virtual 60 × 4 sensor ring, like the cabinet. The mouse works as a single finger.
+- Touch input on a virtual 60 × 4 sensor ring, like the cabinet, with an optional on-screen touch guide. The mouse
+  works as a single finger.
+- Menu music and menu sounds from the game's own sound banks, and a pause menu (resume, retry, quit) during play.
+- An iPad app ([ios/README.md](ios/README.md)).
 - Options: note speed, timing offset with a tap-along TIMING CHECK, mirror, autoplay, and more.
 - Results with grade, lamp, judgement counts and fast/late, saved personal bests, rating and Reverse Points.
 
@@ -118,7 +121,7 @@ song and genre wheels. Without a touchscreen, the left mouse button is one finge
 | Song select | **←/→** or wheel: song · **↑/↓**: difficulty · **D**: cycle through the song's charts · **PageUp/PageDown**: previous/next genre · **S**: sort (title → level → version) · **F**: show only songs that have the chosen difficulty |
 | Options | **↑/↓**: row · **←/→**: change the value. Tap left or right of a value to step it down or up. Pick TIMING CHECK to open it |
 | Timing check | **Space** or a tap anywhere: tap on each click · **Enter**/APPLY: use the suggestion · **Esc**/BACK: leave without changing it |
-| Play | **Esc**: give up (the result is still recorded) · **Space**: pause/resume · **↑/↓**: note speed ±0.5 for this play only |
+| Play | **Esc**: give up (the result is still recorded) · **Space**: pause/resume · **↑/↓**: note speed ±0.5 for this play only. Touch: the **II** button in the top-right corner pauses, with RESUME / RETRY / QUIT (retry and quit save nothing) |
 | Results | **Enter**/**Esc**: back to song select · **R** or RETRY: play again |
 
 ## Options
@@ -134,7 +137,7 @@ The options screen opens after you pick a song. Settings are saved when you star
 | AUTOPLAY | OFF | Perfect automatic play. It is not saved, and autoplay results are not recorded |
 | BG MOVIE | ON | Shows the song's background movie (needs FFmpeg) |
 | BAR LINES | ON | Measure lines on the playfield, as in the real game |
-| TOUCH GUIDE | OFF | Faint depth-ring circles and highlights on the sensors you are pressing (not in the real game) |
+| TOUCH GUIDE | OFF (ON on iPad) | Shows the touch area during play: a bright inner circle where it starts (touches nearer the centre do nothing), the 4 depth rings, a line between lanes, and the sensors you are pressing lit up (not in the real game) |
 
 Save-file-only settings, the save format and environment variables are described in the
 [player guide](docs/GUIDE.md#save-file-and-advanced-settings).

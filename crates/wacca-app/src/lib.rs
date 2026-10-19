@@ -148,7 +148,7 @@ fn font_candidates(data: &Path, assets: &Path) -> Vec<Vec<PathBuf>> {
         ],
         vec![windows.join("seguisym.ttf")],
         // macOS / iOS system fonts, so the setup screens have text before any game font exists.
-        // UNVERIFIED: the iOS paths (they differ between iOS versions).
+        // iOS 18 loads /System/Library/Fonts/Core/Helvetica.ttc; the other paths are fallbacks.
         vec![
             PathBuf::from("/System/Library/Fonts/Helvetica.ttc"),
             PathBuf::from("/System/Library/Fonts/Core/Helvetica.ttc"),

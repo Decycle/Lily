@@ -62,12 +62,21 @@ the same for `data`.
    install from the TestFlight app on the iPad. Builds expire after 90 days. Increase
    `CURRENT_PROJECT_VERSION` for every upload.
 
+## Playing on iPad
+
+- **Pause:** the **II** button in the top-right corner, outside the ring, opens RESUME / RETRY / QUIT.
+- **Touch guide:** on by default on iPad (OPTIONS → TOUCH GUIDE). It marks where the touch area starts and ends.
+  A save made before this default keeps its old setting; turn it on once in OPTIONS.
+- **Menu sounds:** the title and menus play the game's system music, and taps make the game's menu sounds. Which
+  cue the game plays where is not recorded, so they were picked by length (`crates/wacca-app/src/menu_audio.rs`).
+- **Timing:** audio delay on iPad differs from a PC. Use OPTIONS → TIMING CHECK once.
+
 ## Notes
 
 - The game files and the save live in the app's Documents folder: **Files → On My iPad → Lily**.
   You can also copy `assets/` and `data/` there by hand (Finder → iPad → Files) instead of
   downloading.
 - To replace the game files, use the setup button on the title screen.
-- Open points: audio latency on iPad (use the TIMING CHECK), the size of the ring on smaller
-  iPads, and the iOS system font paths used before game data exists (`UNVERIFIED` in
-  `crates/wacca-app/src/lib.rs`).
+- Tested on an iPad (10th generation, iOS 18). The window currently leaves a 50 px strip
+  unused (2360 × 1590 on a 2360 × 1640 screen).
+- Open points: audio latency on iPad and the size of the ring on smaller iPads.

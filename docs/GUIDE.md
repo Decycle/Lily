@@ -43,6 +43,12 @@ Your game archives or game folder are only read, never changed.
 Notes travel from the centre outward. Hit them as they reach the ring at the edge. The ring has 60 lanes and 4
 depth rings of sensors, like the cabinet. A note covers an arc, and touching anywhere inside that arc counts.
 
+The touch area is a band from a little over halfway out to the edge of the screen; touches nearer the centre do
+nothing. Turn on **TOUCH GUIDE** in the options to see it.
+
+During play, the **II** button in the top-right corner (or Space) pauses. The pause menu has RESUME, RETRY and QUIT;
+retry and quit end the play without saving it. The real game has no pause, only automatic GIVE UP settings.
+
 Judgements are **Marvelous / Great / Good / Miss**. For touches the windows are ±50 / ±83 / ±100 ms. The other note
 types use the game's own `JudgeParameterTable` values, which were measured on the real game
 ([doc 10](research/10-e3-judge-results.md)).
@@ -112,7 +118,7 @@ The options screen opens after you pick a song. Settings are saved when you star
 | AUTOPLAY | OFF | Perfect automatic play. Not saved; autoplay results are not recorded |
 | BG MOVIE | ON | Shows the song's background movie (needs FFmpeg and the movie files) |
 | BAR LINES | ON | Measure lines on the playfield, as in the real game |
-| TOUCH GUIDE | OFF | Faint depth-ring circles and highlights on the sensors you are pressing (not in the real game) |
+| TOUCH GUIDE | OFF (ON on iPad) | Shows the touch area during play: a bright inner circle where it starts (touches nearer the centre do nothing), the 4 depth rings, a line between lanes, and the sensors you are pressing lit up (not in the real game) |
 
 **TIMING CHECK** plays a 120 BPM click track. Tap along (a tap anywhere, or Space) at least 16 times. Lily takes
 the median of your errors, with outliers removed, and suggests a TIMING value. APPLY (or Enter) saves it; BACK (or
