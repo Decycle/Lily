@@ -23,7 +23,7 @@ use winit::event::{
     ElementState, KeyEvent, MouseButton, MouseScrollDelta, Touch, TouchPhase, WindowEvent,
 };
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 use winit::window::{Fullscreen, Window, WindowId};
 
 use crate::canvas::{Canvas, ease};
@@ -151,13 +151,23 @@ pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
         monitor: None,
         setup: None,
     };
-    EventLoop::new()?.run_app(&mut app)?;
+    #[cfg(target_os = "android")]
+    let event_loop = {
+        use winit::platform::android::EventLoopBuilderExtAndroid;
+        let android = crate::android::app().ok_or_else(|| gfx_err("no Android activity"))?;
+        EventLoop::builder().with_android_app(android).build()?
+    };
+    #[cfg(not(target_os = "android"))]
+    let event_loop = EventLoop::new()?;
+    event_loop.run_app(&mut app)?;
     app.error.map_or(Ok(()), Err)
 }
 
 struct Gfx {
     window: Arc<Window>,
-    surface: wgpu::Surface<'static>,
+    instance: wgpu::Instance,
+    /// `None` while the app is suspended (Android destroys the window's surface then).
+    surface: Option<wgpu::Surface<'static>>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -238,7 +248,8 @@ impl Gfx {
         );
         Ok(Self {
             window,
-            surface,
+            instance,
+            surface: Some(surface),
             device,
             queue,
             config,
@@ -259,17 +270,48 @@ impl Gfx {
         if width > 0 && height > 0 {
             self.config.width = width;
             self.config.height = height;
-            self.surface.configure(&self.device, &self.config);
+            if let Some(s) = &self.surface {
+                s.configure(&self.device, &self.config);
+            }
         }
+    }
+
+    /// The app went to the background: let go of the surface (Android destroys its window).
+    fn suspend(&mut self) {
+        self.surface = None;
+    }
+
+    /// Back in the foreground: a new surface for the window, configured as before.
+    fn resume(&mut self) -> Result<(), ShellError> {
+        if self.surface.is_some() {
+            return Ok(());
+        }
+        let surface = self
+            .instance
+            .create_surface(self.window.clone())
+            .map_err(gfx_err)?;
+        let size = self.window.inner_size();
+        if size.width > 0 && size.height > 0 {
+            (self.config.width, self.config.height) = (size.width, size.height);
+        }
+        surface.configure(&self.device, &self.config);
+        self.surface = Some(surface);
+        log::info!(
+            "surface recreated {}x{}",
+            self.config.width,
+            self.config.height
+        );
+        Ok(())
     }
 
     /// The next swap-chain image; with vsync this waits for the display.
     fn acquire(&mut self) -> Option<wgpu::SurfaceTexture> {
-        self.surface
+        let surface = self.surface.as_ref()?;
+        surface
             .get_current_texture()
             .map_err(|e| {
                 log::warn!("surface: {e}; reconfiguring");
-                self.surface.configure(&self.device, &self.config);
+                surface.configure(&self.device, &self.config);
             })
             .ok()
     }
@@ -1358,8 +1400,8 @@ impl App {
 
     fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<(), ShellError> {
         let mut attrs = Window::default_attributes().with_title("Lily");
-        // iOS: the window is the whole screen (a size here would shrink it to 450 × 800 points).
-        if cfg!(not(target_os = "ios")) {
+        // iOS / Android: the window is the whole screen (a size here would shrink it on iOS).
+        if cfg!(not(any(target_os = "ios", target_os = "android"))) {
             attrs = attrs.with_inner_size(LogicalSize::new(450.0, 800.0));
             if !self.s.windowed {
                 attrs = attrs.with_fullscreen(Some(Fullscreen::Borderless(None)));
@@ -1448,8 +1490,28 @@ fn native_handle(window: &Window) -> isize {
 }
 
 impl ApplicationHandler for App {
+    fn suspended(&mut self, _: &ActiveEventLoop) {
+        // Pause a song rather than let it play on unseen.
+        if let Some(p) = self.play.as_mut().filter(|p| !p.paused) {
+            p.toggle_pause();
+        }
+        self.preview.stop(&self.s.player);
+        if self.play.is_none() {
+            // Menu music restarts when the app is back.
+            self.s.player.pause();
+            self.menu_music.forget();
+        }
+        if let Some(g) = &mut self.gfx {
+            g.suspend();
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.gfx.is_some() {
+        if let Some(g) = &mut self.gfx {
+            if let Err(e) = g.resume() {
+                self.error = Some(e);
+                event_loop.exit();
+            }
             return;
         }
         if let Err(e) = self.start(event_loop) {
@@ -1473,6 +1535,23 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::ModifiersChanged(m) => self.alt = m.state().alt_key(),
+            // Android's back button: pause (and quit from the pause menu) in play, back elsewhere.
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key: Key::Named(NamedKey::BrowserBack),
+                        state: ElementState::Pressed,
+                        repeat: false,
+                        ..
+                    },
+                ..
+            } => {
+                if self.screen == Screen::Play {
+                    self.play_action(event_loop, Action::Back);
+                } else {
+                    self.key(event_loop, KeyCode::Escape);
+                }
+            }
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
@@ -1482,11 +1561,11 @@ impl ApplicationHandler for App {
                         ..
                     },
                 ..
-            } => {
+            }
                 // Menus scroll on key repeat; play and the timing check ignore it.
-                if !repeat || !matches!(self.screen, Screen::Play | Screen::Calibrate) {
-                    self.key(event_loop, code);
-                }
+                if !repeat || !matches!(self.screen, Screen::Play | Screen::Calibrate) =>
+            {
+                self.key(event_loop, code);
             }
             WindowEvent::Touch(t) => self.touch(event_loop, t),
             WindowEvent::CursorMoved {

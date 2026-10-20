@@ -15,3 +15,12 @@ ios/Lily/Info.plist
 # Lily packs (your game data)
 *.tar
 ios/Local.xcconfig
+
+# Android: generated build output
+android/.gradle/
+android/build/
+android/app/build/
+android/app/src/main/jniLibs/
+android/local.properties
+*.keystore
+*.jks

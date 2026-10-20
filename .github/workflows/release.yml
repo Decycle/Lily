@@ -50,4 +50,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
-        run: gh release create "$TAG" release-out/*.zip --draft --target "$GITHUB_SHA" --title "Lily $TAG" --notes "Portable Windows build. You need your own copy of WACCA Reverse 3.07.01; see docs/GUIDE.md."
+        # Adds the zip to the release if it exists already (e.g. made with the Android APK).
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-out/*.zip --clobber
+          else
+            gh release create "$TAG" release-out/*.zip --draft --target "$GITHUB_SHA" --title "Lily $TAG" \
+              --notes "Portable Windows build. You need your own copy of WACCA Reverse (3.00.00 or newer); see docs/GUIDE.md."
+          fi

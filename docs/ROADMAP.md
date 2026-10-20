@@ -35,4 +35,9 @@ the code's `UNVERIFIED` markers. Contributions are welcome; see [CONTRIBUTING.md
 
 - Linux and macOS build in CI but are untested on real hardware (touch input, audio at 48 kHz, fonts).
 - Audio output needs a 48 kHz device (there is no resampler).
-- Android / iPad: see [GUIDE.md § Porting notes](GUIDE.md#porting-notes).
+- iPad and Android ([ios/README.md](../ios/README.md), [android/README.md](../android/README.md)):
+  - Background movies: an in-process MPEG-1 decoder (no `ffmpeg` process on mobile).
+  - "Use files on this tablet": pick a folder with Android's / iOS's folder picker and copy it into the app, for
+    files already copied over a cable.
+  - Audio latency on real Android devices (only the emulator has run Lily so far).
+  - The iPad window leaves a 50 px strip unused (2360 × 1590 on a 2360 × 1640 screen).

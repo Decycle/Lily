@@ -39,5 +39,12 @@ objc2-ui-kit = { version = "0.3", default-features = false, features = ["std", "
 objc2-avf-audio = { version = "0.3", default-features = false, features = ["std", "AVAudioSession", "AVAudioSessionTypes"] }
 block2 = "0.6"
 
+[target.'cfg(target_os = "android")'.dependencies]
+winit = { version = "0.30", features = ["android-native-activity"] }
+# OpenGL ES as a fallback for devices (and emulators) without a usable Vulkan driver.
+wgpu = { version = "27", default-features = false, features = ["gles"] }
+jni = "0.21"
+android_logger = { version = "0.15", default-features = false }
+
 [lints]
 workspace = true

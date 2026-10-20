@@ -160,7 +160,9 @@ impl SetupRun {
                 let mut progress = self.progress_sender();
                 log::info!("setup: download {url} → {}", root.display());
                 spawn("setup-download", move || {
+                    log::debug!("download: keeping the screen on");
                     let _awake = url_prompt::KeepAwake::new();
+                    log::debug!("download: starting");
                     let r = backend.download(&url, &root, &mut progress).map_err(|e| {
                         log::error!("setup: {e}");
                         failure(&e)

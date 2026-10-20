@@ -37,6 +37,7 @@ pub fn download(
     let work = Work::new(dest);
     remove_dir(&work.root)?;
     std::fs::create_dir_all(&work.root).map_err(io_err(&work.root))?;
+    log::debug!("download: connecting to {url}");
     let result = download_in(url, dest, &work, progress);
     if let Err(e) = remove_dir(&work.root) {
         log::warn!("could not remove the temporary folder: {e}");

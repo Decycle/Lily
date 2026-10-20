@@ -1,6 +1,7 @@
 //! Asking for a Lily pack's web address (setup by URL, [`crate::setup_flow::Flow::by_url`]).
 //! iOS: a native alert with a text field over the game's view (winit has no on-screen keyboard
-//! support). macOS: an AppleScript dialog. Elsewhere there is no prompt: pass `--setup-url`.
+//! support). Android: an AlertDialog in `LilyActivity` ([`crate::android`]). macOS: an
+//! AppleScript dialog. Elsewhere there is no prompt: pass `--setup-url`.
 
 /// Called once with the entered address (`None`: cancelled).
 pub type Answer = Box<dyn FnOnce(Option<String>) + Send>;
@@ -137,7 +138,12 @@ pub fn ask(_owner: isize, prefill: Option<&str>, answer: Answer) {
     });
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "macos")))]
+#[cfg(target_os = "android")]
+pub fn ask(_owner: isize, prefill: Option<&str>, answer: Answer) {
+    crate::android::ask_url(prefill, answer);
+}
+
+#[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "android")))]
 pub fn ask(_owner: isize, _prefill: Option<&str>, answer: Answer) {
     log::error!("no address prompt on this platform: start Lily with --setup-url <address>");
     answer(None);
@@ -150,6 +156,8 @@ impl KeepAwake {
     pub fn new() -> Self {
         #[cfg(target_os = "ios")]
         crate::ios::keep_awake(true);
+        #[cfg(target_os = "android")]
+        crate::android::keep_awake(true);
         KeepAwake(())
     }
 }
@@ -158,5 +166,7 @@ impl Drop for KeepAwake {
     fn drop(&mut self) {
         #[cfg(target_os = "ios")]
         crate::ios::keep_awake(false);
+        #[cfg(target_os = "android")]
+        crate::android::keep_awake(false);
     }
 }

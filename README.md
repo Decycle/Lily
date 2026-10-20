@@ -39,7 +39,7 @@ No game images are committed to this repository. To see Lily, run it with your o
 - Touch input on a virtual 60 × 4 sensor ring, like the cabinet, with an optional on-screen touch guide. The mouse
   works as a single finger.
 - Menu music and menu sounds from the game's own sound banks, and a pause menu (resume, retry, quit) during play.
-- An iPad app ([ios/README.md](ios/README.md)).
+- iPad and Android apps ([ios/README.md](ios/README.md), [android/README.md](android/README.md)).
 - Options: note speed, timing offset with a tap-along TIMING CHECK, mirror, autoplay, and more.
 - Results with grade, lamp, judgement counts and fast/late, saved personal bests, rating and Reverse Points.
 
@@ -137,7 +137,7 @@ The options screen opens after you pick a song. Settings are saved when you star
 | AUTOPLAY | OFF | Perfect automatic play. It is not saved, and autoplay results are not recorded |
 | BG MOVIE | ON | Shows the song's background movie (needs FFmpeg) |
 | BAR LINES | ON | Measure lines on the playfield, as in the real game |
-| TOUCH GUIDE | OFF (ON on iPad) | Shows the touch area during play: a bright inner circle where it starts (touches nearer the centre do nothing), the 4 depth rings, a line between lanes, and the sensors you are pressing lit up (not in the real game) |
+| TOUCH GUIDE | OFF (ON on iPad and Android) | Shows the touch area during play: a bright inner circle where it starts (touches nearer the centre do nothing), the 4 depth rings, a line between lanes, and the sensors you are pressing lit up (not in the real game) |
 
 Save-file-only settings, the save format and environment variables are described in the
 [player guide](docs/GUIDE.md#save-file-and-advanced-settings).

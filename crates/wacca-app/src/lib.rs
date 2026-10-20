@@ -14,6 +14,8 @@
 //! `WACCA_PACE=0` turns off vsync frame pacing (`pacer`).
 #![cfg_attr(test, allow(clippy::unwrap_used))] // tests may unwrap (CONTRIBUTING)
 
+#[cfg(target_os = "android")]
+mod android;
 mod args;
 mod calibrate;
 mod canvas;
@@ -89,6 +91,18 @@ enum Error {
 /// The game, from `main.rs` on desktops and [`lily_main`] on iOS.
 pub fn main() -> ExitCode {
     let started = std::time::Instant::now();
+    #[cfg(target_os = "android")]
+    android_logger::init_once(
+        android_logger::Config::default()
+            .with_tag("lily")
+            .with_max_level(log::LevelFilter::Debug)
+            .with_filter(
+                android_logger::FilterBuilder::new()
+                    .parse("info,wacca_app=debug,wacca_setup=debug")
+                    .build(),
+            ),
+    );
+    #[cfg(not(target_os = "android"))]
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     #[cfg(target_os = "ios")]
     ios::start();
@@ -110,6 +124,16 @@ pub fn main() -> ExitCode {
 #[unsafe(no_mangle)]
 pub extern "C" fn lily_main() -> i32 {
     if main() == ExitCode::SUCCESS { 0 } else { 1 }
+}
+
+/// Android entry point: `LilyActivity` (a `NativeActivity`) loads `libwacca_app.so` and
+/// android-activity calls this on the app's main thread.
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+fn android_main(app: winit::platform::android::activity::AndroidApp) {
+    android::init(app);
+    let code = main();
+    log::info!("exited: {code:?}");
 }
 
 /// Fonts in priority order, one per group (the first file of a group that exists): the game's
@@ -154,6 +178,12 @@ fn font_candidates(data: &Path, assets: &Path) -> Vec<Vec<PathBuf>> {
             PathBuf::from("/System/Library/Fonts/Core/Helvetica.ttc"),
             PathBuf::from("/System/Library/Fonts/CoreUI/SFUI.ttf"),
             PathBuf::from("/System/Library/Fonts/Core/Avenir.ttc"),
+        ],
+        // Android system fonts (setup screens before game data exists).
+        vec![
+            PathBuf::from("/system/fonts/Roboto-Regular.ttf"),
+            PathBuf::from("/system/fonts/NotoSansCJK-Regular.ttc"),
+            PathBuf::from("/system/fonts/DroidSans.ttf"),
         ],
     ]
 }
@@ -288,7 +318,10 @@ fn resolve_paths(args: &Args) -> Paths {
     // iOS: everything in the app's Documents folder, like a portable install there.
     #[cfg(target_os = "ios")]
     let exe = ios::documents().map(|d| (d, true));
-    #[cfg(not(target_os = "ios"))]
+    // Android: likewise in the app's external files folder.
+    #[cfg(target_os = "android")]
+    let exe = android::data_dir().map(|d| (d, true));
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     let exe = paths::exe_dir();
     // `%APPDATA%`, or the XDG data folder elsewhere.
     let appdata = save::data_base();
@@ -413,7 +446,8 @@ fn run(args: &Args, started: std::time::Instant) -> Result<(), Error> {
             screen: args.screen.filter(|s| *s != screen::Screen::Setup),
             setup,
             setup_root: paths.setup_root.clone(),
-            setup_by_url: cfg!(target_os = "ios") || args.setup_url.is_some(),
+            setup_by_url: cfg!(any(target_os = "ios", target_os = "android"))
+                || args.setup_url.is_some(),
             backend: Arc::new(setup_backend::Real),
             windowed: args.windowed,
             ffmpeg,
@@ -449,7 +483,7 @@ mod tests {
         assert!(c[0][0].starts_with("data") && c[0][1].starts_with("assets"));
         // Without the exported fonts the raw game fonts are used.
         let picked = pick_fonts(c, |p| !p.starts_with("data"));
-        assert_eq!(picked.len(), 7);
+        assert_eq!(picked.len(), 8);
         assert!(picked[0].starts_with("assets") && picked[1].starts_with("assets"));
         assert!(pick_fonts(vec![vec![PathBuf::from("x")]], |_| false).is_empty());
     }

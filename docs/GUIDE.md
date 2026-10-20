@@ -119,7 +119,7 @@ The options screen opens after you pick a song. Settings are saved when you star
 | AUTOPLAY | OFF | Perfect automatic play. Not saved; autoplay results are not recorded |
 | BG MOVIE | ON | Shows the song's background movie (needs FFmpeg and the movie files) |
 | BAR LINES | ON | Measure lines on the playfield, as in the real game |
-| TOUCH GUIDE | OFF (ON on iPad) | Shows the touch area during play: a bright inner circle where it starts (touches nearer the centre do nothing), the 4 depth rings, a line between lanes, and the sensors you are pressing lit up (not in the real game) |
+| TOUCH GUIDE | OFF (ON on iPad and Android) | Shows the touch area during play: a bright inner circle where it starts (touches nearer the centre do nothing), the 4 depth rings, a line between lanes, and the sensors you are pressing lit up (not in the real game) |
 
 **TIMING CHECK** plays a 120 BPM click track. Tap along (a tap anywhere, or Space) at least 16 times. Lily takes
 the median of your errors, with outliers removed, and suggests a TIMING value. APPLY (or Enter) saves it; BACK (or
@@ -207,5 +207,6 @@ on.
   (`assets/` + `data/` made on a desktop with `tools/make-pack.sh`, shared with `tools/serve-pack.sh`) from an
   address you enter; `--setup-url <address>` does the same on desktops (not Windows). No background movies (no
   `ffmpeg` process on iOS; they would need an in-process MPEG-1 decoder).
-- **Android:** wgpu (Vulkan) and winit support it and the touch model maps directly. Open points: audio latency
-  (AAudio paths in cpal), packaging, and the same pack download as iPad.
+- **Android:** a `NativeActivity` app around the same game, in [`android/`](../android/README.md), with the same
+  pack download as iPad (address typed into a native dialog). Vulkan, with OpenGL ES as a fallback; audio through
+  AAudio (cpal). No background movies yet.

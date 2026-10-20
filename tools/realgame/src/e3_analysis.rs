@@ -91,7 +91,7 @@ pub fn clock_at(blocks: &[(f64, f64)], t: f64) -> Option<f64> {
         (Some(x), Some(y)) => (x.1 - y.1).abs() > JUMP_MS,
         _ => false,
     };
-    (!(i > 0 && jump(i - 1, i)) && !jump(i, i + 1)).then(|| blocks[i].1 - mean)
+    (!(jump(i, i + 1) || i > 0 && jump(i - 1, i))).then(|| blocks[i].1 - mean)
 }
 
 /// How much later (s) than a hit a miss-only panel change is shown: 6 frames.

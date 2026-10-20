@@ -1,6 +1,7 @@
 #!/bin/sh
 # Shares a lily-pack.tar on the local network (with resumable downloads) and prints the address
-# to enter in Lily's setup on the iPad. Stop with Ctrl+C when the iPad says SETUP COMPLETE.
+# to enter in Lily's setup on the iPad or Android tablet. Stop with Ctrl+C when it says SETUP
+# COMPLETE. An Android emulator on this computer reaches it at http://10.0.2.2:<port>/.
 #
 #   tools/serve-pack.sh [lily-pack.tar] [port]
 set -eu
@@ -9,7 +10,7 @@ port=${2:-8000}
 [ -f "$pack" ] || { echo "error: $pack not found (make it with tools/make-pack.sh)" >&2; exit 1; }
 ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null \
     || hostname -I 2>/dev/null | cut -d' ' -f1 || true)
-echo "On the iPad, enter:  http://${ip:-YOUR-MAC-IP}:$port/$(basename "$pack")"
+echo "On the tablet, enter:  http://${ip:-YOUR-COMPUTER-IP}:$port/$(basename "$pack")"
 exec python3 -I - "$pack" "$port" <<'PY'
 # A file server for one file, with HTTP Range (http.server's has none, and resuming matters for
 # 7 GB over Wi-Fi).
