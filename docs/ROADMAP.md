@@ -34,7 +34,7 @@ the code's `UNVERIFIED` markers. Contributions are welcome; see [CONTRIBUTING.md
 ## Platforms
 
 - Linux and macOS build in CI but are untested on real hardware (touch input, audio at 48 kHz, fonts).
-- Audio output needs a 48 kHz device (there is no resampler).
+- Devices that cannot run at 48 kHz get the music resampled (4-point Catmull-Rom); a better filter could be used.
 - iPad and Android ([ios/README.md](../ios/README.md), [android/README.md](../android/README.md)):
   - Background movies: an in-process MPEG-1 decoder (no `ffmpeg` process on mobile).
   - "Use files on this tablet": pick a folder with Android's / iOS's folder picker and copy it into the app, for

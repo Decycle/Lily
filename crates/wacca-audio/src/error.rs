@@ -41,7 +41,7 @@ pub enum Error {
     #[error("ADX decode: {0}")]
     Adx(String),
     #[error(
-        "audio is {got} Hz but the output runs at {expected} Hz (no resampler for BGM; resample sound effects first)"
+        "sound effect is {got} Hz but the output runs at {expected} Hz (resample it first: Sfx::resampled)"
     )]
     SampleRate { expected: u32, got: u32 },
     #[error("sound-effect queue is full")]

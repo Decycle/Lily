@@ -49,7 +49,7 @@ No game images are committed to this repository. To see Lily, run it with your o
   3.07.01; each update adds songs), or an installed or unpacked game. The base alone gives 331 songs, all updates 395.
 - Windows 10 or 11, 64-bit, with a GPU that supports DirectX 12 or Vulkan. A touchscreen is recommended.
   Linux and macOS build from source but are untested ([GUIDE § Porting notes](docs/GUIDE.md#porting-notes)).
-- An audio output device that can play 48 kHz.
+- An audio output device (48 kHz is best; other rates are resampled).
 - About 4 GB of free disk space for the game files Lily uses, plus about 20 GB if you include the background movies.
 - Optional: [FFmpeg](https://ffmpeg.org/) on `PATH` for background movies.
 

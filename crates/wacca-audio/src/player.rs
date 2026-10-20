@@ -19,6 +19,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SampleFormat, SampleRate, SizedSample, SupportedStreamConfigRange};
 
 use crate::mixer::{self, Mixer};
+use crate::resample::Resampled;
 use crate::{Clock, Decoder, Error, Sfx};
 
 /// Output sample rate (the rate of every WACCA BGM and of most sound effects).
@@ -109,24 +110,33 @@ fn device_err(e: impl std::fmt::Display) -> Error {
 }
 
 impl Player {
-    /// Open the default output device at [`OUTPUT_RATE`]. Starts silent, with no source.
+    /// Open the default output device at [`OUTPUT_RATE`], or else at a rate it supports (BGM is
+    /// then resampled, see [`Player::load`]). Starts silent, with no source.
     pub fn new() -> Result<Self, Error> {
         let device = cpal::default_host()
             .default_output_device()
-            .ok_or_else(|| Error::Device("no default output device".into()))?;
+            .ok_or_else(|| {
+                Error::Device("no default output device (speakers, headphones)".into())
+            })?;
         let ranges: Vec<_> = device
             .supported_output_configs()
             .map_err(device_err)?
             .collect();
-        let range = pick_config(&ranges, OUTPUT_RATE, OUTPUT_CHANNELS).ok_or_else(|| {
+        let (range, rate) = pick_rate(&ranges, OUTPUT_CHANNELS).ok_or_else(|| {
             Error::Device(format!(
-                "no output config at {OUTPUT_RATE} Hz with a supported sample format (no resampler)"
+                "the output device offers no usable format ({} configurations)",
+                ranges.len()
             ))
         })?;
-        let config = range.with_sample_rate(SampleRate(OUTPUT_RATE));
+        let config = range.with_sample_rate(SampleRate(rate));
         log::info!("audio output: {config:?}");
+        if rate != OUTPUT_RATE {
+            log::warn!(
+                "the output device runs at {rate} Hz: music is resampled from {OUTPUT_RATE} Hz"
+            );
+        }
 
-        let (mut player, ends) = Player::detached(OUTPUT_RATE, config.channels());
+        let (mut player, ends) = Player::detached(rate, config.channels());
         let stream_config = config.config();
         let (output, shared) = (ends.output, &player.shared);
         let stream = match config.sample_format() {
@@ -179,16 +189,16 @@ impl Player {
         (player, ends)
     }
 
-    /// Replace the BGM source. Afterwards the player is paused at position 0 with volume 1, like
-    /// a fresh one; the old source stops within one device buffer. Sound effects keep playing.
+    /// Replace the BGM source (resampled to the output rate if it differs). Afterwards the player
+    /// is paused at position 0 with volume 1, like a fresh one; the old source stops within one
+    /// device buffer. Sound effects keep playing.
     pub fn load(&self, decoder: Box<dyn Decoder>) -> Result<(), Error> {
+        let decoder: Box<dyn Decoder> = if decoder.sample_rate() == self.sample_rate {
+            decoder
+        } else {
+            Box::new(Resampled::new(decoder, self.sample_rate))
+        };
         let rate = decoder.sample_rate();
-        if rate != self.sample_rate {
-            return Err(Error::SampleRate {
-                expected: self.sample_rate,
-                got: rate,
-            });
-        }
         self.pause();
         self.set_volume(1.0);
         let duration = decoder.total_frames() as f64 / f64::from(rate);
@@ -304,6 +314,34 @@ impl Player {
 
 /// Best device config for `rate`: exact channel count first, then more channels, then fewer;
 /// `f32` preferred over integer formats.
+/// Output rates to try, best first: the game's own, then common device rates.
+const RATES: [u32; 8] = [
+    OUTPUT_RATE,
+    44_100,
+    96_000,
+    88_200,
+    192_000,
+    176_400,
+    32_000,
+    24_000,
+];
+
+/// The device configuration and rate to open: [`OUTPUT_RATE`] if possible, else the first of
+/// [`RATES`] it offers. `WACCA_AUDIO_RATE=<Hz>` asks for that rate first (testing the resampler
+/// on a 48 kHz device, or working around a driver).
+fn pick_rate(
+    ranges: &[SupportedStreamConfigRange],
+    channels: u16,
+) -> Option<(SupportedStreamConfigRange, u32)> {
+    let forced = std::env::var("WACCA_AUDIO_RATE")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok());
+    forced
+        .into_iter()
+        .chain(RATES)
+        .find_map(|rate| pick_config(ranges, rate, channels).map(|r| (r, rate)))
+}
+
 fn pick_config(
     ranges: &[SupportedStreamConfigRange],
     rate: u32,
@@ -719,20 +757,16 @@ mod tests {
         assert_eq!(pull(&mut output, &p, 1), [110.0]);
         assert!(p.position() >= 0.01);
 
-        let wrong_rate = Box::new(Ramp {
+        // Another rate is resampled to the output's: 2000 frames at 2 kHz last 1 s here too.
+        let other_rate = Box::new(Ramp {
             rate: 2000,
             channels: 1,
-            total: 1,
+            total: 2000,
             base: 0.0,
             pos: 0,
         });
-        assert!(matches!(
-            p.load(wrong_rate),
-            Err(Error::SampleRate {
-                expected: 1000,
-                got: 2000
-            })
-        ));
+        p.load(other_rate).unwrap();
+        assert!((p.duration() - 1.0).abs() < 1e-9);
         drop(output);
         drop(p);
         t.join().unwrap();

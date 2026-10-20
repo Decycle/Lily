@@ -17,6 +17,7 @@ mod error;
 pub mod hca;
 mod mixer;
 pub mod player;
+pub mod resample;
 pub mod se;
 mod sfx;
 
