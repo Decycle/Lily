@@ -104,6 +104,12 @@ pub fn main() -> ExitCode {
     );
     #[cfg(not(target_os = "android"))]
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // A crash should say why, also when no console stays open to show it (Windows).
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default_hook(info);
+        show_fatal(&format!("Lily crashed.\n\n{info}"));
+    }));
     #[cfg(target_os = "ios")]
     ios::start();
     match args::parse(std::env::args().skip(1))
@@ -113,9 +119,31 @@ pub fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e}");
+            show_fatal(&format!("Lily could not start.\n\n{e}"));
             ExitCode::FAILURE
         }
     }
+}
+
+/// On Windows, a message box: double-clicked, `lily.exe`'s console closes with the process, so
+/// the printed error would vanish before anyone can read it. Elsewhere the console has it.
+fn show_fatal(message: &str) {
+    #[cfg(windows)]
+    {
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn MessageBoxW(hwnd: isize, text: *const u16, caption: *const u16, kind: u32) -> i32;
+        }
+        const MB_ICONERROR: u32 = 0x10;
+        let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+        let (text, caption) = (wide(message), wide("Lily"));
+        // SAFETY: both strings are NUL-terminated UTF-16 that outlive the call; no owner window.
+        unsafe {
+            MessageBoxW(0, text.as_ptr(), caption.as_ptr(), MB_ICONERROR);
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = message;
 }
 
 /// iOS entry point, called by the Xcode project's `main` (winit's event loop then takes over the

@@ -1,10 +1,12 @@
 //! Setup from a URL: an uncompressed `.tar` of a finished setup (`assets/` + `data/`, as
 //! `tools/make-pack.sh` writes it on a desktop) is streamed and unpacked on the fly into
 //! `<dest>/.setup-tmp`, so the iPad never holds the archive and the files at the same time. A
-//! dropped connection is resumed with an HTTP `Range` request at the byte it stopped. After
-//! [`crate::validate`], `<dest>/assets` and `<dest>/data` are replaced as in [`crate::run`].
+//! dropped connection is resumed with an HTTP `Range` request at the byte it stopped. Without
+//! movies (iPad, Android: no player there yet) `assets/Movie/` is skipped, and big skips jump over
+//! the bytes with a new `Range` request instead of downloading them. After [`crate::validate`],
+//! `<dest>/assets` and `<dest>/data` are replaced as in [`crate::run`].
 
-use std::io::{self, Read};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, sync_channel};
 use std::time::{Duration, Instant};
@@ -19,13 +21,16 @@ const RETRIES: u32 = 5;
 const CHUNK: usize = 256 << 10;
 /// Progress is reported at most this often (bytes).
 const REPORT_EVERY: u64 = 1 << 20;
+/// Skips up to this size are read and dropped; longer ones reconnect further on.
+const SKIP_BY_READING: u64 = 8 << 20;
 
-/// Downloads the pack at `url` and installs it into `dest` (see the module docs). `progress`
-/// returning `false` cancels; nothing in `dest` changes unless the whole pack arrived and checks
-/// out.
+/// Downloads the pack at `url` and installs it into `dest` (see the module docs);
+/// `include_movies`: also keep `assets/Movie/`. `progress` returning `false` cancels; nothing in
+/// `dest` changes unless the whole pack arrived and checks out.
 pub fn download(
     url: &str,
     dest: &Path,
+    include_movies: bool,
     progress: &mut dyn FnMut(Progress) -> bool,
 ) -> Result<Summary, SetupError> {
     let url = url.trim();
@@ -38,7 +43,7 @@ pub fn download(
     remove_dir(&work.root)?;
     std::fs::create_dir_all(&work.root).map_err(io_err(&work.root))?;
     log::debug!("download: connecting to {url}");
-    let result = download_in(url, dest, &work, progress);
+    let result = download_in(url, dest, &work, include_movies, progress);
     if let Err(e) = remove_dir(&work.root) {
         log::warn!("could not remove the temporary folder: {e}");
     }
@@ -49,11 +54,20 @@ fn download_in(
     url: &str,
     dest: &Path,
     work: &Work,
+    include_movies: bool,
     progress: &mut dyn FnMut(Progress) -> bool,
 ) -> Result<Summary, SetupError> {
     let started = Instant::now();
     let mut stream = Resuming::open(url)?;
-    if let Some(total) = stream.total
+    // A web page or the game's own archives are common mistakes: say so instead of a tar error.
+    let head = stream.peek(512).map_err(read_err)?.to_vec();
+    if let Some(why) = not_a_pack(&head) {
+        return Err(SetupError::Download(why.into()));
+    }
+    // Everything is kept: the whole file must fit. Without movies the size is only known as the
+    // files arrive; running out of space is reported then.
+    if include_movies
+        && let Some(total) = stream.total
         && let Some(free) = crate::space::free_bytes(dest)
     {
         crate::space::check(dest, total, free)?;
@@ -61,7 +75,7 @@ fn download_in(
     let total = stream.total.unwrap_or(0);
     let mut cancelled = false;
     let mut last = 0;
-    let mut reader = Counted {
+    let reader = Counted {
         inner: &mut stream,
         on_read: &mut |done| {
             if done < last + REPORT_EVERY && done != total {
@@ -79,14 +93,7 @@ fn download_in(
         },
         done: 0,
     };
-    // A web page or the game's own archives are common mistakes: say so instead of a tar error.
-    let mut head = vec![0u8; 512];
-    let n = read_up_to(&mut reader, &mut head).map_err(read_err)?;
-    head.truncate(n);
-    if let Some(why) = not_a_pack(&head) {
-        return Err(SetupError::Download(why.into()));
-    }
-    let unpacked = unpack(io::Cursor::new(head).chain(reader), &work.root);
+    let unpacked = unpack(reader, &work.root, include_movies);
     if cancelled {
         return Err(SetupError::Cancelled);
     }
@@ -119,16 +126,20 @@ fn download_in(
 
 /// Unpacks the tar stream `r` into `root`. Entries live under `assets/` or `data/`, optionally
 /// inside one top-level folder (a pack made of the whole game folder); macOS metadata
-/// (`._*`, `__MACOSX`) and anything else is skipped. Paths that would leave `root` are refused.
-fn unpack(r: impl Read, root: &Path) -> Result<(), SetupError> {
+/// (`._*`, `__MACOSX`), `assets/Movie/` without `include_movies`, and anything else is skipped
+/// (seeking past it). Paths that would leave `root` are refused.
+fn unpack(r: impl Read + Seek, root: &Path, include_movies: bool) -> Result<(), SetupError> {
     let mut archive = tar::Archive::new(r);
-    let entries = archive.entries().map_err(read_err)?;
+    let entries = archive.entries_with_seek().map_err(read_err)?;
     for entry in entries {
         let mut entry = entry.map_err(read_err)?;
         let path = entry.path().map_err(read_err)?.into_owned();
         let Some(rel) = pack_path(&path) else {
             continue;
         };
+        if !include_movies && rel.starts_with("assets/Movie") {
+            continue;
+        }
         let kind = entry.header().entry_type();
         let target = root.join(&rel);
         if kind.is_dir() {
@@ -137,27 +148,20 @@ fn unpack(r: impl Read, root: &Path) -> Result<(), SetupError> {
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent).map_err(io_err(parent))?;
             }
-            entry.unpack(&target).map_err(|e| match cancel_of(&e) {
-                true => SetupError::Cancelled,
-                false => io_err(&target)(e),
+            entry.unpack(&target).map_err(|e| {
+                if cancel_of(&e) {
+                    SetupError::Cancelled
+                } else if e.kind() == io::ErrorKind::StorageFull {
+                    SetupError::Download(
+                        "this device ran out of storage space: free some and try again".into(),
+                    )
+                } else {
+                    io_err(&target)(e)
+                }
             })?;
         }
     }
     Ok(())
-}
-
-/// Reads until `buf` is full or the stream ends; the number of bytes read.
-fn read_up_to(r: &mut impl Read, buf: &mut [u8]) -> io::Result<usize> {
-    let mut n = 0;
-    while n < buf.len() {
-        match r.read(&mut buf[n..]) {
-            Ok(0) => break,
-            Ok(k) => n += k,
-            Err(e) if e.kind() == io::ErrorKind::Interrupted && !cancel_of(&e) => {}
-            Err(e) => return Err(e),
-        }
-    }
-    Ok(n)
 }
 
 /// Why the first bytes of a download show it is not a Lily pack (`None`: looks like a tar, or
@@ -248,13 +252,26 @@ impl<R: Read> Read for Counted<'_, R> {
     }
 }
 
+impl<R: Seek> Seek for Counted<'_, R> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.done = self.inner.seek(pos)?;
+        if !(self.on_read)(self.done) {
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
+        }
+        Ok(self.done)
+    }
+}
+
 /// The response body of `url` as one [`Read`], reopened with `Range` where it broke off. The
 /// socket is read on its own thread, so a stalled connection times out after [`IDLE`].
 struct Resuming {
     url: String,
     agent: ureq::Agent,
-    /// Bytes delivered so far.
+    /// The read position: bytes handed out or skipped.
     offset: u64,
+    /// Bytes received from the network so far (`offset` plus what is buffered); a reconnect
+    /// asks for the body from here.
+    received: u64,
     /// From `Content-Length` (`None`: unknown, then a clean end is the end).
     total: Option<u64>,
     chunks: Option<Receiver<io::Result<Vec<u8>>>>,
@@ -274,6 +291,7 @@ impl Resuming {
             url: url.to_owned(),
             agent,
             offset: 0,
+            received: 0,
             total: None,
             chunks: None,
             pending: Vec::new(),
@@ -285,11 +303,11 @@ impl Resuming {
         Ok(s)
     }
 
-    /// (Re)opens the body at `offset`.
+    /// (Re)opens the body at `received`.
     fn connect(&mut self) -> io::Result<()> {
         let mut req = self.agent.get(&self.url);
-        if self.offset > 0 {
-            req = req.header("Range", format!("bytes={}-", self.offset));
+        if self.received > 0 {
+            req = req.header("Range", format!("bytes={}-", self.received));
         }
         let resp = req.call().map_err(http_err)?;
         let status = resp.status().as_u16();
@@ -299,20 +317,20 @@ impl Resuming {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<u64>().ok());
         let mut body = resp.into_body().into_reader();
-        if self.offset == 0 {
+        if self.received == 0 {
             self.total = length;
         } else if status != 206 {
             // The server ignored `Range`: skip what we already have.
             log::warn!(
                 "download: no resume support, skipping {} bytes",
-                self.offset
+                self.received
             );
-            io::copy(&mut (&mut body).take(self.offset), &mut io::sink())?;
+            io::copy(&mut (&mut body).take(self.received), &mut io::sink())?;
         }
         log::info!(
             "download: {} at byte {} (status {status}, total {:?})",
             self.url,
-            self.offset,
+            self.received,
             self.total
         );
         let (tx, rx) = sync_channel(16);
@@ -354,15 +372,19 @@ impl Resuming {
                 },
                 None => Err(io::Error::other("not connected")),
             };
-            let short = |t: u64| self.offset < t;
+            let short = |t: u64| self.received < t;
             match got {
                 Ok(b) if !b.is_empty() => {
                     self.failures = 0;
+                    self.received += b.len() as u64;
                     return Ok(b);
                 }
                 Ok(_) if !self.total.is_some_and(short) => return Ok(Vec::new()),
-                Ok(_) => log::warn!("download: connection closed early at byte {}", self.offset),
-                Err(e) => log::warn!("download: {e} at byte {}", self.offset),
+                Ok(_) => log::warn!(
+                    "download: connection closed early at byte {}",
+                    self.received
+                ),
+                Err(e) => log::warn!("download: {e} at byte {}", self.received),
             }
             self.chunks = None;
             self.failures += 1;
@@ -371,7 +393,7 @@ impl Resuming {
                     io::ErrorKind::ConnectionAborted,
                     format!(
                         "the connection keeps dropping (stopped at {} MB)",
-                        self.offset >> 20
+                        self.received >> 20
                     ),
                 ));
             }
@@ -380,6 +402,23 @@ impl Resuming {
                 log::warn!("download: reconnect failed: {e}");
             }
         }
+    }
+}
+
+impl Resuming {
+    /// Up to `n` bytes ahead of the read position, without consuming them (fewer at the end).
+    fn peek(&mut self, n: usize) -> io::Result<&[u8]> {
+        while self.pending.len() - self.pos < n {
+            let chunk = self.next_chunk()?;
+            if chunk.is_empty() {
+                break;
+            }
+            self.pending.drain(..self.pos);
+            self.pos = 0;
+            self.pending.extend_from_slice(&chunk);
+        }
+        let end = self.pending.len().min(self.pos + n);
+        Ok(&self.pending[self.pos..end])
     }
 }
 
@@ -394,6 +433,44 @@ impl Read for Resuming {
         self.pos += n;
         self.offset += n as u64;
         Ok(n)
+    }
+}
+
+/// Forward only (all a tar reader needs to skip entries).
+impl Seek for Resuming {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        let target = match pos {
+            SeekFrom::Start(n) => Some(n),
+            SeekFrom::Current(d) => self.offset.checked_add_signed(d),
+            SeekFrom::End(_) => None,
+        }
+        .filter(|&t| t >= self.offset)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::Unsupported, "can only skip forward"))?;
+        let buffered = (self.pending.len() - self.pos) as u64;
+        if target - self.offset <= buffered {
+            self.pos += (target - self.offset) as usize;
+            self.offset = target;
+            return Ok(target);
+        }
+        self.offset += buffered;
+        self.pending.clear();
+        self.pos = 0;
+        let rest = target - self.offset;
+        if rest <= SKIP_BY_READING {
+            io::copy(&mut self.by_ref().take(rest), &mut io::sink())?;
+            if self.offset < target {
+                return Err(io::ErrorKind::UnexpectedEof.into());
+            }
+        } else {
+            log::info!("download: skipping {} MB", rest >> 20);
+            (self.offset, self.received) = (target, target);
+            self.chunks = None;
+            // A failed reconnect is retried by the next read, like a dropped connection.
+            if let Err(e) = self.connect() {
+                log::warn!("download: reconnect after skip failed: {e}");
+            }
+        }
+        Ok(target)
     }
 }
 
@@ -457,6 +534,17 @@ mod tests {
     /// Serves `body` on localhost; the first response is cut off after `cut` bytes, later ones
     /// honour `Range`. Returns the URL.
     fn serve(body: Vec<u8>, cut: usize) -> String {
+        serve_counted(body, cut).0
+    }
+
+    /// [`serve`], plus the number of body bytes sent so far.
+    fn serve_counted(
+        body: Vec<u8>,
+        cut: usize,
+    ) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let sent = std::sync::Arc::new(AtomicUsize::new(0));
+        let counter = std::sync::Arc::clone(&sent);
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/pack.tar", listener.local_addr().unwrap());
         std::thread::spawn(move || {
@@ -481,10 +569,16 @@ mod tests {
                 );
                 conn.write_all(head.as_bytes()).unwrap();
                 let send = if i == 0 { &rest[..cut] } else { rest };
-                let _ = conn.write_all(send);
+                // Small writes, so a dropped connection really stops the transfer.
+                for piece in send.chunks(64 << 10) {
+                    if conn.write_all(piece).is_err() {
+                        break;
+                    }
+                    counter.fetch_add(piece.len(), Ordering::Relaxed);
+                }
             }
         });
-        url
+        (url, sent)
     }
 
     fn temp(tag: &str) -> PathBuf {
@@ -500,7 +594,7 @@ mod tests {
         let mut stream = Resuming::open(&url).unwrap();
         assert_eq!(stream.total, Some(body.len() as u64));
         let root = temp("resume");
-        unpack(&mut stream, &root).unwrap();
+        unpack(&mut stream, &root, true).unwrap();
         assert_eq!(
             std::fs::read(root.join("assets/a.bin")).unwrap(),
             vec![7u8; 300_000]
@@ -515,7 +609,7 @@ mod tests {
         let body = pack();
         let url = serve(body.clone(), body.len());
         let dest = temp("cancel");
-        let r = download(&url, &dest, &mut |_| false);
+        let r = download(&url, &dest, true, &mut |_| false);
         assert!(matches!(r, Err(SetupError::Cancelled)), "{r:?}");
         assert!(!dest.join("assets").exists() && !dest.join(".setup-tmp").exists());
         let _ = std::fs::remove_dir_all(&dest);
@@ -546,7 +640,7 @@ mod tests {
     #[test]
     fn a_web_page_is_reported_as_one() {
         let url = serve(b"<!DOCTYPE html><title>x</title>".to_vec(), 31);
-        let r = download(&url, &temp("html"), &mut |_| true);
+        let r = download(&url, &temp("html"), true, &mut |_| true);
         assert!(
             matches!(&r, Err(SetupError::Download(m)) if m.contains("web page")),
             "{r:?}"
@@ -554,8 +648,39 @@ mod tests {
     }
 
     #[test]
+    fn without_movies_the_movie_bytes_are_skipped_not_downloaded() {
+        use std::sync::atomic::Ordering;
+        let mut b = tar::Builder::new(Vec::new());
+        for (path, len) in [
+            ("assets/a.bin", 1000),
+            ("assets/Movie/big.usm", 20 << 20),
+            ("data/b.txt", 5),
+        ] {
+            let mut h = tar::Header::new_gnu();
+            h.set_size(len as u64);
+            h.set_mode(0o644);
+            h.set_cksum();
+            b.append_data(&mut h, path, vec![1u8; len].as_slice())
+                .unwrap();
+        }
+        let body = b.into_inner().unwrap();
+        let (url, sent) = serve_counted(body.clone(), body.len());
+        let mut stream = Resuming::open(&url).unwrap();
+        let root = temp("skip");
+        unpack(&mut stream, &root, false).unwrap();
+        assert!(root.join("assets/a.bin").is_file() && root.join("data/b.txt").is_file());
+        assert!(!root.join("assets/Movie").exists());
+        drop(stream);
+        // The first connection is dropped at the skip; at most a few MB of the 20 MB went out.
+        std::thread::sleep(Duration::from_millis(200));
+        let sent = sent.load(Ordering::Relaxed);
+        assert!(sent < 12 << 20, "{sent} bytes sent");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn rejects_non_web_addresses() {
-        let r = download("ftp://x/pack.tar", &temp("ftp"), &mut |_| true);
+        let r = download("ftp://x/pack.tar", &temp("ftp"), true, &mut |_| true);
         assert!(matches!(r, Err(SetupError::Download(_))));
     }
 }

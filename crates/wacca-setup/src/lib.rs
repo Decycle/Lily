@@ -35,6 +35,7 @@ pub use download::download;
 pub fn download(
     _url: &str,
     _dest: &Path,
+    _include_movies: bool,
     _progress: &mut dyn FnMut(Progress) -> bool,
 ) -> Result<Summary, SetupError> {
     Err(SetupError::Download(

@@ -163,10 +163,14 @@ impl SetupRun {
                     log::debug!("download: keeping the screen on");
                     let _awake = url_prompt::KeepAwake::new();
                     log::debug!("download: starting");
-                    let r = backend.download(&url, &root, &mut progress).map_err(|e| {
-                        log::error!("setup: {e}");
-                        failure(&e)
-                    });
+                    // iPad and Android cannot play the movies yet: leave them out of a pack.
+                    let movies = !cfg!(any(target_os = "ios", target_os = "android"));
+                    let r = backend
+                        .download(&url, &root, movies, &mut progress)
+                        .map_err(|e| {
+                            log::error!("setup: {e}");
+                            failure(&e)
+                        });
                     if let Ok(s) = &r {
                         log::info!("setup done: {s:?}");
                     }
@@ -299,6 +303,7 @@ mod tests {
             &self,
             url: &str,
             _: &Path,
+            _: bool,
             _: &mut dyn FnMut(Progress) -> bool,
         ) -> Result<Summary, SetupError> {
             match url {
