@@ -91,7 +91,5 @@ jobs:
           key: android-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: android-cargo-
       - run: command -v cargo-ndk || cargo install cargo-ndk --locked
-      # The runner image ships an NDK (ANDROID_NDK_LATEST_HOME).
-      - run: cargo ndk -t arm64-v8a -P 26 clippy --locked -p wacca-app -- -D warnings
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+      # The runner image ships an NDK; its path is in the runner's environment.
+      - run: ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" cargo ndk -t arm64-v8a -P 26 clippy --locked -p wacca-app -- -D warnings
