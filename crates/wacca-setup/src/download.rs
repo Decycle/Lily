@@ -61,7 +61,7 @@ fn download_in(
     let total = stream.total.unwrap_or(0);
     let mut cancelled = false;
     let mut last = 0;
-    let reader = Counted {
+    let mut reader = Counted {
         inner: &mut stream,
         on_read: &mut |done| {
             if done < last + REPORT_EVERY && done != total {
@@ -79,7 +79,14 @@ fn download_in(
         },
         done: 0,
     };
-    let unpacked = unpack(reader, &work.root);
+    // A web page or the game's own archives are common mistakes: say so instead of a tar error.
+    let mut head = vec![0u8; 512];
+    let n = read_up_to(&mut reader, &mut head).map_err(read_err)?;
+    head.truncate(n);
+    if let Some(why) = not_a_pack(&head) {
+        return Err(SetupError::Download(why.into()));
+    }
+    let unpacked = unpack(io::Cursor::new(head).chain(reader), &work.root);
     if cancelled {
         return Err(SetupError::Cancelled);
     }
@@ -137,6 +144,48 @@ fn unpack(r: impl Read, root: &Path) -> Result<(), SetupError> {
         }
     }
     Ok(())
+}
+
+/// Reads until `buf` is full or the stream ends; the number of bytes read.
+fn read_up_to(r: &mut impl Read, buf: &mut [u8]) -> io::Result<usize> {
+    let mut n = 0;
+    while n < buf.len() {
+        match r.read(&mut buf[n..]) {
+            Ok(0) => break,
+            Ok(k) => n += k,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted && !cancel_of(&e) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(n)
+}
+
+/// Why the first bytes of a download show it is not a Lily pack (`None`: looks like a tar, or
+/// unknown, which the tar reader then judges).
+fn not_a_pack(head: &[u8]) -> Option<&'static str> {
+    let text = String::from_utf8_lossy(&head[..head.len().min(256)]).to_ascii_lowercase();
+    let trimmed = text.trim_start();
+    if head.is_empty() {
+        Some("the address gave an empty file")
+    } else if trimmed.starts_with('<') || text.contains("<html") || text.contains("<!doctype") {
+        Some(
+            "the address is a web page, not a Lily pack file (a lily-pack.tar made on a computer \
+             with tools/make-pack.sh)",
+        )
+    } else if head.starts_with(b"7z\xBC\xAF\x27\x1C") {
+        Some(
+            "this is a 7-Zip archive (like the game's own WACCA Reverse .7z files), not a Lily \
+             pack: run Lily's setup on a computer and make a pack with tools/make-pack.sh",
+        )
+    } else if head.starts_with(b"PK\x03\x04") {
+        Some("this is a .zip file, not a Lily pack (an uncompressed .tar from tools/make-pack.sh)")
+    } else if head.starts_with(b"\x1F\x8B") {
+        Some(
+            "this is a compressed (.gz) file: Lily packs are plain .tar files from tools/make-pack.sh",
+        )
+    } else {
+        None
+    }
 }
 
 /// Where a tar entry goes, relative to the unpack root (`None`: skip it).
@@ -470,6 +519,38 @@ mod tests {
         assert!(matches!(r, Err(SetupError::Cancelled)), "{r:?}");
         assert!(!dest.join("assets").exists() && !dest.join(".setup-tmp").exists());
         let _ = std::fs::remove_dir_all(&dest);
+    }
+
+    #[test]
+    fn common_wrong_files_are_named() {
+        assert!(
+            not_a_pack(b"<!DOCTYPE html><html>")
+                .unwrap()
+                .contains("web page")
+        );
+        assert!(
+            not_a_pack(b"  \n<html lang=en>")
+                .unwrap()
+                .contains("web page")
+        );
+        assert!(
+            not_a_pack(b"7z\xBC\xAF\x27\x1C\x00\x04")
+                .unwrap()
+                .contains("7-Zip")
+        );
+        assert!(not_a_pack(b"PK\x03\x04rest").unwrap().contains(".zip"));
+        assert!(not_a_pack(b"").is_some());
+        assert_eq!(not_a_pack(&pack()[..512]), None);
+    }
+
+    #[test]
+    fn a_web_page_is_reported_as_one() {
+        let url = serve(b"<!DOCTYPE html><title>x</title>".to_vec(), 31);
+        let r = download(&url, &temp("html"), &mut |_| true);
+        assert!(
+            matches!(&r, Err(SetupError::Download(m)) if m.contains("web page")),
+            "{r:?}"
+        );
     }
 
     #[test]

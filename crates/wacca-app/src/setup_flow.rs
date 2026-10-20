@@ -379,6 +379,25 @@ pub fn bytes(n: u64) -> String {
     }
 }
 
+/// `text` broken into lines of at most `width` characters at spaces (longer words stay whole).
+pub fn wrap(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > width {
+            lines.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
 /// Whole percent of `done` / `total` (`None` when the total is unknown).
 pub fn percent(done: u64, total: u64) -> Option<u32> {
     (total > 0).then(|| ((done.min(total) as f64 / total as f64) * 100.0).floor() as u32)
@@ -562,14 +581,15 @@ pub fn failure(e: &SetupError) -> Failure {
                 "or the game folder (the one containing WindowsNoEditor).".into(),
             ],
         ),
-        SetupError::Download(why) => (
-            "DOWNLOAD FAILED",
-            vec![
-                why.clone(),
-                "Check the address, and that the computer sharing the pack".into(),
-                "is on and on the same network as this device.".into(),
-            ],
-        ),
+        SetupError::Download(why) => {
+            let mut lines = wrap(why, 60);
+            // Not a pack: the message says what to do. Otherwise it is most likely the network.
+            if !why.contains("pack") {
+                lines.push("Check the address, and that the computer sharing the pack".into());
+                lines.push("is on and on the same network as this device.".into());
+            }
+            ("DOWNLOAD FAILED", lines)
+        }
         SetupError::Cancelled => (
             "SETUP CANCELLED",
             vec!["Nothing was changed in your game files.".into()],
@@ -906,6 +926,21 @@ mod tests {
         f.input(Input::Url(Some(url.into())));
         assert_eq!(f.input(Input::Finished(Ok(Summary::default()))), None);
         assert_eq!(f.input(Input::Confirm), Some(Effect::Finish));
+    }
+
+    #[test]
+    fn long_download_errors_wrap_and_skip_the_network_hint() {
+        assert_eq!(wrap("aa bb cc", 5), ["aa bb", "cc"]);
+        assert_eq!(wrap("", 5), Vec::<String>::new());
+        let why = "the address is a web page, not a Lily pack file (a lily-pack.tar made on a \
+                   computer with tools/make-pack.sh)";
+        let f = failure(&SetupError::Download(why.into()));
+        assert!(f.lines.len() >= 2 && f.lines.iter().all(|l| l.chars().count() <= 60));
+        assert!(!f.lines.iter().any(|l| l.contains("same network")));
+        let f = failure(&SetupError::Download(
+            "nothing at this address (HTTP 404)".into(),
+        ));
+        assert!(f.lines.iter().any(|l| l.contains("same network")));
     }
 
     #[test]

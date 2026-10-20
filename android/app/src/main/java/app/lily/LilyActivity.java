@@ -68,6 +68,17 @@ public class LilyActivity extends NativeActivity {
         }
     }
 
+    /** Called from Rust (any thread): keeps the screen on (during a download) or lets it sleep. */
+    public void keepScreenOn(final boolean on) {
+        runOnUiThread(() -> {
+            if (on) {
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            } else {
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            }
+        });
+    }
+
     /** Called from Rust (any thread): shows the address dialog; answers with nativeUrl. */
     public void askUrl(final String prefill) {
         runOnUiThread(() -> {

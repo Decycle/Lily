@@ -7,7 +7,6 @@ use std::sync::{Mutex, OnceLock};
 use jni::JNIEnv;
 use jni::objects::{JClass, JObject, JString, JValue};
 use winit::platform::android::activity::AndroidApp;
-use winit::platform::android::activity::WindowManagerFlags;
 
 use crate::url_prompt::Answer;
 
@@ -32,15 +31,13 @@ pub fn data_dir() -> Option<PathBuf> {
         .or_else(|| app.internal_data_path())
 }
 
-/// Turns the screen's auto-off off or back on.
+/// Turns the screen's auto-off off or back on, through `LilyActivity.keepScreenOn` (which sets
+/// `FLAG_KEEP_SCREEN_ON` on the UI thread). Not `AndroidApp::set_window_flags`: called from a
+/// worker thread, that blocked on android-activity's lock while the UI thread waited on it
+/// (Android then reported the app as not responding).
 pub fn keep_awake(on: bool) {
-    if let Some(app) = app() {
-        let flag = WindowManagerFlags::KEEP_SCREEN_ON;
-        if on {
-            app.set_window_flags(flag, WindowManagerFlags::empty());
-        } else {
-            app.set_window_flags(WindowManagerFlags::empty(), flag);
-        }
+    if let Err(e) = call_activity("keepScreenOn", "(Z)V", &[JValue::Bool(on.into())]) {
+        log::warn!("keep screen on: {e}");
     }
 }
 
@@ -62,20 +59,37 @@ pub fn ask_url(prefill: Option<&str>, answer: Answer) {
 }
 
 fn call_ask_url(prefill: &str) -> Result<(), Box<dyn std::error::Error>> {
+    with_activity(|env, activity| {
+        let text = env.new_string(prefill)?;
+        env.call_method(
+            activity,
+            "askUrl",
+            "(Ljava/lang/String;)V",
+            &[JValue::Object(&text)],
+        )?;
+        Ok(())
+    })
+}
+
+/// Calls a `void` method of the activity with plain arguments (from any thread).
+fn call_activity(name: &str, sig: &str, args: &[JValue]) -> Result<(), Box<dyn std::error::Error>> {
+    with_activity(|env, activity| {
+        env.call_method(activity, name, sig, args)?;
+        Ok(())
+    })
+}
+
+/// Runs `f` with a JNI environment for this thread and the activity object.
+fn with_activity(
+    f: impl FnOnce(&mut JNIEnv, &JObject) -> Result<(), Box<dyn std::error::Error>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = app().ok_or("no activity")?;
     // SAFETY: the pointers are the process's JavaVM and the activity object, valid while the
     // app runs (android-activity keeps a global reference to the activity).
     let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast())? };
     let mut env = vm.attach_current_thread()?;
     let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let text = env.new_string(prefill)?;
-    env.call_method(
-        &activity,
-        "askUrl",
-        "(Ljava/lang/String;)V",
-        &[JValue::Object(&text)],
-    )?;
-    Ok(())
+    f(&mut env, &activity)
 }
 
 /// `LilyActivity.nativeUrl(String)`: the dialog closed with this address (`null`: cancelled).
