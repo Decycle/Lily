@@ -13,7 +13,7 @@ overview of the project, see the [README](../README.md).
   Lily contains no game files and cannot play without them. Use a copy you obtained legally.
 - Windows 10 or 11 (64-bit) with a DirectX 12 or Vulkan GPU.
 - A touchscreen is recommended. A mouse works as a single finger, which is enough for most charts but not chords.
-- An audio device that can output 48 kHz.
+- An audio output device (48 kHz is best; other rates are resampled).
 - Disk space: about 7 GB for the files Lily uses, plus about 20 GB for background movies if you want them.
 - Optional: FFmpeg for background movies (`winget install Gyan.FFmpeg`).
 
@@ -161,7 +161,7 @@ Environment variables:
 | Symptom | Cause / fix |
 |---|---|
 | Setup says files are missing | Make sure the folder holds the base archive 3.00.00 (updates are optional), or a complete game folder with `WindowsNoEditor\Mercury\Content` |
-| `error: audio: ...` at start | No default output device, or it can't play 48 kHz (there is no resampler). Enable a device, or set it to 48 kHz in Windows Sound settings |
+| "Lily could not start" with `audio: ...` | No default output device: plug in or enable speakers or headphones. Setting the device to 48000 Hz in Windows Sound settings avoids resampling |
 | No background movies (log: `ffmpeg not found`) | Install FFmpeg (`winget install Gyan.FFmpeg`) or set `WACCA_FFMPEG` to `ffmpeg.exe`. Movies also need the movie files from setup |
 | Song select is empty | The converted song list is missing. Run setup again, or, from source, run `wacca-convert` and pass `--data` |
 | Flat 2D notes, plain colours or missing jackets | Converted meshes, UI textures or jackets are missing. Rerun the conversion with all its flags |
