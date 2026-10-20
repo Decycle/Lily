@@ -122,6 +122,8 @@ pub enum Phase {
     Validate,
     /// Downloading and unpacking a pack ([`download()`]); bytes.
     Download,
+    /// Copying a picked Lily folder into the app ([`finish_import`]); bytes.
+    Import,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -353,6 +355,44 @@ fn run_in(
     summary.timings = timings;
     install(work, &plan.dest, &mut summary)?;
     Ok(summary)
+}
+
+/// Where an import copies a Lily folder before [`finish_import`]: `<dest>/.setup-tmp`, holding
+/// `assets/` and `data/` (the same staging folder [`run`] and [`download()`] use).
+pub fn import_staging(dest: &Path) -> PathBuf {
+    Work::new(dest).root
+}
+
+/// Finishes an import (Android's folder picker copies a Lily folder made on a computer into
+/// [`import_staging`]): validates it and replaces `<dest>/assets` and `<dest>/data`. The staging
+/// folder is removed either way.
+pub fn finish_import(dest: &Path) -> Result<Summary, SetupError> {
+    let work = Work::new(dest);
+    let result = (|| {
+        if !work.assets.is_dir() || !work.data.is_dir() {
+            return Err(SetupError::MissingCore(
+                "the folder has no assets and data folders (pick the Lily folder made by setup)"
+                    .into(),
+            ));
+        }
+        let clock = Instant::now();
+        let movies = work.assets.join("Movie").is_dir();
+        let mut summary = validate::validate(&work.assets, &work.data, movies)?;
+        summary.timings = vec![(Phase::Validate, clock.elapsed())];
+        install(&work, dest, &mut summary)?;
+        Ok(summary)
+    })();
+    if let Err(e) = remove_dir(&work.root) {
+        log::warn!("could not remove the temporary folder: {e}");
+    }
+    result
+}
+
+/// Removes an unfinished import's staging folder.
+pub fn discard_import(dest: &Path) {
+    if let Err(e) = remove_dir(&Work::new(dest).root) {
+        log::warn!("could not remove the temporary folder: {e}");
+    }
 }
 
 /// Replaces `<dest>/assets` and `<dest>/data` with the finished ones in `work` (the old ones go

@@ -9,7 +9,8 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Instant;
 
 use crate::folder_dialog;
-use crate::setup_backend::{Backend, Plan, Progress};
+use crate::folder_import;
+use crate::setup_backend::{Backend, Phase, Plan, Progress};
 use crate::setup_flow::{Effect, Failure, Flow, Input, Reason, Step, failure};
 use crate::url_prompt;
 
@@ -154,6 +155,50 @@ impl SetupRun {
                     }),
                 );
             }
+            Effect::Import => {
+                let backend = Arc::clone(&self.backend);
+                let root = self.root.clone();
+                let mut progress = self.progress_sender();
+                let picked_tx = tx.clone();
+                let staging = wacca_setup::import_staging(&root);
+                log::info!("setup: import a folder → {}", root.display());
+                folder_import::start(
+                    &staging,
+                    folder_import::Events {
+                        picked: Box::new(move |picked| {
+                            let _ = picked_tx.send(Input::ImportPicked(picked));
+                        }),
+                        progress: Box::new(move |done, total| {
+                            progress(Progress {
+                                phase: Phase::Import,
+                                done,
+                                total,
+                                detail: String::new(),
+                            })
+                        }),
+                        copied: Box::new(move |copied| {
+                            spawn("setup-import", move || {
+                                let r = match copied {
+                                    Ok(()) => backend.finish_import(&root).map_err(|e| {
+                                        log::error!("setup: {e}");
+                                        failure(&e)
+                                    }),
+                                    Err(why) => {
+                                        log::error!("setup: import: {why}");
+                                        backend.discard_import(&root);
+                                        Err(import_failure(&why))
+                                    }
+                                };
+                                if let Ok(s) = &r {
+                                    log::info!("setup done: {s:?}");
+                                    folder_import::delete_source();
+                                }
+                                let _ = tx.send(Input::Finished(r));
+                            });
+                        }),
+                    },
+                );
+            }
             Effect::Download(url) => {
                 let backend = Arc::clone(&self.backend);
                 let root = self.root.clone();
@@ -241,6 +286,17 @@ impl SetupRun {
     }
 }
 
+/// The screen's wording of an import that stopped while copying.
+fn import_failure(why: &str) -> crate::setup_flow::Failure {
+    if why == "cancelled" {
+        return failure(&crate::setup_backend::SetupError::Cancelled);
+    }
+    crate::setup_flow::Failure {
+        title: "COPY FAILED".into(),
+        lines: crate::setup_flow::wrap(why, 60),
+    }
+}
+
 /// Runs `f` on a named thread; a thread that cannot start is logged (the step then waits for
 /// Back).
 fn spawn(name: &str, f: impl FnOnce() + Send + 'static) {
@@ -298,6 +354,15 @@ mod tests {
         ) -> Result<bool, SetupError> {
             Ok(true)
         }
+
+        fn finish_import(&self, _: &Path) -> Result<Summary, SetupError> {
+            Ok(Summary {
+                songs_playable: 5,
+                ..Summary::default()
+            })
+        }
+
+        fn discard_import(&self, _: &Path) {}
 
         fn download(
             &self,

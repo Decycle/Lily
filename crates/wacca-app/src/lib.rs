@@ -23,6 +23,7 @@ mod category;
 mod chrome;
 mod circle;
 mod folder_dialog;
+mod folder_import;
 mod gesture;
 mod hitsound;
 mod hud;

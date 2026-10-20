@@ -23,6 +23,10 @@ pub trait Backend: Send + Sync + std::fmt::Debug {
         plan: &Plan,
         progress: &mut dyn FnMut(Progress) -> bool,
     ) -> Result<Summary, SetupError>;
+    /// Installs a Lily folder that an import copied into `wacca_setup::import_staging(dest)`.
+    fn finish_import(&self, dest: &Path) -> Result<Summary, SetupError>;
+    /// Drops an unfinished import's copy.
+    fn discard_import(&self, dest: &Path);
     /// Downloads the Lily pack at `url` and installs it into `dest` (with its background movies
     /// if `include_movies`).
     fn download(
@@ -68,5 +72,13 @@ impl Backend for Real {
         progress: &mut dyn FnMut(Progress) -> bool,
     ) -> Result<Summary, SetupError> {
         wacca_setup::download(url, dest, include_movies, progress)
+    }
+
+    fn finish_import(&self, dest: &Path) -> Result<Summary, SetupError> {
+        wacca_setup::finish_import(dest)
+    }
+
+    fn discard_import(&self, dest: &Path) {
+        wacca_setup::discard_import(dest);
     }
 }

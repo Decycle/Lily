@@ -16,6 +16,21 @@ Updates install over the old version and keep the game files and the save.
 
 ## Get the game files
 
+Both ways start on a computer that has run Lily's setup with your own WACCA Reverse (Windows: run `lily.exe`
+and follow the setup; it makes a `Lily` folder with `assets` and `data` inside).
+
+### Copy the Lily folder over USB (easiest)
+
+1. Connect the phone or tablet to the computer with a cable and allow file transfer on the phone.
+2. On the computer, open the phone in File Explorer, open **Download** and copy the **Lily** folder (the one with
+   `assets` and `data` inside) into it. About 4 GB; background movies are not needed and can be left out.
+3. On the phone, open Lily and tap **USE A FOLDER**. Open **Download**, then **Lily**, tap **USE THIS FOLDER** and
+   **Allow**. (Android does not let apps use the Download folder itself, only folders inside it.)
+4. Lily copies the files in, checks them, and then deletes the copied `Lily` folder from Download to free the space.
+   During the copy it needs about 4 GB free on top of the folder.
+
+### Download a pack over Wi-Fi
+
 1. On a computer, run Lily's setup once and make a pack, then share it (see
    [ios/README.md](../ios/README.md#1-make-a-lily-pack-on-your-mac): the steps are the same):
    ```
@@ -53,5 +68,6 @@ Logs: `adb logcat -s lily`. In the emulator, the computer running `serve-pack.sh
 
 ## Status
 
-Tested in the Android 14 tablet emulator (2560 × 1600): installs, downloads a pack (395 songs), reaches the title
-with menu music. Not yet tested on a real device: play, touch and audio latency.
+Tested in the Android 14 tablet emulator (2560 × 1600): installs, downloads a pack (395 songs), imports a copied
+Lily folder (395 songs, the copied folder is deleted afterwards), reaches the title with menu music. Not yet tested
+on a real device: play, touch and audio latency.

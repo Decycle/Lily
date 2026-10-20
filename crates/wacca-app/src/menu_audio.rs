@@ -71,7 +71,7 @@ pub fn sound_for(a: Action) -> Option<Sound> {
         | Action::ToggleFilter
         | Action::Difficulty
         | Action::Genre(_) => Some(Sound::Move),
-        Action::Confirm | Action::Retry | Action::Setup => Some(Sound::Confirm),
+        Action::Confirm | Action::Retry | Action::Setup | Action::Import => Some(Sound::Confirm),
         Action::Back => Some(Sound::Back),
     }
 }

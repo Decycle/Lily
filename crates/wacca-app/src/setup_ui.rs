@@ -28,10 +28,14 @@ pub fn view(c: Canvas, flow: &Flow, now: f64, t: f32) -> View {
     backdrop(&mut p, t);
     p.text("LILY SETUP", [0.0, -400.0], 30.0, PINK, Align::Center);
     match &flow.step {
-        Step::Welcome if flow.by_url => welcome_by_url(&mut p, &flow.reason),
+        Step::Welcome if flow.by_url => {
+            welcome_by_url(&mut p, &flow.reason, crate::folder_import::AVAILABLE)
+        }
         Step::Welcome => welcome(&mut p, &flow.reason),
         Step::Picking => {
-            let ask = if flow.by_url {
+            let ask = if flow.importing {
+                "Choose the Lily folder in the window that opened."
+            } else if flow.by_url {
                 "Enter the pack's address in the box that opened."
             } else {
                 "Choose the folder in the window that opened."
@@ -232,31 +236,53 @@ fn welcome(p: &mut Painter, reason: &Reason) {
 }
 
 /// The welcome when setting up from a Lily pack ([`Flow::by_url`]).
-fn welcome_by_url(p: &mut Painter, reason: &Reason) {
-    lines(
-        p,
-        -300.0,
-        &[
-            ("Download your game files from a Lily pack:", WHITE),
-            ("enter its web address on the next step.", WHITE),
-        ],
-    );
-    small_lines(
-        p,
-        -180.0,
-        &[
-            (
-                "Make the pack on a computer from your own WACCA Reverse:",
-                GREY,
-            ),
-            ("run Lily's setup there, then tools/make-pack.sh and", GREY),
-            (
-                "tools/serve-pack.sh, which prints the address to enter.",
-                GREY,
-            ),
-            ("About 4 GB; keep this app open until it finishes.", GREY),
-        ],
-    );
+/// A line of text and its colour.
+type Line<'a> = (&'a str, Rgba);
+
+/// The welcome when setting up from a Lily pack ([`Flow::by_url`]); `import`: also offer a Lily
+/// folder already on this device ([`crate::folder_import`]).
+fn welcome_by_url(p: &mut Painter, reason: &Reason, import: bool) {
+    let (title, help): (&[Line], &[Line]) = if import {
+        (
+            &[
+                ("Get your game files from a computer", WHITE),
+                ("that ran Lily's setup with your own WACCA Reverse:", WHITE),
+            ],
+            &[
+                ("ENTER ADDRESS: download a pack shared with", GREY),
+                ("tools/make-pack.sh and tools/serve-pack.sh.", GREY),
+                (
+                    "USE A FOLDER: copy its Lily folder (assets, data) to this",
+                    GREY,
+                ),
+                (
+                    "device first. Lily copies it in, then deletes that copy.",
+                    GREY,
+                ),
+            ],
+        )
+    } else {
+        (
+            &[
+                ("Download your game files from a Lily pack:", WHITE),
+                ("enter its web address on the next step.", WHITE),
+            ],
+            &[
+                (
+                    "Make the pack on a computer from your own WACCA Reverse:",
+                    GREY,
+                ),
+                ("run Lily's setup there, then tools/make-pack.sh and", GREY),
+                (
+                    "tools/serve-pack.sh, which prints the address to enter.",
+                    GREY,
+                ),
+                ("About 4 GB; keep this app open until it finishes.", GREY),
+            ],
+        )
+    };
+    lines(p, -300.0, title);
+    small_lines(p, -190.0, help);
     if let Reason::Missing(parts) = reason
         && !parts.is_empty()
     {
@@ -264,12 +290,20 @@ fn welcome_by_url(p: &mut Painter, reason: &Reason) {
         out.extend(parts.iter().take(3).map(|s| (s.as_str(), WARN)));
         small_lines(p, 0.0, &out);
     }
-    button(p, 230.0, "ENTER ADDRESS", Action::Confirm, true);
+    let (first, back) = if import {
+        (180.0, 380.0)
+    } else {
+        (230.0, 330.0)
+    };
+    button(p, first, "ENTER ADDRESS", Action::Confirm, true);
+    if import {
+        button(p, 280.0, "USE A FOLDER", Action::Import, true);
+    }
     // iOS apps do not quit themselves.
     match reason {
         Reason::Missing(_) if cfg!(target_os = "ios") => {}
-        Reason::Missing(_) => button(p, 330.0, "QUIT", Action::Back, false),
-        Reason::Requested => button(p, 330.0, "BACK", Action::Back, false),
+        Reason::Missing(_) => button(p, back, "QUIT", Action::Back, false),
+        Reason::Requested => button(p, back, "BACK", Action::Back, false),
     }
 }
 
@@ -404,6 +438,18 @@ mod tests {
         assert!(!texts.iter().any(|t| t.contains("http")));
         assert_eq!(v.hit(c().pt([0.0, 230.0])), Some(Action::Confirm));
         assert_eq!(v.hit(c().pt([0.0, 330.0])), Some(Action::Back));
+    }
+
+    #[test]
+    fn welcome_by_url_can_offer_a_folder_too() {
+        let mut p = Painter::new(c());
+        welcome_by_url(&mut p, &Reason::Requested, true);
+        let v = p.finish();
+        let texts = v.texts();
+        assert!(texts.contains(&"USE A FOLDER") && texts.contains(&"ENTER ADDRESS"));
+        assert_eq!(v.hit(c().pt([0.0, 180.0])), Some(Action::Confirm));
+        assert_eq!(v.hit(c().pt([0.0, 280.0])), Some(Action::Import));
+        assert_eq!(v.hit(c().pt([0.0, 380.0])), Some(Action::Back));
     }
 
     #[test]

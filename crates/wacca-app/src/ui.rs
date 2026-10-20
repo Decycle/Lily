@@ -31,6 +31,8 @@ pub enum Action {
     Retry,
     /// Open first-run setup again (title screen).
     Setup,
+    /// Setup: use a Lily folder already on this device (Android's folder picker).
+    Import,
 }
 
 #[derive(Clone, Debug, PartialEq)]

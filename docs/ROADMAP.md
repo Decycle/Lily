@@ -37,7 +37,6 @@ the code's `UNVERIFIED` markers. Contributions are welcome; see [CONTRIBUTING.md
 - Devices that cannot run at 48 kHz get the music resampled (4-point Catmull-Rom); a better filter could be used.
 - iPad and Android ([ios/README.md](../ios/README.md), [android/README.md](../android/README.md)):
   - Background movies: an in-process MPEG-1 decoder (no `ffmpeg` process on mobile).
-  - "Use files on this tablet": pick a folder with Android's / iOS's folder picker and copy it into the app, for
-    files already copied over a cable.
+  - "Use a folder" on iPad (Android has it): pick a copied Lily folder with the iOS document picker.
   - Audio latency on real Android devices (only the emulator has run Lily so far).
   - The iPad window leaves a 50 px strip unused (2360 × 1590 on a 2360 × 1640 screen).

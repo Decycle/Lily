@@ -70,6 +70,10 @@ pub enum Input {
     Picked(Option<PathBuf>),
     /// The address prompt closed: the entered address, if any.
     Url(Option<String>),
+    /// Use a Lily folder already on this device instead of a download.
+    Import,
+    /// The folder picker closed: `true` if a folder was picked (copying starts).
+    ImportPicked(bool),
     Detected(Result<Detected, Failure>),
     /// Checksums checked: the archives that did not match.
     Verified(Result<Vec<String>, Failure>),
@@ -86,6 +90,8 @@ pub enum Effect {
     AskUrl(Option<String>),
     /// Download and install the pack at this address.
     Download(String),
+    /// Open the folder picker; copy the picked Lily folder in and install it.
+    Import,
     Detect(PathBuf),
     /// Check these archives' md5.
     Verify(Vec<ArchiveFile>),
@@ -109,6 +115,8 @@ pub struct Flow {
     pub by_url: bool,
     /// The last address entered.
     pub url: Option<String>,
+    /// The last attempt was a folder import ("try again" opens the picker again).
+    pub importing: bool,
 }
 
 /// The archives of an archive source.
@@ -146,6 +154,7 @@ impl Flow {
             reason,
             by_url: false,
             url: None,
+            importing: false,
         }
     }
 
@@ -157,9 +166,11 @@ impl Flow {
         }
     }
 
-    /// Opens the folder dialog or the address prompt.
+    /// Opens the folder dialog or the address prompt (or, after a folder import, its picker).
     fn pick(&self) -> (Step, Option<Effect>) {
-        let effect = if self.by_url {
+        let effect = if self.importing {
+            Effect::Import
+        } else if self.by_url {
             Effect::AskUrl(self.url.clone())
         } else {
             Effect::OpenPicker
@@ -177,7 +188,16 @@ impl Flow {
     fn next(&mut self, step: Step, input: Input) -> (Step, Option<Effect>) {
         use Input::*;
         match (step, input) {
-            (Step::Welcome, Confirm) => self.pick(),
+            (Step::Welcome, Confirm) => {
+                self.importing = false;
+                self.pick()
+            }
+            (Step::Welcome, Import) if self.by_url => {
+                self.importing = true;
+                (Step::Picking, Some(Effect::Import))
+            }
+            (Step::Picking, ImportPicked(false)) => (Step::Welcome, None),
+            (Step::Picking, ImportPicked(true)) => (running(PathBuf::new(), None), None),
             (Step::Welcome, Back) => (
                 Step::Welcome,
                 Some(match self.reason {
@@ -438,6 +458,7 @@ pub fn phase_name(phase: Phase) -> (&'static str, bool) {
         Phase::Convert => ("Converting", false),
         Phase::Validate => ("Checking charts", false),
         Phase::Download => ("Downloading", true),
+        Phase::Import => ("Copying the folder", true),
     }
 }
 
@@ -895,6 +916,30 @@ mod tests {
             Severity::Bad
         );
         assert!(movies_available(&detected()));
+    }
+
+    #[test]
+    fn a_folder_import_runs_and_retries_with_the_picker() {
+        let mut f = Flow::by_url(Reason::Missing(vec!["x".into()]));
+        assert_eq!(f.input(Input::Import), Some(Effect::Import));
+        assert!(matches!(f.step, Step::Picking));
+        // Picker closed without a folder: back to the welcome.
+        assert_eq!(f.input(Input::ImportPicked(false)), None);
+        assert!(matches!(f.step, Step::Welcome));
+        f.input(Input::Import);
+        assert_eq!(f.input(Input::ImportPicked(true)), None);
+        assert!(matches!(f.step, Step::Running { .. }));
+        f.input(Input::Progress(progress(Phase::Import, 10), 1.0));
+        let failure = failure(&SetupError::MissingCore("no data".into()));
+        f.input(Input::Finished(Err(failure)));
+        assert!(matches!(f.step, Step::Failed { dir: None, .. }));
+        assert_eq!(f.input(Input::Confirm), Some(Effect::Import));
+        // Picker closed again; the address button then switches back to downloading.
+        f.input(Input::ImportPicked(false));
+        assert_eq!(f.input(Input::Confirm), Some(Effect::AskUrl(None)));
+        // Not offered without setup by URL (desktop folder setup).
+        let mut d = Flow::new(Reason::Requested);
+        assert_eq!(d.input(Input::Import), None);
     }
 
     #[test]

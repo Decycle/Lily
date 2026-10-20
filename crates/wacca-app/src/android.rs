@@ -108,3 +108,105 @@ pub extern "system" fn Java_app_lily_LilyActivity_nativeUrl(
         answer(text);
     }
 }
+
+/// What a folder import reports back (see [`import_folder`]).
+pub struct ImportEvents {
+    /// The picker closed: `true` if a folder was picked (copying starts).
+    pub picked: Box<dyn FnOnce(bool) + Send>,
+    /// Bytes copied of the total; `false` cancels.
+    pub progress: Box<dyn FnMut(u64, u64) -> bool + Send>,
+    /// Copying ended: `Err` says why it stopped (`"cancelled"` when asked to).
+    pub copied: Box<dyn FnOnce(Result<(), String>) + Send>,
+}
+
+static IMPORT: Mutex<Option<ImportEvents>> = Mutex::new(None);
+
+/// Opens Android's folder picker (`LilyActivity.pickFolder`); the activity copies the picked Lily
+/// folder's `assets` and `data` (without movies) into `staging` and reports through `events`.
+pub fn import_folder(staging: &std::path::Path, events: ImportEvents) {
+    let staging = staging.to_string_lossy().into_owned();
+    if let Ok(mut slot) = IMPORT.lock() {
+        *slot = Some(events);
+    }
+    let started = with_activity(|env, activity| {
+        let dest = env.new_string(&staging)?;
+        env.call_method(
+            activity,
+            "pickFolder",
+            "(Ljava/lang/String;)V",
+            &[JValue::Object(&dest)],
+        )?;
+        Ok(())
+    });
+    if let Err(e) = started {
+        log::error!("folder picker: {e}");
+        if let Some(ev) = IMPORT.lock().ok().and_then(|mut s| s.take()) {
+            (ev.picked)(false);
+        }
+    }
+}
+
+/// Deletes the imported folder (after a successful install): `LilyActivity.deleteImportSource`.
+pub fn delete_import_source() {
+    if let Err(e) = call_activity("deleteImportSource", "()V", &[]) {
+        log::warn!("deleting the imported folder: {e}");
+    }
+}
+
+/// `LilyActivity.nativeImportPicked(boolean)`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_app_lily_LilyActivity_nativeImportPicked(
+    _env: JNIEnv,
+    _class: JClass,
+    picked: jni::sys::jboolean,
+) {
+    let picked = picked != 0;
+    let Ok(mut slot) = IMPORT.lock() else { return };
+    let Some(ev) = slot.as_mut() else { return };
+    // `picked` is called once: swap it for a no-op.
+    let f = std::mem::replace(&mut ev.picked, Box::new(|_| {}));
+    if !picked {
+        slot.take();
+    }
+    drop(slot);
+    f(picked);
+}
+
+/// `LilyActivity.nativeImportProgress(long, long)`: `false` cancels.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_app_lily_LilyActivity_nativeImportProgress(
+    _env: JNIEnv,
+    _class: JClass,
+    done: jni::sys::jlong,
+    total: jni::sys::jlong,
+) -> jni::sys::jboolean {
+    let go_on = IMPORT
+        .lock()
+        .ok()
+        .and_then(|mut s| {
+            s.as_mut()
+                .map(|ev| (ev.progress)(done.max(0) as u64, total.max(0) as u64))
+        })
+        .unwrap_or(false);
+    u8::from(go_on)
+}
+
+/// `LilyActivity.nativeImportDone(String)`: `null` when everything was copied, else why not.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_app_lily_LilyActivity_nativeImportDone(
+    mut env: JNIEnv,
+    _class: JClass,
+    error: JString,
+) {
+    let result = if error.is_null() {
+        Ok(())
+    } else {
+        Err(env
+            .get_string(&error)
+            .map(String::from)
+            .unwrap_or_else(|_| "copying failed".into()))
+    };
+    if let Some(ev) = IMPORT.lock().ok().and_then(|mut s| s.take()) {
+        (ev.copied)(result);
+    }
+}

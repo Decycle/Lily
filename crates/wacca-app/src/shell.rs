@@ -1078,6 +1078,7 @@ impl App {
             Action::Back => Input::Back,
             Action::Left | Action::Right | Action::Pick(0) => Input::ToggleMovies,
             Action::Up | Action::Down | Action::Pick(1) => Input::ToggleVerify,
+            Action::Import => Input::Import,
             _ => return,
         };
         if let Some(exit) = run.input(input) {
