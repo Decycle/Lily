@@ -43,9 +43,11 @@ pub enum Row {
     Video,
     BarLines,
     TouchGuide,
+    /// macOS only: play with the trackpad as a touch ring ([`crate::trackpad`]).
+    Trackpad,
 }
 
-pub const ROWS: [Row; 8] = [
+const COMMON_ROWS: [Row; 8] = [
     Row::Speed,
     Row::Offset,
     Row::Check,
@@ -55,6 +57,23 @@ pub const ROWS: [Row; 8] = [
     Row::BarLines,
     Row::TouchGuide,
 ];
+
+/// The rows on this platform (TRACKPAD on macOS only).
+pub const ROWS: &[Row] = if cfg!(target_os = "macos") {
+    &[
+        Row::Speed,
+        Row::Offset,
+        Row::Check,
+        Row::Mirror,
+        Row::Autoplay,
+        Row::Video,
+        Row::BarLines,
+        Row::TouchGuide,
+        Row::Trackpad,
+    ]
+} else {
+    &COMMON_ROWS
+};
 
 /// Judge offset setting → user offset in seconds (added to chart time).
 pub fn offset_secs(judge_offset: f32) -> f64 {
@@ -104,6 +123,7 @@ impl OptionsMenu {
             Row::Video => s.background_video = !s.background_video,
             Row::BarLines => s.bar_lines = !s.bar_lines,
             Row::TouchGuide => s.touch_guide = !s.touch_guide,
+            Row::Trackpad => s.trackpad_touch = !s.trackpad_touch,
         }
     }
 }
@@ -122,6 +142,7 @@ pub fn value(row: Row, s: &Settings, autoplay: bool) -> String {
         Row::Video => on_off(s.background_video).into(),
         Row::BarLines => on_off(s.bar_lines).into(),
         Row::TouchGuide => on_off(s.touch_guide).into(),
+        Row::Trackpad => on_off(s.trackpad_touch).into(),
     }
 }
 
@@ -135,6 +156,7 @@ fn label(row: Row) -> &'static str {
         Row::Video => "BG MOVIE",
         Row::BarLines => "BAR LINES",
         Row::TouchGuide => "TOUCH GUIDE",
+        Row::Trackpad => "TRACKPAD",
     }
 }
 
@@ -318,7 +340,9 @@ fn rim(p: &mut Painter) {
 /// Handle a tap on [`view`]'s `Pick(n)`: select row `n / 2` and step it down (even) or up (odd).
 pub fn pick(menu: &mut OptionsMenu, n: usize, s: &mut Settings, autoplay: &mut bool) {
     if n == NEXT_PAGE {
-        menu.row = (menu.row / PAGE + 1) * PAGE % ROWS.len();
+        // The next page's first row; after the last (possibly partial) page, the first.
+        let next = (menu.row / PAGE + 1) * PAGE;
+        menu.row = if next < ROWS.len() { next } else { 0 };
     } else if n / 2 < ROWS.len() {
         menu.row = n / 2;
         menu.adjust(s, autoplay, if n.is_multiple_of(2) { -1 } else { 1 });
@@ -374,10 +398,16 @@ mod tests {
         m.adjust(&mut s, &mut auto, -1);
         assert!(s.touch_guide);
         assert_eq!(value(Row::TouchGuide, &s, auto), "ON");
+        if cfg!(target_os = "macos") {
+            m.move_by(1);
+            assert_eq!(value(Row::Trackpad, &s, auto), "OFF");
+            m.adjust(&mut s, &mut auto, 1);
+            assert!(s.trackpad_touch);
+        }
         m.move_by(1);
         assert_eq!(m.row, 0);
         m.move_by(-1);
-        assert_eq!(ROWS[m.row], Row::TouchGuide);
+        assert_eq!(ROWS[m.row], *ROWS.last().unwrap());
     }
 
     #[test]
@@ -445,6 +475,11 @@ mod tests {
             .texts()
             .concat();
         assert!(t.contains("BG MOVIE") && !t.contains("SPEED"), "{t}");
+        // A partial last page (macOS: TRACKPAD), then back to the first.
+        if ROWS.len() > 2 * PAGE {
+            pick(&mut m, NEXT_PAGE, &mut s, &mut auto);
+            assert_eq!(m.row, 2 * PAGE);
+        }
         pick(&mut m, NEXT_PAGE, &mut s, &mut auto);
         assert_eq!(m.row, 0);
         assert!(v.buttons.iter().any(|(_, a)| *a == Action::Confirm));

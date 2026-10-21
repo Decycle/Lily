@@ -74,6 +74,8 @@ pub struct Settings {
     pub bar_lines: bool,
     /// Depth-ring guides and pressed-sensor highlight for touchscreens (not in the real game).
     pub touch_guide: bool,
+    /// macOS: the trackpad's fingers are touches on the ring during play (not in the real game).
+    pub trackpad_touch: bool,
     /// Name on the results screen's player plate (the game shows the card's user name).
     pub player_name: String,
     /// Title line above the plate (the game's earned titles; empty = none).
@@ -95,6 +97,7 @@ impl Default for Settings {
             bar_lines: true,
             // On by default on tablets (iPad, Android), where nothing else shows the touch area.
             touch_guide: cfg!(any(target_os = "ios", target_os = "android")),
+            trackpad_touch: false,
             player_name: "PLAYER".to_string(),
             player_title: String::new(),
             menu_timers: false,

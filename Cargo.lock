@@ -2419,6 +2419,7 @@ dependencies = [
  "env_logger",
  "image",
  "jni 0.21.1",
+ "libc",
  "log",
  "objc2 0.6.5",
  "objc2-avf-audio",

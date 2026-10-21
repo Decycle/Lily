@@ -53,6 +53,7 @@ mod setup_ui;
 mod shell;
 mod title;
 mod touch_mapping;
+mod trackpad;
 mod ui;
 mod url_prompt;
 mod wipe;

@@ -211,8 +211,12 @@ mod tests {
         let mut m = menu();
         m.act(Screen::Options, Action::Right);
         assert_eq!(m.settings.note_speed, 4.5);
-        // Wraps to the last row (touch guide), then up past bar lines and video to autoplay.
-        for _ in 0..4 {
+        // Wraps to the last row, then up to autoplay.
+        let autoplay = options::ROWS
+            .iter()
+            .position(|r| *r == Row::Autoplay)
+            .unwrap();
+        for _ in 0..options::ROWS.len() - autoplay {
             m.act(Screen::Options, Action::Up);
         }
         m.act(Screen::Options, Action::Left);

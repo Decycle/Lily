@@ -24,7 +24,7 @@ use winit::event::{
 };
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
-use winit::window::{Fullscreen, Window, WindowId};
+use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
 use crate::canvas::{Canvas, ease};
 use crate::chrome::{self, Player as Plate};
@@ -48,6 +48,8 @@ use crate::{
 
 /// Contact id used for the mouse (touch ids come from the OS).
 const MOUSE_ID: u64 = u64::MAX;
+/// Pointer ids of trackpad fingers ([`crate::trackpad`]): this plus the finger's id.
+const TRACKPAD_ID: u64 = 1 << 40;
 const SPEED_STEP: f64 = 0.5;
 /// Time constant of the wheel scroll easing (s).
 const WHEEL_TAU: f32 = 0.07;
@@ -129,6 +131,8 @@ pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
         preview: PreviewPlayer::default(),
         pointers: HashMap::new(),
         hud_touches: HashSet::new(),
+        trackpad_ids: HashSet::new(),
+        trackpad_captured: false,
         menu_music: MenuMusic::default(),
         menu_sounds: MenuSounds::default(),
         scroller: Scroller::default(),
@@ -613,6 +617,10 @@ struct App {
     pointers: HashMap<u64, Pointer>,
     /// Touches that pressed a HUD button during play: they never reach the sensors.
     hud_touches: HashSet<u64>,
+    /// Trackpad fingers currently down on the ring (pointer ids).
+    trackpad_ids: HashSet<u64>,
+    /// The cursor is hidden and locked for the trackpad mode.
+    trackpad_captured: bool,
     menu_music: MenuMusic,
     menu_sounds: MenuSounds,
     scroller: Scroller,
@@ -1173,6 +1181,10 @@ impl App {
     /// Pointer `id` pressed (`Some(true)`), moved (`None`) or released (`Some(false)`) at `p`.
     fn pointer(&mut self, event_loop: &ActiveEventLoop, id: u64, p: [f32; 2], down: Option<bool>) {
         if self.screen == Screen::Play {
+            // Trackpad mode: the cursor is locked, so clicks (tap-to-click) are not notes.
+            if self.trackpad_captured && id == MOUSE_ID {
+                return;
+            }
             if down == Some(true)
                 && let Some(a) = self.view().hit(p)
             {
@@ -1260,6 +1272,64 @@ impl App {
         self.pointer(event_loop, t.id, p, down);
     }
 
+    /// The trackpad mode ([`crate::trackpad`]): while a song plays (not paused) with the
+    /// setting on, the cursor is hidden and locked and the trackpad's fingers are touches on the
+    /// ring; otherwise everything is let go.
+    fn sync_trackpad(&mut self) {
+        let want = self.s.menu.settings.trackpad_touch
+            && self.screen == Screen::Play
+            && self.play.as_ref().is_some_and(|p| !p.paused);
+        if want != self.trackpad_captured {
+            if want && let Err(e) = crate::trackpad::start() {
+                log::warn!("trackpad mode: {e}");
+            }
+            if let Some(g) = &self.gfx {
+                g.window.set_cursor_visible(!want);
+                let mode = if want {
+                    CursorGrabMode::Locked
+                } else {
+                    CursorGrabMode::None
+                };
+                if let Err(e) = g.window.set_cursor_grab(mode) {
+                    log::debug!("cursor grab {mode:?}: {e}");
+                    if want {
+                        let _ = g.window.set_cursor_grab(CursorGrabMode::Confined);
+                    }
+                }
+            }
+            self.trackpad_captured = want;
+        }
+        let [w, h] = self.size();
+        let vp = playfield_viewport(w, h);
+        let aspect = crate::trackpad::aspect();
+        let now: Vec<(u64, [f32; 2])> = if want {
+            crate::trackpad::contacts()
+                .into_iter()
+                .map(|c| {
+                    let p = crate::touch_mapping::trackpad_to_playfield(c.pos, aspect);
+                    let id = TRACKPAD_ID + u64::from(c.id as u32);
+                    (id, crate::touch_mapping::from_playfield(p, vp))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let lifted: Vec<u64> = self
+            .trackpad_ids
+            .iter()
+            .copied()
+            .filter(|id| !now.iter().any(|(n, _)| n == id))
+            .collect();
+        self.trackpad_ids = now.iter().map(|(id, _)| *id).collect();
+        let Some(play) = &mut self.play else { return };
+        for id in lifted {
+            play.pointer(id, None, vp);
+        }
+        for (id, px) in now {
+            play.pointer(id, Some(px), vp);
+        }
+    }
+
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
         // Setup results first: finishing it rebuilds the graphics, which must not happen while
         // a swap-chain image is held.
@@ -1283,6 +1353,7 @@ impl App {
         notes.clear();
         let mut stage = std::mem::take(&mut self.stage);
         stage.clear();
+        self.sync_trackpad();
         match self.screen {
             Screen::Play => {
                 let over = self.play.as_mut().and_then(PlayState::frame);

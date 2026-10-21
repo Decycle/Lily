@@ -32,6 +32,10 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 [target.'cfg(not(windows))'.dependencies]
 wacca-setup = { path = "../wacca-setup", features = ["download"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# dlopen of MultitouchSupport (the trackpad mode, src/trackpad.rs).
+libc = "0.2"
+
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSArray"] }

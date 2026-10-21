@@ -44,6 +44,24 @@ pub fn sensor_at(p: [f32; 2]) -> Option<Sensor> {
     Some(Sensor { lane, depth })
 }
 
+/// Playfield space → window pixel for the viewport `vp` (the inverse of [`to_playfield`]).
+pub fn from_playfield(p: [f32; 2], vp: Rect) -> [f32; 2] {
+    let (hw, hh) = (vp.w / 2.0, vp.h / 2.0);
+    [
+        vp.x + hw + p[0] / VIEW_EXTENT * hw,
+        vp.y + hh - p[1] / VIEW_EXTENT * hh,
+    ]
+}
+
+/// A trackpad position (0..1, y up) → playfield space. The surface's centre is the ring's
+/// centre and its top and bottom edges are the outer edge of the sensor band, so fingers along
+/// the edge play the outer rings; `aspect` (width / height) keeps the ring round. Beyond the
+/// band left and right counts as the outer ring, like on a touchscreen.
+pub fn trackpad_to_playfield(pos: [f32; 2], aspect: f32) -> [f32; 2] {
+    let scale = SENSOR_OUTER / 0.5;
+    [(pos[0] - 0.5) * aspect * scale, (pos[1] - 0.5) * scale]
+}
+
 pub fn sensor_at_pixel(px: [f32; 2], vp: Rect) -> Option<Sensor> {
     sensor_at(to_playfield(px, vp))
 }
@@ -164,5 +182,28 @@ mod tests {
         for d in 0..DEPTHS {
             assert!(depths.contains(&d), "depth {d} missing");
         }
+    }
+
+    #[test]
+    fn trackpad_edges_play_the_outer_ring_and_round_trip_to_pixels() {
+        let aspect = 1.6;
+        // Top edge, centre: straight up at the band's outer edge.
+        let top = trackpad_to_playfield([0.5, 1.0], aspect);
+        assert!((top[0]).abs() < 1e-6 && (top[1] - SENSOR_OUTER).abs() < 1e-6);
+        assert_eq!(sensor_at(top).map(|s| s.depth), Some(DEPTHS - 1));
+        // The centre touches nothing.
+        assert_eq!(sensor_at(trackpad_to_playfield([0.5, 0.5], aspect)), None);
+        // Equal distances in millimetres are equal radii: a circle stays a circle.
+        let right = trackpad_to_playfield([0.5 + 0.5 / aspect, 0.5], aspect);
+        assert!((right[0] - SENSOR_OUTER).abs() < 1e-5);
+        let vp = Rect {
+            x: 100.0,
+            y: 0.0,
+            w: 800.0,
+            h: 800.0,
+        };
+        let p = [0.3, -0.7];
+        let back = to_playfield(from_playfield(p, vp), vp);
+        assert!((back[0] - p[0]).abs() < 1e-5 && (back[1] - p[1]).abs() < 1e-5);
     }
 }

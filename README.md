@@ -138,6 +138,7 @@ The options screen opens after you pick a song. Settings are saved when you star
 | BG MOVIE | ON | Shows the song's background movie (needs FFmpeg) |
 | BAR LINES | ON | Measure lines on the playfield, as in the real game |
 | TOUCH GUIDE | OFF (ON on iPad and Android) | Shows the touch area during play: a bright inner circle where it starts (touches nearer the centre do nothing), the 4 depth rings, a line between lanes, and the sensors you are pressing lit up (not in the real game) |
+| TRACKPAD | OFF (macOS only) | Play with the MacBook trackpad as a small touch ring: its centre is the ring's centre and its edges are the rim. The cursor is hidden and locked during a song (pause with Space or Esc to get it back). Turn off three- and four-finger gestures in System Settings → Trackpad → More Gestures while playing, or chords can switch desktops |
 
 Save-file-only settings, the save format and environment variables are described in the
 [player guide](docs/GUIDE.md#save-file-and-advanced-settings).
