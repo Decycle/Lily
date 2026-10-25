@@ -182,6 +182,7 @@ impl Player {
                 mixer: Mixer::new(sfx_rx),
                 mix: Vec::with_capacity(MIX_BUFFER),
                 channels: usize::from(device_channels),
+                rate,
             },
             commands: command_rx,
             chunks,
@@ -381,6 +382,21 @@ struct Output {
     /// Interleaved `f32` mix of BGM and sound effects, converted to the device format at the end.
     mix: Vec<f32>,
     channels: usize,
+    /// Output rate (frames per second), to judge the reported latency.
+    rate: u32,
+}
+
+/// A reported output latency above this is taken as a bad timestamp, not a real delay.
+const MAX_LATENCY: Duration = Duration::from_millis(500);
+
+/// The latency to use for a callback of `frames` frames at `rate`: the device's report, or, if
+/// that is implausible, two buffers. Android's AAudio timestamps (through cpal) have reported 24 s
+/// and more, which held the song clock at the start: no previews, charts that never moved.
+fn plausible_latency(reported: Duration, frames: usize, rate: u32) -> Duration {
+    if reported <= MAX_LATENCY {
+        return reported;
+    }
+    Duration::from_secs_f64(2.0 * frames as f64 / f64::from(rate.max(1))).min(MAX_LATENCY)
 }
 
 impl Output {
@@ -398,6 +414,7 @@ impl Output {
         let gain = f32::from_bits(shared.volume.load(Ordering::Acquire));
         let written = self.render(out, generation, playing, gain);
         let frames = out.len() / self.channels.max(1);
+        let latency = plausible_latency(latency, frames, self.rate);
         shared
             .callback_frames
             .store(frames as u64, Ordering::Relaxed);
@@ -773,6 +790,21 @@ mod tests {
     }
 
     #[test]
+    fn implausible_latency_falls_back_to_two_buffers() {
+        let ms = Duration::from_millis;
+        assert_eq!(plausible_latency(ms(20), 480, 48_000), ms(20));
+        // 24 s reported for 960-frame callbacks at 48 kHz: two buffers = 40 ms.
+        assert_eq!(
+            plausible_latency(Duration::from_secs(24), 960, 48_000),
+            ms(40)
+        );
+        assert_eq!(
+            plausible_latency(Duration::MAX, 48_000, 48_000),
+            MAX_LATENCY
+        );
+    }
+
+    #[test]
     fn feed_maps_stereo_applies_gain_and_pads_underrun() {
         let (tx, rx) = mpsc::sync_channel(4);
         let mut feed = Feed::new(rx);
@@ -791,6 +823,7 @@ mod tests {
             mixer: Mixer::new(sfx_rx),
             mix: Vec::new(),
             channels: 2,
+            rate: 1000,
         };
         tx.send(chunk(1, 1, &[0.75, 0.25])).unwrap();
         let sfx = Sfx {
