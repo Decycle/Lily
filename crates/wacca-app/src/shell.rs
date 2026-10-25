@@ -1278,11 +1278,12 @@ impl App {
     fn sync_trackpad(&mut self) {
         let want = self.s.menu.settings.trackpad_touch
             && self.screen == Screen::Play
-            && self.play.as_ref().is_some_and(|p| !p.paused);
+            && self.play.as_ref().is_some_and(|p| !p.paused)
+            // No trackpad (a Mac with only a mouse): keep the cursor. The reason is logged once.
+            && crate::trackpad::start().is_ok();
         if want != self.trackpad_captured {
-            if want && let Err(e) = crate::trackpad::start() {
-                log::warn!("trackpad mode: {e}");
-            }
+            log::info!("trackpad mode {}", if want { "on" } else { "off" });
+            crate::trackpad::capture_cursor(want);
             if let Some(g) = &self.gfx {
                 g.window.set_cursor_visible(!want);
                 let mode = if want {

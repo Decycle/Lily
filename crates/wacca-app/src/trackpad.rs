@@ -192,6 +192,36 @@ mod imp {
             _ => 1.6,
         }
     }
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGMainDisplayID() -> u32;
+        fn CGDisplayHideCursor(display: u32) -> i32;
+        fn CGDisplayShowCursor(display: u32) -> i32;
+        fn CGAssociateMouseAndMouseCursorPosition(connected: u32) -> i32;
+    }
+
+    static CAPTURED: Mutex<bool> = Mutex::new(false);
+
+    pub fn capture_cursor(on: bool) {
+        let Ok(mut captured) = CAPTURED.lock() else {
+            return;
+        };
+        if *captured == on {
+            return;
+        }
+        // SAFETY: plain CoreGraphics calls; hide/show are counted, so they are kept paired.
+        unsafe {
+            let display = CGMainDisplayID();
+            if on {
+                CGDisplayHideCursor(display);
+            } else {
+                CGDisplayShowCursor(display);
+            }
+            CGAssociateMouseAndMouseCursorPosition(u32::from(!on));
+        }
+        *captured = on;
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -209,6 +239,8 @@ mod imp {
     pub fn aspect() -> f32 {
         1.6
     }
+
+    pub fn capture_cursor(_on: bool) {}
 }
 
 /// Starts listening to the trackpad (once; later calls only report the result).
@@ -224,4 +256,11 @@ pub fn contacts() -> Vec<Contact> {
 /// Width / height of the trackpad surface.
 pub fn aspect() -> f32 {
     imp::aspect()
+}
+
+/// Hides the cursor and stops the trackpad from moving it (`false`: shows and frees it again).
+/// macOS' own calls: winit's cursor hiding only applies once the cursor moves over the window,
+/// and a locked cursor does not move.
+pub fn capture_cursor(on: bool) {
+    imp::capture_cursor(on);
 }
