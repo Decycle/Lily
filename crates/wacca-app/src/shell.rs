@@ -144,7 +144,6 @@ pub fn run(setup: Setup, fonts: Fonts) -> Result<(), ShellError> {
         last_frame: None,
         error: None,
         perf: Perf::default(),
-        show_perf: false,
         drift: Drift::default(),
         input_at: None,
         first_frame: false,
@@ -634,8 +633,6 @@ struct App {
     last_frame: Option<Instant>,
     error: Option<ShellError>,
     perf: Perf,
-    /// F3: the perf overlay.
-    show_perf: bool,
     drift: Drift,
     /// First play input not yet on screen.
     input_at: Option<Instant>,
@@ -1131,7 +1128,8 @@ impl App {
             return;
         }
         if code == KeyCode::F3 {
-            self.show_perf = !self.show_perf;
+            let s = &mut self.s.menu.settings;
+            s.perf_info = !s.perf_info;
             return;
         }
         if self.screen == Screen::Play {
@@ -1424,7 +1422,7 @@ impl App {
             gfx.renderer.show_video(false);
         }
         let mut view = self.view();
-        if self.show_perf {
+        if self.s.menu.settings.perf_info {
             let [w, h] = self.size();
             let window = Rect {
                 x: 0.0,

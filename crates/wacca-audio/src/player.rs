@@ -183,6 +183,7 @@ impl Player {
                 mix: Vec::with_capacity(MIX_BUFFER),
                 channels: usize::from(device_channels),
                 rate,
+                max_frames: 0,
             },
             commands: command_rx,
             chunks,
@@ -384,14 +385,17 @@ struct Output {
     channels: usize,
     /// Output rate (frames per second), to judge the reported latency.
     rate: u32,
+    /// The largest callback seen, in frames: the fallback latency is based on it, so it stays
+    /// steady while callback sizes vary (Android's do, 500 to 2200 frames).
+    max_frames: usize,
 }
 
 /// A reported output latency above this is taken as a bad timestamp, not a real delay.
 const MAX_LATENCY: Duration = Duration::from_millis(500);
 
-/// The latency to use for a callback of `frames` frames at `rate`: the device's report, or, if
-/// that is implausible, two buffers. Android's AAudio timestamps (through cpal) have reported 24 s
-/// and more, which held the song clock at the start: no previews, charts that never moved.
+/// The latency to use for callbacks of up to `frames` frames at `rate`: the device's report, or,
+/// if that is implausible, two buffers. Android's AAudio timestamps (through cpal) have reported
+/// 24 s and more, which held the song clock at the start: no previews, charts that never moved.
 fn plausible_latency(reported: Duration, frames: usize, rate: u32) -> Duration {
     if reported <= MAX_LATENCY {
         return reported;
@@ -414,7 +418,8 @@ impl Output {
         let gain = f32::from_bits(shared.volume.load(Ordering::Acquire));
         let written = self.render(out, generation, playing, gain);
         let frames = out.len() / self.channels.max(1);
-        let latency = plausible_latency(latency, frames, self.rate);
+        self.max_frames = self.max_frames.max(frames);
+        let latency = plausible_latency(latency, self.max_frames, self.rate);
         shared
             .callback_frames
             .store(frames as u64, Ordering::Relaxed);
@@ -824,6 +829,7 @@ mod tests {
             mix: Vec::new(),
             channels: 2,
             rate: 1000,
+            max_frames: 0,
         };
         tx.send(chunk(1, 1, &[0.75, 0.25])).unwrap();
         let sfx = Sfx {

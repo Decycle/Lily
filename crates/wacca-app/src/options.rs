@@ -45,9 +45,11 @@ pub enum Row {
     TouchGuide,
     /// macOS only: play with the trackpad as a touch ring ([`crate::trackpad`]).
     Trackpad,
+    /// The performance overlay (F3 on a keyboard).
+    PerfInfo,
 }
 
-const COMMON_ROWS: [Row; 8] = [
+const COMMON_ROWS: [Row; 9] = [
     Row::Speed,
     Row::Offset,
     Row::Check,
@@ -56,6 +58,7 @@ const COMMON_ROWS: [Row; 8] = [
     Row::Video,
     Row::BarLines,
     Row::TouchGuide,
+    Row::PerfInfo,
 ];
 
 /// The rows on this platform (TRACKPAD on macOS only).
@@ -70,6 +73,7 @@ pub const ROWS: &[Row] = if cfg!(target_os = "macos") {
         Row::BarLines,
         Row::TouchGuide,
         Row::Trackpad,
+        Row::PerfInfo,
     ]
 } else {
     &COMMON_ROWS
@@ -124,6 +128,7 @@ impl OptionsMenu {
             Row::BarLines => s.bar_lines = !s.bar_lines,
             Row::TouchGuide => s.touch_guide = !s.touch_guide,
             Row::Trackpad => s.trackpad_touch = !s.trackpad_touch,
+            Row::PerfInfo => s.perf_info = !s.perf_info,
         }
     }
 }
@@ -143,6 +148,7 @@ pub fn value(row: Row, s: &Settings, autoplay: bool) -> String {
         Row::BarLines => on_off(s.bar_lines).into(),
         Row::TouchGuide => on_off(s.touch_guide).into(),
         Row::Trackpad => on_off(s.trackpad_touch).into(),
+        Row::PerfInfo => on_off(s.perf_info).into(),
     }
 }
 
@@ -157,6 +163,7 @@ fn label(row: Row) -> &'static str {
         Row::BarLines => "BAR LINES",
         Row::TouchGuide => "TOUCH GUIDE",
         Row::Trackpad => "TRACKPAD",
+        Row::PerfInfo => "PERF INFO",
     }
 }
 
@@ -404,6 +411,10 @@ mod tests {
             m.adjust(&mut s, &mut auto, 1);
             assert!(s.trackpad_touch);
         }
+        m.move_by(1);
+        assert_eq!(value(Row::PerfInfo, &s, auto), "OFF");
+        m.adjust(&mut s, &mut auto, 1);
+        assert!(s.perf_info);
         m.move_by(1);
         assert_eq!(m.row, 0);
         m.move_by(-1);
