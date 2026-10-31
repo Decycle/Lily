@@ -850,6 +850,7 @@ impl App {
             bonus_effect: m.settings.bonus_effect,
             bar_lines: m.settings.bar_lines,
             touch_guide: m.settings.touch_guide,
+            speed: f64::from(m.settings.practice_speed),
         };
         if let Some(gfx) = &mut self.gfx {
             gfx.renderer
@@ -905,6 +906,9 @@ impl App {
         let (mut new_best, mut not_saved) = (false, None);
         match (key, &self.s.save_path) {
             _ if play.opts.autoplay => not_saved = Some("AUTOPLAY: NOT SAVED".to_string()),
+            _ if play.opts.practice() => {
+                not_saved = Some(format!("PRACTICE x{:.1}: NOT SAVED", play.opts.speed));
+            }
             (None, _) => not_saved = Some("UNKNOWN SONG: NOT SAVED".into()),
             (_, None) => not_saved = Some("NO SAVE LOCATION: NOT SAVED".into()),
             (Some((id, d)), Some(path)) => {
@@ -1375,7 +1379,8 @@ impl App {
                     if p.paused {
                         self.drift.reset();
                     } else {
-                        let wall = (acquired - self.s.started).as_secs_f64();
+                        // Song time advances `speed` times as fast as the wall clock.
+                        let wall = (acquired - self.s.started).as_secs_f64() * p.opts.speed;
                         let (drift, step) = self.drift.sample(wall, p.now());
                         self.perf.drift = drift;
                         self.perf.jitter.push(step.abs());

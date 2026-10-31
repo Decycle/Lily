@@ -66,6 +66,8 @@ pub struct Hud {
     pub note_speed: f64,
     pub paused: bool,
     pub autoplay: bool,
+    /// Practice speed (1.0 = normal).
+    pub speed: f64,
     /// The playfield draws the judgement word art, the combo counter and the rim's score and
     /// title; skip their text.
     pub art: bool,
@@ -112,6 +114,9 @@ pub fn view(h: &Hud, title: &str, window: Rect, playfield: Rect) -> View {
     let mut status = format!("x{:.1}", h.note_speed);
     if h.autoplay {
         status.push_str("  AUTO");
+    }
+    if (h.speed - 1.0).abs() > 1e-6 {
+        status.push_str(&format!("  PRACTICE x{:.1}", h.speed));
     }
     if h.paused {
         status.push_str("  PAUSED");
@@ -255,6 +260,7 @@ mod tests {
             note_speed: 4.0,
             paused: false,
             autoplay: true,
+            speed: 1.0,
             art: false,
         };
         let v = view(&h, "Song", r, r);
@@ -300,6 +306,7 @@ mod tests {
             note_speed: 3.0,
             paused: false,
             autoplay: false,
+            speed: 1.0,
             art: true,
         };
         let v = view(&h, "Song", window, field);

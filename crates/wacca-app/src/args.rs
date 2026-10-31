@@ -7,7 +7,7 @@ use wacca_chart::Difficulty;
 use crate::screen::Screen;
 
 pub const USAGE: &str = "usage: lily [--assets <dir>] [--data <dir>] [--save <file>] [--portable] \
-[--windowed] [--autoplay] [--speed 1.0..6.0] [--offset-ms N] \
+[--windowed] [--autoplay] [--speed 1.0..6.0] [--practice 0.1..3.0] [--offset-ms N] \
 [--screen title|mode|category|select|options|calibrate|results|setup] \
 [--setup-source <dir> | --setup-url <address> [--setup-start]] \
 [--chart <MusicData/<song>/<song>_NN.mer | MusicData/<song>> [--difficulty normal|hard|expert|inferno]]";
@@ -38,6 +38,8 @@ pub struct Args {
     pub autoplay: bool,
     /// Note speed for this session (overrides the saved setting).
     pub speed: Option<f64>,
+    /// Practice mode: song speed for this session.
+    pub practice: Option<f64>,
     /// User timing offset in seconds, added to chart time (overrides the saved setting, rounded to
     /// its step: see `options::offset_units`).
     pub offset: Option<f64>,
@@ -97,6 +99,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, ArgsError> 
         difficulty: None,
         autoplay: false,
         speed: None,
+        practice: None,
         offset: None,
         data: None,
         save: None,
@@ -136,6 +139,16 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, ArgsError> 
                     });
                 }
                 out.speed = Some(speed);
+            }
+            "--practice" => {
+                let speed: f64 = value("--practice", args.next())?;
+                if !(0.1..=3.0).contains(&speed) {
+                    return Err(ArgsError::Value {
+                        flag: "--practice",
+                        value: speed.to_string(),
+                    });
+                }
+                out.practice = Some(speed);
             }
             "--offset-ms" => {
                 let ms: f64 = value("--offset-ms", args.next())?;

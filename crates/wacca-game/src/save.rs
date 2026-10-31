@@ -58,6 +58,10 @@ impl Default for SaveData {
     }
 }
 
+fn normal_speed() -> f32 {
+    1.0
+}
+
 /// Play options. Minimal for now; unknown keys survive in `extra`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -78,6 +82,10 @@ pub struct Settings {
     pub trackpad_touch: bool,
     /// The performance overlay (frame times, missed frames, audio drift; F3 toggles it too).
     pub perf_info: bool,
+    /// Practice mode: song speed (1.0 = normal; pitch kept). For this session only, like
+    /// autoplay: never saved, and plays at another speed are not recorded.
+    #[serde(skip, default = "normal_speed")]
+    pub practice_speed: f32,
     /// Name on the results screen's player plate (the game shows the card's user name).
     pub player_name: String,
     /// Title line above the plate (the game's earned titles; empty = none).
@@ -101,6 +109,7 @@ impl Default for Settings {
             touch_guide: cfg!(any(target_os = "ios", target_os = "android")),
             trackpad_touch: false,
             perf_info: false,
+            practice_speed: 1.0,
             player_name: "PLAYER".to_string(),
             player_title: String::new(),
             menu_timers: false,
@@ -485,6 +494,18 @@ mod tests {
         let json = serde_json::to_string(&off).unwrap();
         assert!(json.contains(r#""backgroundVideo":false"#));
         assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), off);
+    }
+
+    #[test]
+    fn practice_speed_is_never_saved() {
+        let slow = Settings {
+            practice_speed: 0.5,
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&slow).unwrap();
+        assert!(!json.contains("practice"), "{json}");
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.practice_speed, 1.0);
     }
 
     #[test]

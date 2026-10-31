@@ -117,6 +117,7 @@ The options screen opens after you pick a song. Settings are saved when you star
 | TIMING CHECK | | Opens the timing check (below) |
 | MIRROR | OFF | Mirrors the chart left to right, both visually and for judging |
 | AUTOPLAY | OFF | Perfect automatic play. Not saved; autoplay results are not recorded |
+| PRACTICE | OFF | Practice mode: the song plays at 0.1× to 3.0× (steps of 0.1) with its pitch kept, and the chart follows. For this session only; practice plays are not recorded. Clean from about 0.5× to 2×; grainy below ~0.3× |
 | BG MOVIE | ON | Shows the song's background movie (needs FFmpeg and the movie files) |
 | BAR LINES | ON | Measure lines on the playfield, as in the real game |
 | TOUCH GUIDE | OFF (ON on iPad and Android) | Shows the touch area during play: a bright inner circle where it starts (touches nearer the centre do nothing), the 4 depth rings, a line between lanes, and the sensors you are pressing lit up (not in the real game) |

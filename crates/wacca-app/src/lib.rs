@@ -247,6 +247,9 @@ fn settings(saved: &Settings, args: &Args) -> Settings {
     if let Some(offset) = args.offset {
         s.judge_offset = options::offset_units(offset);
     }
+    if let Some(speed) = args.practice {
+        s.practice_speed = speed as f32;
+    }
     s
 }
 

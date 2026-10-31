@@ -9,7 +9,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use wacca_audio::{BgmBank, HitSounds, Player, VoiceId};
+use wacca_audio::stretch::Stretched;
+use wacca_audio::{BgmBank, Decoder, HitSounds, Player, VoiceId};
 use wacca_chart::{Arc as LaneArc, Chart, Difficulty, NoteBody};
 use wacca_game::grade::PlayResult;
 use wacca_game::input::{DEPTHS, InputFrame};
@@ -75,6 +76,16 @@ pub struct PlayOptions {
     pub bar_lines: bool,
     /// Depth-ring guides and pressed-sensor highlight (touchscreen aid).
     pub touch_guide: bool,
+    /// Practice mode: song speed (1.0 = normal). The music is time-stretched with its pitch
+    /// kept and the song clock runs this much faster or slower, so the chart follows.
+    pub speed: f64,
+}
+
+impl PlayOptions {
+    /// Playing at another speed than normal.
+    pub fn practice(&self) -> bool {
+        (self.speed - 1.0).abs() > 1e-6
+    }
 }
 
 /// What [`PlayState::new`] needs to show the background movie.
@@ -155,8 +166,15 @@ impl PlayState {
             chart
         };
         let cue = &chart.header.music_file_path;
-        player.load(Box::new(bgm.open_cue(cue)?))?;
-        let end = end_time(&chart, player.duration(), opts.offset);
+        let music: Box<dyn Decoder> = Box::new(bgm.open_cue(cue)?);
+        let music = if opts.practice() {
+            Box::new(Stretched::new(music, opts.speed))
+        } else {
+            music
+        };
+        player.load(music)?;
+        // The player counts real seconds; the song's are `speed` times as many.
+        let end = end_time(&chart, player.duration() * opts.speed, opts.offset);
         log::info!(
             "{}: cue {cue}, {} notes, mirror {}, play ends at chart {end:.2} s",
             spec.chart_path.display(),
@@ -196,20 +214,25 @@ impl PlayState {
     /// Start the music (with lead-in silence before the first note).
     pub fn start(&mut self) -> Result<(), PlayError> {
         let start = start_position(&self.chart, self.opts.offset);
-        self.player.seek(start)?;
+        self.player.seek(start / self.opts.speed)?;
         self.player.play();
         log::info!("playing from audio {start:.3} s");
         Ok(())
     }
 
     pub fn now(&self) -> f64 {
-        chart_now(&self.chart, self.player.position(), self.opts.offset)
+        chart_now(&self.chart, self.audio_pos(), self.opts.offset)
+    }
+
+    /// Position in the song's audio (seconds of the song, not of the practice-speed playback).
+    fn audio_pos(&self) -> f64 {
+        self.player.position() * self.opts.speed
     }
 
     /// Movie time: chart time minus `#MOVIEOFFSET`.
     // UNVERIFIED: same relation as `#OFFSET` (01-chart-format §5.2); the user judgement offset is not applied.
     fn movie_time(&self) -> f64 {
-        self.chart.chart_time(self.player.position()) - self.chart.header.movie_offset
+        self.chart.chart_time(self.audio_pos()) - self.chart.header.movie_offset
     }
 
     /// The background-movie frame to show now (`None` = no movie on screen) and whether it is new since the
@@ -447,6 +470,7 @@ impl PlayState {
             note_speed: self.opts.note_speed,
             paused: self.paused,
             autoplay: self.autoplay.is_some(),
+            speed: self.opts.speed,
             art,
         }
     }

@@ -25,6 +25,9 @@ pub const SPEED_STEP: f32 = 0.5;
 /// Judgement adjustment −10.0..=+10.0 in steps of 0.1 (doc 05 §1.5).
 pub const OFFSET_RANGE: std::ops::RangeInclusive<f32> = -10.0..=10.0;
 pub const OFFSET_STEP: f32 = 0.1;
+/// Practice mode: song speed 0.1×..=3.0× in steps of 0.1 (1.0 = off).
+pub const PRACTICE_RANGE: std::ops::RangeInclusive<f32> = 0.1..=3.0;
+pub const PRACTICE_STEP: f32 = 0.1;
 /// Seconds of chart time per judgement-adjustment unit: half a 60 fps frame (8.33 ms), so the
 /// setting spans ±83 ms. A positive setting runs the judgement clock ahead of the music: a tap
 /// in time with the audio is judged late, so taps must come that much earlier.
@@ -40,6 +43,8 @@ pub enum Row {
     Check,
     Mirror,
     Autoplay,
+    /// Practice mode: the song's speed (not saved; such plays are not recorded).
+    Practice,
     Video,
     BarLines,
     TouchGuide,
@@ -49,12 +54,13 @@ pub enum Row {
     PerfInfo,
 }
 
-const COMMON_ROWS: [Row; 9] = [
+const COMMON_ROWS: [Row; 10] = [
     Row::Speed,
     Row::Offset,
     Row::Check,
     Row::Mirror,
     Row::Autoplay,
+    Row::Practice,
     Row::Video,
     Row::BarLines,
     Row::TouchGuide,
@@ -69,6 +75,7 @@ pub const ROWS: &[Row] = if cfg!(target_os = "macos") {
         Row::Check,
         Row::Mirror,
         Row::Autoplay,
+        Row::Practice,
         Row::Video,
         Row::BarLines,
         Row::TouchGuide,
@@ -124,12 +131,25 @@ impl OptionsMenu {
             Row::Check => {}
             Row::Mirror => s.mirror = !s.mirror,
             Row::Autoplay => *autoplay = !*autoplay,
+            Row::Practice => {
+                s.practice_speed = tenth(s.practice_speed + d * PRACTICE_STEP)
+                    .clamp(*PRACTICE_RANGE.start(), *PRACTICE_RANGE.end());
+            }
             Row::Video => s.background_video = !s.background_video,
             Row::BarLines => s.bar_lines = !s.bar_lines,
             Row::TouchGuide => s.touch_guide = !s.touch_guide,
             Row::Trackpad => s.trackpad_touch = !s.trackpad_touch,
             Row::PerfInfo => s.perf_info = !s.perf_info,
         }
+    }
+}
+
+/// `OFF` at normal speed, else `x0.5`.
+pub fn practice_label(speed: f32) -> String {
+    if (speed - 1.0).abs() < 1e-3 {
+        "OFF".into()
+    } else {
+        format!("x{speed:.1}")
     }
 }
 
@@ -144,6 +164,7 @@ pub fn value(row: Row, s: &Settings, autoplay: bool) -> String {
         Row::Check => "START".into(),
         Row::Mirror => on_off(s.mirror).into(),
         Row::Autoplay => on_off(autoplay).into(),
+        Row::Practice => practice_label(s.practice_speed),
         Row::Video => on_off(s.background_video).into(),
         Row::BarLines => on_off(s.bar_lines).into(),
         Row::TouchGuide => on_off(s.touch_guide).into(),
@@ -159,6 +180,7 @@ fn label(row: Row) -> &'static str {
         Row::Check => "TIMING CHECK",
         Row::Mirror => "MIRROR",
         Row::Autoplay => "AUTOPLAY",
+        Row::Practice => "PRACTICE",
         Row::Video => "BG MOVIE",
         Row::BarLines => "BAR LINES",
         Row::TouchGuide => "TOUCH GUIDE",
@@ -391,6 +413,20 @@ mod tests {
         m.move_by(1);
         m.adjust(&mut s, &mut auto, -1);
         assert!(auto);
+        // Practice: OFF at 1.0, steps of 0.1, clamped to 0.1..=3.0.
+        m.move_by(1);
+        assert_eq!(value(Row::Practice, &s, auto), "OFF");
+        m.adjust(&mut s, &mut auto, -1);
+        assert_eq!(value(Row::Practice, &s, auto), "x0.9");
+        for _ in 0..20 {
+            m.adjust(&mut s, &mut auto, -1);
+        }
+        assert_eq!(s.practice_speed, 0.1);
+        for _ in 0..40 {
+            m.adjust(&mut s, &mut auto, 1);
+        }
+        assert_eq!(s.practice_speed, 3.0);
+        s.practice_speed = 1.0;
         m.move_by(1);
         m.adjust(&mut s, &mut auto, 1);
         assert!(!s.background_video);

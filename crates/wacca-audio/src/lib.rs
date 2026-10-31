@@ -20,6 +20,7 @@ pub mod player;
 pub mod resample;
 pub mod se;
 mod sfx;
+pub mod stretch;
 
 pub use bank::BgmBank;
 pub use clock::Clock;
